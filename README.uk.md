@@ -176,3 +176,10 @@ sudo reboot           # лише при першому встановленні:
 | [python-chess](https://github.com/niklasf/python-chess) | Правила шахів, керування рушієм по UCI | GPL-3.0 |
 | Шрифти X11 misc-fixed ([xfonts-base](https://packages.debian.org/bookworm/xfonts-base)) | Джерело консольних шрифтів 5×7 і 6×10 | Public domain |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | LLM-сервер для AI-чату (працює на іншій машині) | MIT |
+
+## 9. Ліцензія
+
+[GPL-3.0-or-later](LICENSE). Backend для Doom походить від doomgeneric / Chocolate Doom
+(GPL-2.0-or-later), а шахи використовують python-chess (GPL-3.0), тож проєкт загалом - під GPL-3.0.
+Shareware WAD для Doom не входить у репозиторій: він встановлюється з пакета `doom-wad-shareware`
+за shareware-ліцензією id Software.

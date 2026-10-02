@@ -174,3 +174,10 @@ their thinking is shown as a single "(думаю...)" ("thinking...") line and i
 | [python-chess](https://github.com/niklasf/python-chess) | Chess rules, UCI engine control | GPL-3.0 |
 | X11 misc-fixed fonts ([xfonts-base](https://packages.debian.org/bookworm/xfonts-base)) | Source of the 5×7 and 6×10 console fonts | Public domain |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | LLM server for the AI chat (runs on another machine) | MIT |
+
+## 9. License
+
+[GPL-3.0-or-later](LICENSE). The Doom backend is derived from doomgeneric / Chocolate Doom
+(GPL-2.0-or-later) and the chess app uses python-chess (GPL-3.0), so the project as a whole is GPL-3.0.
+The Doom shareware WAD is not part of this repository; it is installed from the
+`doom-wad-shareware` package under id Software's shareware licence.
