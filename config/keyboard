@@ -1,0 +1,8 @@
+# /etc/default/keyboard - US + Ukrainian layouts, Alt+Shift toggles,
+# Scroll Lock LED shows the second (UA) layout.
+XKBMODEL="pc105"
+XKBLAYOUT="us,ua"
+XKBVARIANT=""
+XKBOPTIONS="grp:alt_shift_toggle,grp_led:scroll"
+
+BACKSPACE="guess"

@@ -1,0 +1,8 @@
+__pycache__/
+# created by install.sh / doom/build.sh
+app/vendor/
+app/doom/
+doom/build/
+# per-device game state
+app/chess_save.json
+app/tetris_hi.txt

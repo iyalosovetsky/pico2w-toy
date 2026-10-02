@@ -1,0 +1,3 @@
+#!/bin/sh
+# return from the text console to the LCD menu
+exec sudo systemctl start lcd-menu.service

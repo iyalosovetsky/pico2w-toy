@@ -1,0 +1,25 @@
+[Unit]
+Description=Local AI chat on the LCD console (tty1)
+After=systemd-user-sessions.service
+Conflicts=getty@tty1.service lcd-menu.service
+# back to the menu when the chat ends
+OnSuccess=lcd-menu.service
+OnFailure=lcd-menu.service
+
+[Service]
+User=@USER@
+WorkingDirectory=@APP_DIR@
+Environment=LANG=C.UTF-8 TERM=linux PYTHONIOENCODING=utf-8
+EnvironmentFile=-/etc/default/lcd-ai-chat
+ExecStartPre=+/bin/chvt 1
+# bigger font for the chat only; the console keeps 5x7
+ExecStartPre=+/usr/bin/setfont -C /dev/tty1 /usr/share/consolefonts/Uni2-Fixed6x10.psf.gz
+ExecStopPost=+/usr/bin/setfont -C /dev/tty1 /usr/share/consolefonts/Uni2-Fixed5x7.psf.gz
+ExecStart=/usr/bin/python3 @APP_DIR@/ai_chat.py
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes

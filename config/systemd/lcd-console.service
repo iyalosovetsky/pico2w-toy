@@ -1,0 +1,6 @@
+[Unit]
+Description=Give tty1 back to the console after the LCD menu exits
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c "sleep 1; systemctl is-active -q lcd-menu.service || systemctl is-active -q ai-chat.service || systemctl start getty@tty1.service"
