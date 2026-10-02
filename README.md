@@ -1,4 +1,4 @@
-*[English version](README.md)*
+*[English version](README.en.md)*
 
 # pico2w-toy
 
@@ -8,6 +8,8 @@
 Після ввімкнення запускається меню: Pong, тетріс, покер (техаський холдем), шахи проти Stockfish,
 Doom, чат з локальною LLM, текстова консоль і вимкнення. Керування - джойстиком і кнопками HAT або
 маленькою USB-клавіатурою.
+
+![Прототип: AI-чат на екрані](docs/prototype.jpg)
 
 | Меню | Pong | Тетріс | Покер |
 |:---:|:---:|:---:|:---:|
@@ -92,7 +94,7 @@ Doom, чат з локальною LLM, текстова консоль і ви�
 | **Li-Po 2000 мА·год 103450** | <img src="https://arduino.ua/products_pictures/usa231/large_rac139_1.jpg" width="200"> | 1S 3.7 В, плаский, 34×50×10 мм, з платою захисту | [arduino.ua](https://arduino.ua/prod3075-akkymylyator-li-po-2000mach-3-7v-formata-103450) |
 | **Модуль заряду Type-C + підвищення до 9 В** | <img src="https://content2.rozetka.com.ua/goods/images/big/650937112.jpg" width="200"> | Міні-модуль живлення (для мультиметрів): заряджає акумулятор від USB-C, видає 9 В | [Rozetka](https://rozetka.com.ua/ua/573636100/p573636100/) |
 | **Понижувальний CA-1235** | <img src="https://gadgetpcb.com/wp-content/uploads/ca-1235-dc-dc-step-down-buck-converter.webp" width="200"> | Перетворювач на MP1495, вхід 5-16 В, вихід 1.25-5 В на вибір, 3 А - виставлений на 5 В | [приклад](https://www.aliexpress.us/item/3256802445813752.html) |
-| **USB-клавіатура** | — | Будь-яка USB-клавіатура; для корпусу зручна бездротова міні | — |
+| **Міні-клавіатура** | <img src="docs/keyboard.jpg" width="160"> | Бездротова міні-клавіатура з тачпадом (типу Rii i8), USB-приймач 2.4 ГГц у хабі; підійде будь-яка USB-клавіатура | — |
 
 ## 4. Схема
 

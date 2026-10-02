@@ -1,4 +1,4 @@
-*[Українська версія](README.uk.md)*
+*[Українська версія](README.md)*
 
 # pico2w-toy
 
@@ -8,6 +8,8 @@ A pocket game console / AI terminal built from a **Raspberry Pi Zero 2 W** and a
 A launcher menu starts at boot and offers Pong, Tetris, Texas Hold'em poker, chess against Stockfish,
 Doom, a chat with a local LLM, a text console and power-off. Everything is controlled with the HAT's
 joystick and buttons or with a small USB keyboard.
+
+![Prototype: AI chat on the display](docs/prototype.jpg)
 
 | Menu | Pong | Tetris | Poker |
 |:---:|:---:|:---:|:---:|
@@ -91,7 +93,7 @@ Per game:
 | **Li-Po 2000 mAh 103450** | <img src="https://arduino.ua/products_pictures/usa231/large_rac139_1.jpg" width="200"> | 1S 3.7 V flat cell, 34×50×10 mm, with protection board | [arduino.ua](https://arduino.ua/prod3075-akkymylyator-li-po-2000mach-3-7v-formata-103450) |
 | **Type-C charger + 9 V boost** | <img src="https://content2.rozetka.com.ua/goods/images/big/650937112.jpg" width="200"> | Mini power module (made for multimeters): charges the cell over USB-C, outputs 9 V | [Rozetka](https://rozetka.com.ua/ua/573636100/p573636100/) |
 | **CA-1235 step-down** | <img src="https://gadgetpcb.com/wp-content/uploads/ca-1235-dc-dc-step-down-buck-converter.webp" width="200"> | MP1495 buck converter, 5-16 V in, selectable 1.25-5 V out, 3 A - set to 5 V | [example listing](https://www.aliexpress.us/item/3256802445813752.html) |
-| **USB keyboard** | — | Any USB keyboard; a mini wireless one fits the build | — |
+| **Mini keyboard** | <img src="docs/keyboard.jpg" width="160"> | Wireless mini keyboard with touchpad (Rii i8 type), 2.4 GHz USB dongle in the hub; any USB keyboard works | — |
 
 ## 4. Wiring
 
