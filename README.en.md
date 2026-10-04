@@ -110,7 +110,7 @@ Tested on Raspbian 12 (Bookworm) armhf, kernel 6.12, on a Pi Zero 2 W.
 ```bash
 git clone https://github.com/iyalosovetsky/pico2w-toy.git
 cd pico2w-toy
-./install.sh          # add --no-doom to skip building Doom
+./install.sh          # --no-doom: skip Doom, --keep-desktop: leave the desktop on
 sudo reboot           # first install only: loads the display driver
 ```
 
@@ -121,7 +121,9 @@ sudo reboot           # first install only: loads the display driver
 3. writes `/lib/firmware/waveshare144.bin` and appends `config/boot-config.txt` to `/boot/firmware/config.txt`;
 4. installs the console fonts, sets the US+UA keyboard layout, creates `/etc/default/lcd-ai-chat`;
 5. builds Doom (`doom/build.sh`);
-6. installs and enables the systemd services (paths and user are filled in).
+6. installs and enables the systemd services (paths and user are filled in);
+7. on a desktop image, switches boot to the console (`multi-user.target`) - the desktop would
+   otherwise take over the LCD as a display.
 
 Every system file it changes is backed up once as `<file>.bak-lcd`; it is safe to re-run.
 Updating later is `git pull && ./install.sh`.

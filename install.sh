@@ -6,16 +6,19 @@
 #
 # Run as the normal (sudo-capable) user the menu should run as. Safe to re-run:
 # every system file that gets changed is backed up once as <file>.bak-lcd.
-#   --no-doom   skip building Doom
+#   --no-doom        skip building Doom
+#   --keep-desktop   don't switch a desktop image to console boot
 set -e
 
 REPO=$(cd "$(dirname "$0")" && pwd)
 APP_DIR="$REPO/app"
 USER_NAME=$(id -un)
 BUILD_DOOM=1
+KEEP_DESKTOP=0
 for arg in "$@"; do
     case "$arg" in
         --no-doom) BUILD_DOOM=0 ;;
+        --keep-desktop) KEEP_DESKTOP=1 ;;
         *) echo "unknown option: $arg"; exit 1 ;;
     esac
 done
@@ -71,6 +74,14 @@ done
 sudo install -m 755 "$REPO/config/lcdmenu" /usr/local/bin/lcdmenu
 sudo systemctl daemon-reload
 sudo systemctl enable lcd-menu.service
+
+# The desktop (lightdm + Wayland) would take over the LCD as a display;
+# the menu needs console boot like Raspberry Pi OS Lite.
+if [ "$KEEP_DESKTOP" = 0 ] && [ "$(systemctl get-default)" = graphical.target ]; then
+    echo "== switching boot to console (desktop off; --keep-desktop to skip)"
+    sudo systemctl set-default multi-user.target
+    REBOOT=1
+fi
 
 if [ "$REBOOT" = 1 ]; then
     echo "== done - reboot to load the display driver: sudo reboot"
