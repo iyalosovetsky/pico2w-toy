@@ -27,7 +27,7 @@ joystick and buttons or with a small USB keyboard.
 | **TETRIS** | 10×20 Tetris: ghost piece, wall kicks, 7-bag, levels, saved high score |
 | **POKER** | Heads-up Texas Hold'em vs. a Monte-Carlo AI, rising blinds |
 | **CHESS** | Chess vs. Stockfish 15 (8 levels), undo, promotion choice, auto-saved game |
-| **PREFERANS** | Preferans (Russian whist) against two computer players, Sochi rules, pulka to 20, auto-saved. Engine and AI: [Python Pref](https://python-pref.sourceforge.io/index_ru.html) (the same one that ran on Nokia/Symbian), ported to Python 3 |
+| **PREFERANS** | Preferans (Russian whist) against two computer players: Sochi (default) or Leningrad rules, chosen when a new pulka starts, pulka to 20, auto-saved. Engine and AI: [Python Pref](https://python-pref.sourceforge.io/index_ru.html) (the same one that ran on Nokia/Symbian), ported to Python 3 |
 | **DOOM** | Doom (shareware episode 1) via [doomgeneric](https://github.com/ozkl/doomgeneric), downscaled to 128×80 |
 | **AI CHAT** | Chat with a local LLM (llama.cpp / any OpenAI-compatible server) on the text console, US/UA keyboard |
 | **CONSOLE** | Leaves the menu and opens a text console with login on the LCD (tty7); `lcdmenu` brings the menu back |

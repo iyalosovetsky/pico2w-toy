@@ -2,7 +2,8 @@
 
 The game logic and computer players are Python Pref (PyPref) 2.34 - based on
 kpref by Azarniy I.V. and OpenPref, by Alexander aka amigo and Vadim Zapletin,
-GNU GPL - ported to Python 3 in prefgame/. Rules: Sochi (Сочинка), pulka to 20.
+GNU GPL - ported to Python 3 in prefgame/. Rules: Sochi (default) or Leningrad,
+chosen when a new pulka starts; pulka to 20.
 
 You are at the bottom, West (left) and East (right) are the computer.
 Joystick LEFT/RIGHT - choose a card / bid, UP/DOWN - bid by level (and DOWN takes
@@ -32,9 +33,11 @@ FONT_MONO_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
 BULLET = 20
 
 NAMES = {1: "Ви", 2: "Захід", 3: "Схід"}
+RULES = [("СОЧИНКА", Sochi), ("ЛЕНІНГРАДКА", Peter)]
+RULE_NAMES = {Sochi: "СОЧИНКА", Peter: "ЛЕНІНГРАДКА"}
 SUIT_CH = {1: "♠", 2: "♣", 3: "♦", 4: "♥", 5: "БК"}
 RANK_CH = {7: "7", 8: "8", 9: "9", 10: "10", 11: "В", 12: "Д", 13: "К", 14: "Т"}
-# PyPref options (index -> value); defaults from its pypref.cfg, Sochi rules
+# PyPref options (index -> value); defaults from its pypref.cfg
 OPT_DEFAULT = [0, 0, 0, 0, 0, 0, 0, 2, 1, 2, 2, 0, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0]
 
 AI_DELAY = 0.6      # s after a computer card / bid
@@ -73,9 +76,7 @@ class PrefGUI:
         self.rank_small = pygame.font.Font(FONT_MONO_BOLD, 9)  # clearest 7/8/9 at this size
         self.clock = pygame.time.Clock()
         self.opt = list(OPT_DEFAULT) + [None]
-        self.opt[scorerules] = Sochi
-        for o in (pastalon, pasprogress, greedywhist, responsible):  # PrefGUI.DefaultOpt(Sochi)
-            self.opt[o] = 1
+        self.set_rules(Sochi)
         cardlist.TCardList(sort=self.Sort)
         self.app = None
         self.reset_table()
@@ -87,6 +88,13 @@ class PrefGUI:
         self.discarding = False  # show the discarded cards in the middle
 
     # ---------------------------------------------------------------- helpers
+    def set_rules(self, rules):
+        """Sochi or Peter (Leningrad), with PyPref's PrefGUI.DefaultOpt() for them."""
+        self.opt[scorerules] = rules
+        sochi = 1 if rules == Sochi else 0
+        self.opt[pastalon] = self.opt[pasprogress] = 1
+        self.opt[greedywhist] = self.opt[responsible] = sochi
+
     def Sort(self, a, b):
         morder = self.opt[sorder] and [1, 2, 3, 4] or [1, 3, 2, 4]
         ka, kb = morder.index(a.CMast), morder.index(b.CMast)
@@ -449,7 +457,7 @@ class PrefGUI:
     def draw_sheet(self):
         self.screen.fill(GREEN)
         app = self.app
-        self.text("ПУЛЬКА до %d" % app.nBulletScore, (64, 2), YELLOW, self.f10b, center=True)
+        self.text("%s до %d" % (RULE_NAMES[self.opt[scorerules]], app.nBulletScore), (64, 2), YELLOW, self.f10b, center=True)
         for x, label in ((54, "пуля"), (80, "гора"), (126, "вісти")):
             self.text(label, (x, 17), GREY, self.f8, right=True)
         for row, n in enumerate((1, 2, 3)):
@@ -479,7 +487,8 @@ def save_pulka(app):
     if app.EndOfGame():
         delete_save()
         return
-    data = {"bullet": app.nBulletScore, "start": app.nCurrentStart.nValue, "rcnt": TPlScore.rcnt,
+    data = {"rules": "leningrad" if TPlScore.rule == Peter else "sochi",
+            "bullet": app.nBulletScore, "start": app.nCurrentStart.nValue, "rcnt": TPlScore.rcnt,
             "scores": [[app.Gamer(i).aScore.Bullet.items, app.Gamer(i).aScore.Mountan.items,
                         app.Gamer(i).aScore.LeftVists.items, app.Gamer(i).aScore.RightVists.items]
                        for i in (1, 2, 3)]}
@@ -488,6 +497,14 @@ def save_pulka(app):
             json.dump(data, f)
     except OSError:
         pass
+
+
+def saved_rules():
+    try:
+        with open(SAVE_FILE) as f:
+            return Peter if json.load(f).get("rules") == "leningrad" else Sochi
+    except (OSError, ValueError):
+        return None
 
 
 def load_pulka(app):
@@ -515,25 +532,41 @@ def delete_save():
 # ---------------------------------------------------------------- start / end screens
 
 def start_screen(gui):
-    rows = (["ПРОДОВЖИТИ"] if os.path.exists(SAVE_FILE) else []) + ["НОВА ПУЛЬКА"]
+    """Returns (resume, rules). The rules row toggles Сочинка / Ленінградка for a new pulka."""
+    saved = saved_rules()
+    rows = (["resume"] if saved is not None else []) + ["rules", "new"]
     i = 0
+    rules = 0  # index into RULES: Сочинка by default
     while True:
         for k in gui.events():
             if k == pygame.K_UP:
                 i = (i - 1) % len(rows)
             elif k == pygame.K_DOWN:
                 i = (i + 1) % len(rows)
+            elif rows[i] == "rules" and (k in (pygame.K_LEFT, pygame.K_RIGHT) or k in CONFIRM):
+                rules = (rules + 1) % len(RULES)
             elif k in CONFIRM:
-                return rows[i] == "ПРОДОВЖИТИ"
+                if rows[i] == "resume":
+                    return True, saved
+                return False, RULES[rules][1]
         s = gui.screen
         s.fill(GREEN)
-        gui.text("ПРЕФЕРАНС", (64, 12), YELLOW, gui.f14b, center=True)
-        gui.text("Сочинка, пулька до %d" % BULLET, (64, 32), LIGHT, gui.f9, center=True)
-        for r, label in enumerate(rows):
-            y = 58 + r * 20
-            if r == i:
-                pygame.draw.rect(s, YELLOW, (14, y - 2, 100, 16), border_radius=4)
-            gui.text(label, (64, y), BLACK if r == i else WHITE, gui.f10b, center=True)
+        gui.text("ПРЕФЕРАНС", (64, 10), YELLOW, gui.f14b, center=True)
+        gui.text("пулька до %d" % BULLET, (64, 30), LIGHT, gui.f9, center=True)
+        for r, row in enumerate(rows):
+            y = 48 + r * 19
+            sel = r == i
+            if sel:
+                pygame.draw.rect(s, YELLOW, (8, y - 2, 112, 16), border_radius=4)
+            color = BLACK if sel else WHITE
+            if row == "resume":
+                gui.text("ПРОДОВЖИТИ", (64, y), color, gui.f10b, center=True)
+            elif row == "new":
+                gui.text("НОВА ПУЛЬКА", (64, y), color, gui.f10b, center=True)
+            else:
+                gui.text(RULES[rules][0], (64, y), color, gui.f10b, center=True)
+                gui.text("<", (12, y - 1), color if sel else GREY, gui.f10b)
+                gui.text(">", (110, y - 1), color if sel else GREY, gui.f10b)
         gui.text("PyPref engine (GPL)", (64, 104), GREY, gui.f8, center=True)
         gui.text("kpref / OpenPref AI", (64, 114), GREY, gui.f8, center=True)
         lcd.flip()
@@ -562,7 +595,8 @@ def main():
     gui = PrefGUI()
     try:
         while True:
-            resume = start_screen(gui)
+            resume, rules = start_screen(gui)
+            gui.set_rules(rules)
             app = TDeskTop(gui)
             gui.app = app
             app.nBulletScore = BULLET
