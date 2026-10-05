@@ -9,7 +9,7 @@ A launcher menu starts at boot and offers Pong, Tetris, Texas Hold'em poker, che
 Doom, a chat with a local LLM, a text console and power-off. Everything is controlled with the HAT's
 joystick and buttons or with a small USB keyboard.
 
-![Prototype: AI chat on the display](docs/prototype.jpg)
+![Prototype in the printed case](docs/prototype.jpg)
 
 | Menu | Pong | Tetris | Poker |
 |:---:|:---:|:---:|:---:|
@@ -69,7 +69,8 @@ How the pieces fit together:
 | `fonts/` | Console fonts 5×7 (console, 25×18 chars) and 6×10 (AI chat, 21×12) + `build-fonts.sh` |
 | `config/` | Everything that goes into the system - see [Configuration](#6-configuration) |
 | `tools/` | `vkeys.py` virtual keyboard, `snap.py` screenshot, `record_gif.py` GIF recorder |
-| `docs/` | GIFs and the wiring diagram |
+| `case/` | Case: FreeCAD model (`pico-toy.FCStd`) and STL files for printing |
+| `docs/` | GIFs, photos, wiring diagram, case preview |
 
 ## 2. Controls
 
@@ -111,6 +112,21 @@ Per game:
 The LCD HAT uses SPI0 (CE0) plus GPIO 25/27/24 for DC/reset/backlight; the joystick and keys are on
 GPIO 6, 19, 5, 26, 13, 21, 20, 16 (active-low, internal pull-ups). Nothing else needs to be wired by hand
 except the power chain.
+
+### Case
+
+![Case](docs/case.png)
+
+The printable case is in [`case/`](case):
+
+| File | What it is |
+|---|---|
+| `pico-toy.FCStd` | FreeCAD model (V2, without the scan mesh of the device it was modelled around) |
+| `pico-toy-base.stl` | Base: a 37×40×68 mm box that holds the board stack |
+| `pico-toy-leftFall.stl` | Side cover, 39×40×14 mm |
+
+The STL files are exported from the FreeCAD model (0.02 mm deflection). The first version without a
+case: [`docs/prototype-v1.jpg`](docs/prototype-v1.jpg).
 
 ## 5. Installation
 
