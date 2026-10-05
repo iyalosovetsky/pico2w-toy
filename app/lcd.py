@@ -7,7 +7,11 @@ Usage:
         for ev in pygame.event.get(): ...   # buttons arrive as KEYDOWN/KEYUP
         ... draw on screen ...
         lcd.flip()
+
+While an app runs it grabs the HAT buttons and USB keyboards (EVIOCGRAB), so
+key presses don't also land in the text console on HDMI (tty1).
 """
+import fcntl
 import glob
 import os
 import struct
@@ -37,6 +41,8 @@ _input_paths = {}  # fd -> /dev/input/eventN
 _last_scan = 0.0
 RESCAN_SECONDS = 2  # pick up keyboards plugged in later
 _EVENT = struct.Struct("llHHi")  # struct input_event
+EVIOCGRAB = 0x40044590
+_grabbing = True
 
 
 def _find_fb():
@@ -76,6 +82,8 @@ def _scan_inputs():
                 fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
                 _inputs.append(fd)
                 _input_paths[fd] = dev
+                if _grabbing:
+                    _grab(fd, True)
         except OSError:
             pass  # device vanished or not accessible (yet)
 
@@ -108,12 +116,6 @@ def init():
     _fb = open(_find_fb(), "r+b", buffering=0)
     _scan_inputs()
     _screen = pygame.Surface((WIDTH, HEIGHT))
-    # hide blinking console cursor on the LCD
-    try:
-        with open("/sys/class/graphics/fbcon/cursor_blink", "w") as f:
-            f.write("0")
-    except OSError:
-        pass
     _orig_get = pygame.event.get
 
     def get(*a, **kw):
@@ -149,6 +151,29 @@ def flush_buttons():
         except OSError:  # device went away
             _drop_input(fd)
     pygame.event.clear()
+
+
+def _grab(fd, on):
+    try:
+        fcntl.ioctl(fd, EVIOCGRAB, 1 if on else 0)
+    except OSError:
+        pass  # already grabbed by someone else, or the device went away
+
+
+def release_inputs():
+    """Let a child program (a game) grab the buttons and keyboards itself."""
+    global _grabbing
+    _grabbing = False
+    for fd in _inputs:
+        _grab(fd, False)
+
+
+def grab_inputs():
+    """Take the buttons and keyboards back (exclusive) after a child exits."""
+    global _grabbing
+    _grabbing = True
+    for fd in _inputs:
+        _grab(fd, True)
 
 
 def _drop_input(fd):

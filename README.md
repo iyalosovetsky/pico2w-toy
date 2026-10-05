@@ -29,7 +29,7 @@ Doom, чат з локальною LLM, текстова консоль і ви�
 | **CHESS** | Шахи проти Stockfish 15 (8 рівнів), відкат ходу, вибір фігури при перетворенні, автозбереження |
 | **DOOM** | Doom (shareware, 1-й епізод) на [doomgeneric](https://github.com/ozkl/doomgeneric), зменшений до 128×80 |
 | **AI CHAT** | Чат з локальною LLM (llama.cpp або будь-який OpenAI-сумісний сервер) у текстовій консолі, розкладка US/UA |
-| **CONSOLE** | Закриває меню і повертає tty1 звичайному входу в систему; команда `lcdmenu` повертає меню |
+| **CONSOLE** | Закриває меню і відкриває текстову консоль на LCD (tty7) з логіном; команда `lcdmenu` повертає меню |
 | **POWER OFF** | Коректне вимкнення з підтвердженням |
 
 Як це влаштовано:
@@ -42,8 +42,11 @@ Doom, чат з локальною LLM, текстова консоль і ви�
 - **Програми** - pygame малює у поверхню 128×128 в пам'яті, `app/lcd.py` перетворює її в RGB565,
   пише у фреймбуфер, а натискання кнопок HAT і будь-якої USB-клавіатури (і під'єднаної пізніше теж)
   перетворює на події клавіатури pygame.
+- **HDMI** - звичайна консоль Linux (tty1 з логіном). LCD має власну консоль tty7 (`fbcon=map`), тож
+  монітор і LCD працюють одночасно. Поки відкрите меню чи гра, вони перехоплюють кнопки й клавіатуру
+  (`EVIOCGRAB`), щоб натискання не потрапляли в консоль на HDMI.
 - **Меню** - `lcd-menu.service` стартує при завантаженні; ігри запускаються як його дочірні процеси
-  і повертаються в нього. AI-чат працює на tty1 через окремий сервіс, щоб мати справжній термінал
+  і повертаються в нього. AI-чат працює на tty7 (консоль LCD) через окремий сервіс, щоб мати справжній термінал
   (редагування рядка, кирилиця).
 
 ### Файли проєкту
@@ -111,7 +114,8 @@ GPIO 6, 19, 5, 26, 13, 21, 20, 16 (активний низький рівень,
 ```bash
 git clone https://github.com/iyalosovetsky/pico2w-toy.git
 cd pico2w-toy
-./install.sh          # --no-doom - не збирати Doom, --keep-desktop - не вимикати робочий стіл
+./install.sh          # --no-doom - не збирати Doom, --keep-desktop - не вимикати робочий стіл,
+                      # --hdmi-mode=1280x720@60 - інший режим HDMI
 sudo reboot           # лише при першому встановленні: завантажити драйвер дисплея
 ```
 
@@ -120,7 +124,9 @@ sudo reboot           # лише при першому встановленні:
 1. ставить `python3-pygame python3-numpy python3-pil stockfish doom-wad-shareware git build-essential`;
 2. кладе [python-chess](https://github.com/niklasf/python-chess) в `app/vendor` (у репозиторії Raspbian її немає);
 3. записує `/lib/firmware/waveshare144.bin` і дописує `config/boot-config.txt` у `/boot/firmware/config.txt`;
-4. встановлює консольні шрифти, розкладку US+UA, створює `/etc/default/lcd-ai-chat`;
+4. дописує в `/boot/firmware/cmdline.txt` `video=HDMI-A-1:1920x1080@60D` (примусово вмикає HDMI - ядро на Zero
+   часто не бачить монітор, хоча екран завантаження є) і `fbcon=map:0000001` (tty1-6 на HDMI, tty7 на LCD);
+   встановлює консольні шрифти, розкладку US+UA, створює `/etc/default/lcd-ai-chat`;
 5. збирає Doom (`doom/build.sh`);
 6. встановлює й вмикає systemd-сервіси (шляхи й користувач підставляються автоматично);
 7. на образі з робочим столом перемикає завантаження в консоль (`multi-user.target`), бо робочий стіл
@@ -136,14 +142,15 @@ sudo reboot           # лише при першому встановленні:
 | Файл | Куди встановлюється | Що робить |
 |---|---|---|
 | `boot-config.txt` | дописується в `/boot/firmware/config.txt` | SPI, overlay дисплея `mipi-dbi-spi` (розмір, зміщення, піни DC/RST/BL), `gpio-key` для 8 кнопок |
-| `systemd/lcd-menu.service` | `/etc/systemd/system/` | Меню при старті; зупиняє `getty@tty1`, щоб консоль не малювала поверх |
-| `systemd/lcd-console.service` | `/etc/systemd/system/` | Повертає tty1 консолі, коли меню закривається |
-| `systemd/ai-chat.service` | `/etc/systemd/system/` | AI-чат на tty1 зі шрифтом 6×10, після виходу - назад у меню |
-| `lcdmenu` | `/usr/local/bin/` | Команда, щоб повернутися з консолі в меню |
+| `systemd/lcd-menu.service` | `/etc/systemd/system/` | Меню при старті; закриває консоль LCD (tty7) і повертає на передній план HDMI (tty1) |
+| `systemd/lcd-console.service` | `/etc/systemd/system/` | Відкриває консоль на LCD (tty7, шрифт 5×7), коли меню закривається |
+| `systemd/ai-chat.service` | `/etc/systemd/system/` | AI-чат на tty7 (LCD) зі шрифтом 6×10, після виходу - назад у меню |
+| `lcdmenu` | `/usr/local/bin/` | Команда, щоб повернутися з консолі LCD (або з SSH) в меню |
 | `keyboard` | `/etc/default/keyboard` | Розкладки US + українська, Alt+Shift перемикає, світлодіод Scroll Lock = UA |
 | `ai-chat.env` | `/etc/default/lcd-ai-chat` | `AI_URL` сервера LLM (тут - llama.cpp у локальній мережі) |
 
-Консольний шрифт задано рядком `FONT="Uni2-Fixed5x7.psf.gz"` у `/etc/default/console-setup`.
+Консолі на HDMI мають звичайний шрифт; шрифт 5×7 ставиться лише на tty7 (LCD) у `lcd-console.service`.
+`/boot/firmware/cmdline.txt` отримує `video=HDMI-A-1:<режим>D` і `fbcon=map:0000001`.
 
 **Поворот дисплея.** Орієнтацію задає MADCTL у `firmware/mkpanel.py` (`0x68` - поворот на 90°,
 `0x08` - без повороту). Під час повороту міняються місцями зміщення в `boot-config.txt`
@@ -156,7 +163,11 @@ sudo reboot           # лише при першому встановленні:
 ## 7. Нотатки та підводні камені
 
 - **`fbcp` на Bookworm не працює** (KMS прибрав dispmanx). Тут дисплей - справжній DRM/fbdev-пристрій,
-  тому консоль, pygame і Doom малюють прямо в `/dev/fb0`.
+  тому консоль, pygame і Doom малюють прямо у фреймбуфер LCD. Програми шукають його за назвою драйвера
+  (`panel-mipi-dbi`), бо з HDMI він `fb1`, а без - `fb0`.
+- **HDMI на Zero.** Прошивка показує екран завантаження, а ядро може не помітити монітор (hotplug) і
+  не створити для нього консоль - тоді вся консоль опиняється на LCD. `video=HDMI-A-1:...D` вмикає
+  HDMI примусово.
 - **Конфлікт `KEY_ENTER` у Doom.** `linux/input.h` визначає `KEY_ENTER`, `KEY_TAB`, `KEY_F1`... з
   кодами Linux і перекриває однойменні значення з `doomkeys.h` doomgeneric - Doom отримує 28 замість 13
   для Enter, і його меню перестає працювати. `doomgeneric_lcd.c` використовує явні коди Doom.

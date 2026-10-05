@@ -8,6 +8,7 @@
 # every system file that gets changed is backed up once as <file>.bak-lcd.
 #   --no-doom        skip building Doom
 #   --keep-desktop   don't switch a desktop image to console boot
+#   --hdmi-mode=WxH@R  HDMI mode to force (default 1920x1080@60)
 set -e
 
 REPO=$(cd "$(dirname "$0")" && pwd)
@@ -15,10 +16,12 @@ APP_DIR="$REPO/app"
 USER_NAME=$(id -un)
 BUILD_DOOM=1
 KEEP_DESKTOP=0
+HDMI_MODE=1920x1080@60
 for arg in "$@"; do
     case "$arg" in
         --no-doom) BUILD_DOOM=0 ;;
         --keep-desktop) KEEP_DESKTOP=1 ;;
+        --hdmi-mode=*) HDMI_MODE=${arg#--hdmi-mode=} ;;
         *) echo "unknown option: $arg"; exit 1 ;;
     esac
 done
@@ -48,14 +51,26 @@ if ! grep -q "Waveshare 1.44\" LCD HAT" "$CONFIG"; then
     REBOOT=1
 fi
 
-echo "== console font + keyboard layout"
+echo "== kernel command line: HDMI console + LCD console on tty7"
+# The kernel often misses HDMI hotplug on the Zero (the firmware boot screen
+# works, the console doesn't): force the connector on. fbcon=map puts tty1-6 on
+# fb0 (HDMI) and tty7 on fb1 (the LCD) - the AI chat and LCD console use tty7.
+CMDLINE=/boot/firmware/cmdline.txt
+add_cmdline() {  # add_cmdline <key> <param>
+    if ! grep -q "$1" "$CMDLINE"; then
+        backup "$CMDLINE"
+        sudo sed -i "1s|\$| $2|" "$CMDLINE"
+        REBOOT=1
+    fi
+}
+add_cmdline "video=HDMI-A-1" "video=HDMI-A-1:${HDMI_MODE}D"
+add_cmdline "fbcon=map" "fbcon=map:0000001"
+
+echo "== console fonts + keyboard layout"
 sudo cp "$REPO"/fonts/Uni2-Fixed*.psf.gz /usr/share/consolefonts/
-backup /etc/default/console-setup
-if grep -q "^FONT=" /etc/default/console-setup; then
-    sudo sed -i 's|^FONT=.*|FONT="Uni2-Fixed5x7.psf.gz"|' /etc/default/console-setup
-else
-    echo 'FONT="Uni2-Fixed5x7.psf.gz"' | sudo tee -a /etc/default/console-setup >/dev/null
-fi
+# the HDMI consoles keep the normal font; tty7 (LCD) gets 5x7 from lcd-console.service
+# (older versions of this script set 5x7 for all consoles - undo that)
+sudo sed -i '/^FONT="Uni2-Fixed5x7.psf.gz"/d' /etc/default/console-setup
 backup /etc/default/keyboard
 sudo cp "$REPO/config/keyboard" /etc/default/keyboard
 sudo setupcon --save-only >/dev/null 2>&1 || true

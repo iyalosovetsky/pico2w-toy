@@ -1,6 +1,6 @@
 [Unit]
-Description=Give tty1 back to the console after the LCD menu exits
+Description=Text console on the LCD (tty7) after the menu exits
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c "sleep 1; systemctl is-active -q lcd-menu.service || systemctl is-active -q ai-chat.service || systemctl start getty@tty1.service"
+ExecStart=/bin/sh -c "sleep 1; systemctl is-active -q lcd-menu.service || systemctl is-active -q ai-chat.service || { systemctl start getty@tty7.service; setfont -C /dev/tty7 /usr/share/consolefonts/Uni2-Fixed5x7.psf.gz; chvt 7; }"

@@ -29,7 +29,7 @@ joystick and buttons or with a small USB keyboard.
 | **CHESS** | Chess vs. Stockfish 15 (8 levels), undo, promotion choice, auto-saved game |
 | **DOOM** | Doom (shareware episode 1) via [doomgeneric](https://github.com/ozkl/doomgeneric), downscaled to 128×80 |
 | **AI CHAT** | Chat with a local LLM (llama.cpp / any OpenAI-compatible server) on the text console, US/UA keyboard |
-| **CONSOLE** | Leaves the menu and gives tty1 back to a normal login; `lcdmenu` brings the menu back |
+| **CONSOLE** | Leaves the menu and opens a text console with login on the LCD (tty7); `lcdmenu` brings the menu back |
 | **POWER OFF** | Clean shutdown, with confirmation |
 
 How the pieces fit together:
@@ -42,8 +42,11 @@ How the pieces fit together:
 - **Apps** - pygame draws into an off-screen 128×128 surface, `app/lcd.py` converts it to RGB565 and
   writes it to the framebuffer, and turns HAT buttons and any USB keyboard (hot-plugged too) into
   pygame key events.
+- **HDMI** - a normal Linux console (tty1 with login). The LCD has its own console, tty7 (`fbcon=map`),
+  so a monitor and the LCD work at the same time. While the menu or a game runs it grabs the buttons and
+  keyboards (`EVIOCGRAB`) so key presses don't also land in the HDMI console.
 - **Menu** - `lcd-menu.service` starts at boot; games run as its child processes and return to it.
-  The AI chat runs on tty1 through its own service so it gets a real terminal (line editing, Cyrillic).
+  The AI chat runs on tty7 (the LCD console) through its own service so it gets a real terminal (line editing, Cyrillic).
 
 ### Project files
 
@@ -110,7 +113,8 @@ Tested on Raspbian 12 (Bookworm) armhf, kernel 6.12, on a Pi Zero 2 W.
 ```bash
 git clone https://github.com/iyalosovetsky/pico2w-toy.git
 cd pico2w-toy
-./install.sh          # --no-doom: skip Doom, --keep-desktop: leave the desktop on
+./install.sh          # --no-doom: skip Doom, --keep-desktop: leave the desktop on,
+                      # --hdmi-mode=1280x720@60: another HDMI mode
 sudo reboot           # first install only: loads the display driver
 ```
 
@@ -119,7 +123,9 @@ sudo reboot           # first install only: loads the display driver
 1. installs `python3-pygame python3-numpy python3-pil stockfish doom-wad-shareware git build-essential`;
 2. puts [python-chess](https://github.com/niklasf/python-chess) into `app/vendor` (it is not in the Raspbian repo);
 3. writes `/lib/firmware/waveshare144.bin` and appends `config/boot-config.txt` to `/boot/firmware/config.txt`;
-4. installs the console fonts, sets the US+UA keyboard layout, creates `/etc/default/lcd-ai-chat`;
+4. adds `video=HDMI-A-1:1920x1080@60D` to `/boot/firmware/cmdline.txt` (forces HDMI on - the Zero's kernel
+   often misses the monitor even though the boot screen shows) and `fbcon=map:0000001` (tty1-6 on HDMI,
+   tty7 on the LCD); installs the console fonts, sets the US+UA keyboard layout, creates `/etc/default/lcd-ai-chat`;
 5. builds Doom (`doom/build.sh`);
 6. installs and enables the systemd services (paths and user are filled in);
 7. on a desktop image, switches boot to the console (`multi-user.target`) - the desktop would
@@ -135,14 +141,15 @@ All system configuration lives in [`config/`](config):
 | File | Installed as | What it does |
 |---|---|---|
 | `boot-config.txt` | appended to `/boot/firmware/config.txt` | SPI, `mipi-dbi-spi` display overlay (size, offsets, DC/RST/BL pins), `gpio-key` overlays for the 8 buttons |
-| `systemd/lcd-menu.service` | `/etc/systemd/system/` | Menu at boot; stops `getty@tty1` so the console doesn't draw over it |
-| `systemd/lcd-console.service` | `/etc/systemd/system/` | Gives tty1 back to the console when the menu exits |
-| `systemd/ai-chat.service` | `/etc/systemd/system/` | AI chat on tty1 with the 6×10 font, returns to the menu |
-| `lcdmenu` | `/usr/local/bin/` | Command to get back to the menu from the console |
+| `systemd/lcd-menu.service` | `/etc/systemd/system/` | Menu at boot; closes the LCD console (tty7) and brings HDMI (tty1) to the front |
+| `systemd/lcd-console.service` | `/etc/systemd/system/` | Opens the LCD console (tty7, 5×7 font) when the menu exits |
+| `systemd/ai-chat.service` | `/etc/systemd/system/` | AI chat on tty7 (LCD) with the 6×10 font, returns to the menu |
+| `lcdmenu` | `/usr/local/bin/` | Command to get back to the menu from the LCD console (or over SSH) |
 | `keyboard` | `/etc/default/keyboard` | US + Ukrainian layouts, Alt+Shift toggles, Scroll Lock LED = UA |
 | `ai-chat.env` | `/etc/default/lcd-ai-chat` | `AI_URL` of the LLM server (default here: a llama.cpp server on the LAN) |
 
-The console font is set with `FONT="Uni2-Fixed5x7.psf.gz"` in `/etc/default/console-setup`.
+The HDMI consoles keep the normal font; the 5×7 font is set only on tty7 (LCD) by `lcd-console.service`.
+`/boot/firmware/cmdline.txt` gets `video=HDMI-A-1:<mode>D` and `fbcon=map:0000001`.
 
 **Display rotation.** Orientation comes from MADCTL in `firmware/mkpanel.py` (`0x68` = rotated 90°,
 `0x08` = native). Rotating swaps the x/y offsets in `boot-config.txt` (`x-offset=1,y-offset=2` for 0x68,
@@ -155,7 +162,11 @@ their thinking is shown as a single "(думаю...)" ("thinking...") line and i
 ## 7. Notes and gotchas
 
 - **`fbcp` does not work on Bookworm** (KMS removed dispmanx). The display is a real DRM/fbdev device here,
-  so the text console, pygame and Doom all draw to `/dev/fb0` directly.
+  so the text console, pygame and Doom all draw to the LCD framebuffer directly. Apps find it by driver
+  name (`panel-mipi-dbi`): it is `fb1` with HDMI and `fb0` without.
+- **HDMI on the Zero.** The firmware shows the boot screen, but the kernel may miss the monitor (hotplug)
+  and create no console for it - then the whole console ends up on the LCD. `video=HDMI-A-1:...D` forces
+  HDMI on.
 - **`KEY_ENTER` clash in Doom.** `linux/input.h` defines `KEY_ENTER`, `KEY_TAB`, `KEY_F1`... with Linux
   key codes, overriding doomgeneric's `doomkeys.h` values of the same names - Doom then gets 28 instead
   of 13 for Enter and its menus stop working. `doomgeneric_lcd.c` uses explicit Doom codes for those.

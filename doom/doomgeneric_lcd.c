@@ -18,6 +18,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
 
 #define LCD_W 128
 #define LCD_H 128
@@ -175,6 +176,7 @@ static void openButtons(void)
 			snprintf(path, sizeof(path), "/dev/input/%s", de->d_name);
 			int fd = open(path, O_RDONLY | O_NONBLOCK);
 			if (fd >= 0) {
+				ioctl(fd, EVIOCGRAB, 1);  // keys must not also reach the HDMI console
 				inputIsKeyboard[numInputFds] = keyboard;
 				inputFds[numInputFds++] = fd;
 			}

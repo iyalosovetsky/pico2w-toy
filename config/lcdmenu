@@ -1,3 +1,3 @@
 #!/bin/sh
-# return from the text console to the LCD menu
-exec sudo systemctl start lcd-menu.service
+# return from the LCD text console (tty7) to the LCD menu
+exec sudo systemctl start --no-block lcd-menu.service

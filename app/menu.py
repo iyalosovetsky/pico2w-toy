@@ -107,7 +107,9 @@ def poweroff():
 def run(cmd, cwd):
     screen.fill(BG)
     lcd.flip()
+    lcd.release_inputs()  # the game grabs the keys itself
     subprocess.run(cmd, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    lcd.grab_inputs()
     lcd.flush_buttons()
 
 

@@ -1,17 +1,19 @@
 [Unit]
 Description=Launcher menu on Waveshare 1.44" LCD HAT
 After=systemd-user-sessions.service
-# keep the text console from drawing over the menu/games
-Conflicts=getty@tty1.service
+# the menu and the LCD text console (tty7) share the screen
+Conflicts=getty@tty7.service
 OnSuccess=lcd-console.service
 
 [Service]
 User=@USER@
 WorkingDirectory=@APP_DIR@
-ExecStartPre=/bin/sh -c "for i in $(seq 30); do [ -e /dev/fb0 ] && exit 0; sleep 1; done; exit 1"
-ExecStartPre=+/bin/sh -c "echo 0 > /sys/class/graphics/fbcon/cursor_blink"
+# wait for the LCD framebuffer (it is fb1 when HDMI is fb0)
+ExecStartPre=/bin/sh -c "for i in $(seq 30); do grep -qs mipi /sys/class/graphics/fb*/name && exit 0; sleep 1; done; exit 1"
+# leaving the LCD console: log out tty7 and bring the HDMI console (tty1) to the front
+ExecStartPre=-+/usr/bin/pkill -HUP -t tty7
+ExecStartPre=+/bin/chvt 1
 ExecStart=/usr/bin/python3 @APP_DIR@/menu.py
-ExecStopPost=+/bin/sh -c "echo 1 > /sys/class/graphics/fbcon/cursor_blink"
 Restart=on-failure
 RestartSec=3
 

@@ -1,7 +1,7 @@
 
 # --- Waveshare 1.44" LCD HAT (ST7735S 128x128) ---
 # Appended to /boot/firmware/config.txt by install.sh.
-# Display: kernel panel-mipi-dbi driver -> /dev/fb0 + DRM, init commands in
+# Display: kernel panel-mipi-dbi driver -> framebuffer + DRM, init commands in
 # /lib/firmware/waveshare144.bin (firmware/mkpanel.py).
 [all]
 dtparam=spi=on
