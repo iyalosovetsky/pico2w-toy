@@ -42,7 +42,9 @@ _last_scan = 0.0
 RESCAN_SECONDS = 2  # pick up keyboards plugged in later
 _EVENT = struct.Struct("llHHi")  # struct input_event
 EVIOCGRAB = 0x40044590
-_grabbing = True
+_grabbing = True      # grab inputs at all (False while a child app runs)
+_grab_keyboards = True  # False while the USB keyboard is lent to the HDMI console
+_hat_fds = set()      # HAT buttons (gpio-key), as opposed to USB keyboards
 
 
 def _find_fb():
@@ -82,7 +84,9 @@ def _scan_inputs():
                 fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
                 _inputs.append(fd)
                 _input_paths[fd] = dev
-                if _grabbing:
+                if name.startswith("button@"):
+                    _hat_fds.add(fd)
+                if _grabbing and (fd in _hat_fds or _grab_keyboards):
                     _grab(fd, True)
         except OSError:
             pass  # device vanished or not accessible (yet)
@@ -106,7 +110,8 @@ def _pump_buttons():
             _, _, etype, code, value = _EVENT.unpack_from(data, i)
             if etype == 1 and code in KEYMAP and value in (0, 1):  # EV_KEY, no autorepeat
                 kind = pygame.KEYDOWN if value else pygame.KEYUP
-                pygame.event.post(pygame.event.Event(kind, key=KEYMAP[code], mod=0, unicode="", scancode=code))
+                pygame.event.post(pygame.event.Event(kind, key=KEYMAP[code], mod=0, unicode="",
+                                                     scancode=code, hat=fd in _hat_fds))
 
 
 def init():
@@ -170,13 +175,27 @@ def release_inputs():
 
 def grab_inputs():
     """Take the buttons and keyboards back (exclusive) after a child exits."""
-    global _grabbing
-    _grabbing = True
+    global _grabbing, _grab_keyboards
+    _grabbing = _grab_keyboards = True
     for fd in _inputs:
         _grab(fd, True)
+
+
+def release_keyboards():
+    """Lend the USB keyboards to the text console; keep the HAT buttons.
+
+    Events keep coming in (with ev.hat telling HAT buttons apart), but the
+    keyboards are no longer exclusive, so typing reaches the HDMI console too.
+    """
+    global _grab_keyboards
+    _grab_keyboards = False
+    for fd in _inputs:
+        if fd not in _hat_fds:
+            _grab(fd, False)
 
 
 def _drop_input(fd):
     _inputs.remove(fd)
     _input_paths.pop(fd, None)
+    _hat_fds.discard(fd)
     os.close(fd)

@@ -1,8 +1,9 @@
-"""Launcher menu for the Waveshare 1.44\" LCD HAT: Pong / Tetris / Poker / Chess / Doom / AI chat / Console / Power off.
+"""Launcher menu for the Waveshare 1.44\" LCD HAT: Pong / Tetris / Poker / Chess / Doom / AI chat / Console / HDMI / Power off.
 
 Joystick UP/DOWN - choose, PRESS or KEY1 - run.
 USB keyboard: arrows, Enter / Space - run.
-Games return here when they exit; CONSOLE ends the menu and gives tty1 back.
+Games return here when they exit; CONSOLE ends the menu and opens the LCD
+console (tty7); HDMI lends the USB keyboard to the HDMI console (tty1) until KEY3.
 """
 import os
 import socket
@@ -20,6 +21,7 @@ ITEMS = [
     ("DOOM", "E1", [HERE + "/doom/doomlcd", "-iwad", "/usr/share/games/doom/doom1.wad"], HERE + "/doom"),
     ("AI CHAT", "zen4", "aichat", None),
     ("CONSOLE", "tty", None, None),
+    ("HDMI", "keyboard", "hdmi", None),
     ("POWER OFF", "", "poweroff", None),
 ]
 POWEROFF_CMD = ["sudo", "-n", "/usr/bin/systemctl", "poweroff"]
@@ -78,6 +80,28 @@ def message(title, *lines, color=ACCENT):
     lcd.flip()
 
 
+def hdmi_console():
+    """Give the USB keyboard to the HDMI console until KEY3 on the HAT.
+
+    The HAT buttons stay with the menu so they can't type into the shell.
+    Returns False if the menu was asked to quit meanwhile.
+    """
+    lcd.release_keyboards()
+    subprocess.run(["sudo", "-n", "/bin/chvt", "1"])
+    message("HDMI", "keyboard -> HDMI", "console (tty1)", "", "KEY3: back")
+    try:
+        while True:
+            for ev in pygame.event.get():
+                if ev.type == pygame.QUIT:
+                    return False
+                if ev.type == pygame.KEYDOWN and getattr(ev, "hat", False) and ev.key == pygame.K_3:
+                    return True
+            clock.tick(20)
+    finally:
+        lcd.grab_inputs()
+        lcd.flush_buttons()
+
+
 def confirm_poweroff():
     """Ask for confirmation; True only for PRESS / KEY1."""
     message("POWER OFF?", "PRESS / KEY1 / Enter: yes", "other key: cancel", color=(255, 80, 80))
@@ -129,11 +153,13 @@ while running:
                 if cmd is None:
                     running = False
                 elif cmd == "aichat":
-                    # runs on the text console (tty1); systemd stops this menu
+                    # runs on the LCD text console (tty7); systemd stops this menu
                     # and brings it back when the chat ends
                     message("AI CHAT", "starting...")
                     subprocess.run(["sudo", "-n", "/usr/bin/systemctl", "start",
                                     "--no-block", "ai-chat.service"])
+                elif cmd == "hdmi":
+                    running = hdmi_console()
                 elif cmd == "poweroff":
                     if confirm_poweroff():
                         poweroff()

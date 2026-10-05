@@ -30,6 +30,7 @@ joystick and buttons or with a small USB keyboard.
 | **DOOM** | Doom (shareware episode 1) via [doomgeneric](https://github.com/ozkl/doomgeneric), downscaled to 128×80 |
 | **AI CHAT** | Chat with a local LLM (llama.cpp / any OpenAI-compatible server) on the text console, US/UA keyboard |
 | **CONSOLE** | Leaves the menu and opens a text console with login on the LCD (tty7); `lcdmenu` brings the menu back |
+| **HDMI** | Lends the USB keyboard to the console on the monitor (tty1); the HAT buttons stay with the menu, KEY3 takes the keyboard back |
 | **POWER OFF** | Clean shutdown, with confirmation |
 
 How the pieces fit together:
@@ -44,7 +45,8 @@ How the pieces fit together:
   pygame key events.
 - **HDMI** - a normal Linux console (tty1 with login). The LCD has its own console, tty7 (`fbcon=map`),
   so a monitor and the LCD work at the same time. While the menu or a game runs it grabs the buttons and
-  keyboards (`EVIOCGRAB`) so key presses don't also land in the HDMI console.
+  keyboards (`EVIOCGRAB`) so key presses don't also land in the HDMI console. To type on the monitor, use the
+  **HDMI** menu item.
 - **Menu** - `lcd-menu.service` starts at boot; games run as its child processes and return to it.
   The AI chat runs on tty7 (the LCD console) through its own service so it gets a real terminal (line editing, Cyrillic).
 
