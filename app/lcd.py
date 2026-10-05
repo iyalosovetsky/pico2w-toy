@@ -155,7 +155,7 @@ def flush_buttons():
             pass
         except OSError:  # device went away
             _drop_input(fd)
-    pygame.event.clear()
+    pygame.event.clear((pygame.KEYDOWN, pygame.KEYUP))  # keep QUIT (SIGTERM) pending
 
 
 def _grab(fd, on):
