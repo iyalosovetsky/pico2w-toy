@@ -1,4 +1,4 @@
-"""Launcher menu for the Waveshare 1.44\" LCD HAT: Pong / Tetris / Poker / Chess / Doom / AI chat / Console / HDMI / Power off.
+"""Launcher menu for the Waveshare 1.44\" LCD HAT: Pong / Tetris / Poker / Chess / Preferans / Doom / AI chat / Console / HDMI / Power off.
 
 Joystick UP/DOWN - choose, PRESS or KEY1 - run.
 USB keyboard: arrows, Enter / Space - run.
@@ -18,6 +18,7 @@ ITEMS = [
     ("TETRIS", "", ["/usr/bin/python3", HERE + "/tetris.py"], HERE),
     ("POKER", "hold'em", ["/usr/bin/python3", HERE + "/poker.py"], HERE),
     ("CHESS", "stockfish", ["/usr/bin/python3", HERE + "/chessgame.py"], HERE),
+    ("PREFERANS", "", ["/usr/bin/python3", HERE + "/preferans.py"], HERE),
     ("DOOM", "E1", [HERE + "/doom/doomlcd", "-iwad", "/usr/share/games/doom/doom1.wad"], HERE + "/doom"),
     ("AI CHAT", "zen4", "aichat", None),
     ("CONSOLE", "tty", None, None),

@@ -14,8 +14,8 @@ Doom, чат з локальною LLM, текстова консоль і ви�
 | Меню | Pong | Тетріс | Покер |
 |:---:|:---:|:---:|:---:|
 | ![menu](docs/gif/menu.gif) | ![pong](docs/gif/pong.gif) | ![tetris](docs/gif/tetris.gif) | ![poker](docs/gif/poker.gif) |
-| **Шахи** | **Doom** | **AI-чат** | |
-| ![chess](docs/gif/chess.gif) | ![doom](docs/gif/doom.gif) | ![aichat](docs/gif/aichat.gif) | |
+| **Шахи** | **Преферанс** | **Doom** | **AI-чат** |
+| ![chess](docs/gif/chess.gif) | ![preferans](docs/gif/preferans.gif) | ![doom](docs/gif/doom.gif) | ![aichat](docs/gif/aichat.gif) |
 
 *(GIF записані прямо з фреймбуфера дисплея скриптом `tools/record_gif.py`, збільшені вдвічі.)*
 
@@ -27,6 +27,7 @@ Doom, чат з локальною LLM, текстова консоль і ви�
 | **TETRIS** | Тетріс 10×20: тінь фігури, поворот біля стіни, «мішок» із 7 фігур, рівні, рекорд зберігається |
 | **POKER** | Техаський холдем один на один проти AI (Монте-Карло), блайнди ростуть |
 | **CHESS** | Шахи проти Stockfish 15 (8 рівнів), відкат ходу, вибір фігури при перетворенні, автозбереження |
+| **PREFERANS** | Преферанс проти двох AI, Сочинка, пулька до 20, автозбереження пульки. Рушій і AI - [Python Pref](https://python-pref.sourceforge.io/index_ru.html) (той самий, що був для Nokia/Symbian), портований на Python 3 |
 | **DOOM** | Doom (shareware, 1-й епізод) на [doomgeneric](https://github.com/ozkl/doomgeneric), зменшений до 128×80 |
 | **AI CHAT** | Чат з локальною LLM (llama.cpp або будь-який OpenAI-сумісний сервер) у текстовій консолі, розкладка US/UA |
 | **CONSOLE** | Закриває меню і відкриває текстову консоль на LCD (tty7) з логіном; команда `lcdmenu` повертає меню |
@@ -59,6 +60,8 @@ Doom, чат з локальною LLM, текстова консоль і ви�
 | `app/lcd.py` | Спільний шар дисплея та вводу для всіх програм на pygame |
 | `app/menu.py` | Меню запуску (список із прокручуванням) |
 | `app/pong.py`, `app/tetris.py`, `app/poker.py`, `app/chessgame.py` | Ігри |
+| `app/preferans.py` | Інтерфейс преферансу 128×128 для рушія PyPref |
+| `app/prefgame/` | Рушій і AI [Python Pref](https://sourceforge.net/projects/python-pref/) 2.34, портовані на Python 3 (GPL-3.0) |
 | `app/ai_chat.py` | Клієнт чату з потоковою відповіддю для llama.cpp / OpenAI-сумісного сервера |
 | `app/demo.py` | Мінімальний приклад на pygame: намалювати щось і прочитати кнопки |
 | `doom/doomgeneric_lcd.c` | Backend для doomgeneric: 320×200 → 128×80 зі згладжуванням, RGB565, кнопки HAT + клавіатура |
@@ -86,6 +89,7 @@ Doom, чат з локальною LLM, текстова консоль і ви�
 | Тетріс | ←/→ рух, ↓ прискорити, ↑ або Enter поворот, KEY1/Space скинути, 2 пауза |
 | Покер | ←/→ вибір FOLD / CHECK-CALL / BET-RAISE, ↑/↓ розмір ставки, 2 - ва-банк |
 | Шахи | джойстик рухає курсор, Enter бере / ставить фігуру, 2 - меню (відкат, нова гра) |
+| Преферанс | ←/→ карта або заявка, ↑/↓ заявка на рівень вище / нижче, Enter - підтвердити; при зносі Enter відкладає карту, ↓ повертає, Enter ще раз - знести; 2 - запис пульки |
 | Doom | HAT: джойстик рух, натиск - постріл (+Enter), KEY1 двері (+«y»), KEY2 наступна зброя, KEY3 меню. Клавіатура: стрілки, Ctrl постріл, Space двері, Alt боком, Shift біг, 1-7 зброя, Tab карта, Esc меню |
 | AI-чат | пишете й Enter; `/new`, `/think` (міркування моделі), `/quit` або Ctrl+D; Ctrl+C зупиняє відповідь; Alt+Shift - US/UA |
 
@@ -191,12 +195,14 @@ sudo reboot           # лише при першому встановленні:
 | Doom shareware WAD ([doom-wad-shareware](https://packages.debian.org/bookworm/doom-wad-shareware)) | Дані гри, 1-й епізод | shareware-ліцензія id Software |
 | [Stockfish](https://stockfishchess.org/) | Шаховий рушій | GPL-3.0 |
 | [python-chess](https://github.com/niklasf/python-chess) | Правила шахів, керування рушієм по UCI | GPL-3.0 |
+| [Python Pref](https://python-pref.sourceforge.io/index_ru.html) 2.34 (amigo, Вадим Заплетін; на основі kpref і OpenPref) | Рушій і AI преферансу в `app/prefgame/` | GPL-3.0 |
 | Шрифти X11 misc-fixed ([xfonts-base](https://packages.debian.org/bookworm/xfonts-base)) | Джерело консольних шрифтів 5×7 і 6×10 | Public domain |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | LLM-сервер для AI-чату (працює на іншій машині) | MIT |
 
 ## 9. Ліцензія
 
 [GPL-3.0-or-later](LICENSE). Backend для Doom походить від doomgeneric / Chocolate Doom
-(GPL-2.0-or-later), а шахи використовують python-chess (GPL-3.0), тож проєкт загалом - під GPL-3.0.
+(GPL-2.0-or-later), а шахи використовують python-chess (GPL-3.0), а преферанс - рушій Python Pref (GPL-3.0), тож проєкт
+загалом - під GPL-3.0.
 Shareware WAD для Doom не входить у репозиторій: він встановлюється з пакета `doom-wad-shareware`
 за shareware-ліцензією id Software.

@@ -14,8 +14,8 @@ joystick and buttons or with a small USB keyboard.
 | Menu | Pong | Tetris | Poker |
 |:---:|:---:|:---:|:---:|
 | ![menu](docs/gif/menu.gif) | ![pong](docs/gif/pong.gif) | ![tetris](docs/gif/tetris.gif) | ![poker](docs/gif/poker.gif) |
-| **Chess** | **Doom** | **AI chat** | |
-| ![chess](docs/gif/chess.gif) | ![doom](docs/gif/doom.gif) | ![aichat](docs/gif/aichat.gif) | |
+| **Chess** | **Preferans** | **Doom** | **AI chat** |
+| ![chess](docs/gif/chess.gif) | ![preferans](docs/gif/preferans.gif) | ![doom](docs/gif/doom.gif) | ![aichat](docs/gif/aichat.gif) |
 
 *(GIFs are recorded straight from the display's framebuffer with `tools/record_gif.py`, 2× scaled.)*
 
@@ -27,6 +27,7 @@ joystick and buttons or with a small USB keyboard.
 | **TETRIS** | 10×20 Tetris: ghost piece, wall kicks, 7-bag, levels, saved high score |
 | **POKER** | Heads-up Texas Hold'em vs. a Monte-Carlo AI, rising blinds |
 | **CHESS** | Chess vs. Stockfish 15 (8 levels), undo, promotion choice, auto-saved game |
+| **PREFERANS** | Preferans (Russian whist) against two computer players, Sochi rules, pulka to 20, auto-saved. Engine and AI: [Python Pref](https://python-pref.sourceforge.io/index_ru.html) (the same one that ran on Nokia/Symbian), ported to Python 3 |
 | **DOOM** | Doom (shareware episode 1) via [doomgeneric](https://github.com/ozkl/doomgeneric), downscaled to 128×80 |
 | **AI CHAT** | Chat with a local LLM (llama.cpp / any OpenAI-compatible server) on the text console, US/UA keyboard |
 | **CONSOLE** | Leaves the menu and opens a text console with login on the LCD (tty7); `lcdmenu` brings the menu back |
@@ -58,6 +59,8 @@ How the pieces fit together:
 | `app/lcd.py` | Shared display + input layer for all pygame apps |
 | `app/menu.py` | Launcher menu (scrolling list) |
 | `app/pong.py`, `app/tetris.py`, `app/poker.py`, `app/chessgame.py` | The games |
+| `app/preferans.py` | 128×128 Preferans front-end for the PyPref engine |
+| `app/prefgame/` | [Python Pref](https://sourceforge.net/projects/python-pref/) 2.34 engine and AI, ported to Python 3 (GPL-3.0) |
 | `app/ai_chat.py` | Streaming chat client for a llama.cpp / OpenAI-compatible server |
 | `app/demo.py` | Minimal pygame example: draw something, read the buttons |
 | `doom/doomgeneric_lcd.c` | doomgeneric backend: 320×200 → 128×80 box-filtered RGB565, HAT buttons + keyboard |
@@ -85,6 +88,7 @@ Per game:
 | Tetris | ←/→ move, ↓ soft drop, ↑ or Enter rotate, KEY1/Space hard drop, 2 pause |
 | Poker | ←/→ choose FOLD / CHECK-CALL / BET-RAISE, ↑/↓ bet size, 2 - all-in amount |
 | Chess | joystick moves the cursor, Enter picks up / drops a piece, 2 - menu (undo, new game) |
+| Preferans | ←/→ card or bid, ↑/↓ bid one level up / down, Enter confirms; when discarding Enter puts a card aside, ↓ takes it back, Enter again discards; 2 - score sheet |
 | Doom | HAT: joystick move, press fire (+Enter), KEY1 use (+"y"), KEY2 next weapon, KEY3 menu. Keyboard: arrows, Ctrl fire, Space use, Alt strafe, Shift run, 1-7 weapons, Tab map, Esc menu |
 | AI chat | type and Enter; `/new`, `/think` (toggle model reasoning), `/quit` or Ctrl+D; Ctrl+C stops an answer; Alt+Shift switches US/UA |
 
@@ -189,12 +193,14 @@ their thinking is shown as a single "(думаю...)" ("thinking...") line and i
 | Doom shareware WAD ([doom-wad-shareware](https://packages.debian.org/bookworm/doom-wad-shareware)) | Episode 1 game data | id Software shareware licence |
 | [Stockfish](https://stockfishchess.org/) | Chess engine | GPL-3.0 |
 | [python-chess](https://github.com/niklasf/python-chess) | Chess rules, UCI engine control | GPL-3.0 |
+| [Python Pref](https://python-pref.sourceforge.io/index_ru.html) 2.34 (amigo, Vadim Zapletin; based on kpref and OpenPref) | Preferans engine and AI in `app/prefgame/` | GPL-3.0 |
 | X11 misc-fixed fonts ([xfonts-base](https://packages.debian.org/bookworm/xfonts-base)) | Source of the 5×7 and 6×10 console fonts | Public domain |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | LLM server for the AI chat (runs on another machine) | MIT |
 
 ## 9. License
 
 [GPL-3.0-or-later](LICENSE). The Doom backend is derived from doomgeneric / Chocolate Doom
-(GPL-2.0-or-later) and the chess app uses python-chess (GPL-3.0), so the project as a whole is GPL-3.0.
+(GPL-2.0-or-later) the chess app uses python-chess (GPL-3.0) and Preferans uses the Python Pref engine (GPL-3.0), so the
+project as a whole is GPL-3.0.
 The Doom shareware WAD is not part of this repository; it is installed from the
 `doom-wad-shareware` package under id Software's shareware licence.
