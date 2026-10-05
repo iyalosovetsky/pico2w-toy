@@ -123,7 +123,7 @@ The printable case is in [`case/`](case):
 |---|---|
 | `pico-toy.FCStd` | FreeCAD model (V2, without the scan mesh of the device it was modelled around) |
 | `pico-toy-base.stl` | Base: a 37×40×68 mm box that holds the board stack |
-| `pico-toy-leftFall.stl` | Side cover, 39×40×14 mm |
+| `pico-toy-leftFall.stl` | Side cover, 39×40×14 mm - **work in progress** |
 
 The STL files are exported from the FreeCAD model (0.02 mm deflection). The first version without a
 case: [`docs/prototype-v1.jpg`](docs/prototype-v1.jpg).
