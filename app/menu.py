@@ -5,6 +5,7 @@ USB keyboard: arrows, Enter / Space - run.
 Games return here when they exit; CONSOLE ends the menu and gives tty1 back.
 """
 import os
+import socket
 import subprocess
 
 import pygame
@@ -30,6 +31,9 @@ ACCENT = (255, 200, 0)
 
 screen = lcd.init()
 font_title = pygame.font.Font(None, 22)
+TITLE = socket.gethostname().split(".")[0].upper()  # the menu header shows the hostname
+while font_title.size(TITLE)[0] > 120 and font_title.get_height() > 10:  # long names: smaller font
+    font_title = pygame.font.Font(None, font_title.get_height() - 2)
 font_item = pygame.font.Font(None, 20)
 VISIBLE = 5     # rows on screen; the list scrolls
 ROW_H = 20
@@ -42,7 +46,7 @@ def draw(sel):
     global top
     top = min(max(top, sel - VISIBLE + 1), sel)  # keep the selection on screen
     screen.fill(BG)
-    t = font_title.render("ZEROSEED", True, ACCENT)
+    t = font_title.render(TITLE, True, ACCENT)
     screen.blit(t, ((128 - t.get_width()) // 2, 5))
     pygame.draw.line(screen, DIM, (8, 22), (119, 22))
     for i in range(top, min(top + VISIBLE, len(ITEMS))):
