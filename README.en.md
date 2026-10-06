@@ -25,7 +25,13 @@ joystick and buttons or with a small USB keyboard.
 
 ## PicoCalc
 
-![PicoCalc: menu, Tetris, chess, Doom, Preferans, AI chat](docs/picocalc-screens.png)
+| Menu | Pong | Tetris | Poker |
+|:---:|:---:|:---:|:---:|
+| ![menu](docs/gif-picocalc/menu.gif) | ![pong](docs/gif-picocalc/pong.gif) | ![tetris](docs/gif-picocalc/tetris.gif) | ![poker](docs/gif-picocalc/poker.gif) |
+| **Chess** | **Preferans** | **Doom** | **AI chat** |
+| ![chess](docs/gif-picocalc/chess.gif) | ![preferans](docs/gif-picocalc/preferans.gif) | ![doom](docs/gif-picocalc/doom.gif) | ![aichat](docs/gif-picocalc/aichat.gif) |
+
+*(GIFs recorded 1:1 from the PicoCalc framebuffer, 320×320, with `tools/record_gif.py`.)*
 
 The same apps on a PicoCalc with a Zero 2 W running Raspberry Pi OS **Trixie** Lite (32-bit):
 

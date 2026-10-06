@@ -25,7 +25,13 @@ Doom, чат з локальною LLM, текстова консоль і ви�
 
 ## PicoCalc
 
-![PicoCalc: меню, тетріс, шахи, Doom, преферанс, AI-чат](docs/picocalc-screens.png)
+| Меню | Pong | Тетріс | Покер |
+|:---:|:---:|:---:|:---:|
+| ![menu](docs/gif-picocalc/menu.gif) | ![pong](docs/gif-picocalc/pong.gif) | ![tetris](docs/gif-picocalc/tetris.gif) | ![poker](docs/gif-picocalc/poker.gif) |
+| **Шахи** | **Преферанс** | **Doom** | **AI-чат** |
+| ![chess](docs/gif-picocalc/chess.gif) | ![preferans](docs/gif-picocalc/preferans.gif) | ![doom](docs/gif-picocalc/doom.gif) | ![aichat](docs/gif-picocalc/aichat.gif) |
+
+*(GIF записані з фреймбуфера PicoCalc 1:1, 320×320, скриптом `tools/record_gif.py`.)*
 
 Ті самі програми на PicoCalc із Zero 2 W під Raspberry Pi OS **Trixie** Lite (32-bit):
 
