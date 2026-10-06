@@ -77,6 +77,17 @@ Doom і вмикає сервіси. Що має бути в `config.txt` - ди
   Усі програми виходять штатно по SIGTERM, Doom теж (власний обробник → `I_Quit()`).
 - **Буфер 2048 семплів на 44100 Гц:** з меншим буфером Python не встигає і сиплються underrun.
 
+### Задня кришка для Zero 2 W
+
+![Задня кришка PicoCalc під Zero 2 W](docs/picocalc-back.png)
+
+Задня кришка PicoCalc 172×103×20 мм під zero mod (Zero 2 W замість Pico):
+
+| Файл | Що це |
+|---|---|
+| [`case/myPicoCalcZero2wV2.FCStd`](case/myPicoCalcZero2wV2.FCStd) | Модель FreeCAD (тіло `backCase`) |
+| [`case/picocalc-zero2w-back.stl`](case/picocalc-zero2w-back.stl) | STL для друку (вивантажено з моделі, точність 0.02 мм) |
+
 ## 1. Опис
 
 | Пункт меню | Що це |

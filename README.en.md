@@ -78,6 +78,17 @@ sound), adds audio to `config.txt`, installs `/etc/asound.conf` (PWM output) and
   Every app exits normally on SIGTERM, Doom too (its own handler → `I_Quit()`).
 - **A 2048-sample buffer at 44100 Hz:** with smaller buffers Python can't keep up and underruns.
 
+### Back cover for the Zero 2 W
+
+![PicoCalc back cover for the Zero 2 W](docs/picocalc-back.png)
+
+A 172×103×20 mm PicoCalc back cover for the zero mod (a Zero 2 W instead of the Pico):
+
+| File | What it is |
+|---|---|
+| [`case/myPicoCalcZero2wV2.FCStd`](case/myPicoCalcZero2wV2.FCStd) | FreeCAD model (body `backCase`) |
+| [`case/picocalc-zero2w-back.stl`](case/picocalc-zero2w-back.stl) | STL for printing (exported from the model, 0.02 mm deflection) |
+
 ## 1. Description
 
 | Menu item | What it is |
