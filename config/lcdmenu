@@ -1,3 +1,3 @@
 #!/bin/sh
-# return from the LCD text console (tty7) to the LCD menu
+# return from the text console to the menu on the PicoCalc screen
 exec sudo systemctl start --no-block lcd-menu.service

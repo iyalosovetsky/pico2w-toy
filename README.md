@@ -2,6 +2,10 @@
 
 # pico2w-toy
 
+> **Гілка `picocalc`** - версія для [ClockworkPi PicoCalc](https://www.clockworkpi.com/picocalc) з
+> Raspberry Pi Zero 2 W замість Pico (zero mod). Опис саме для PicoCalc - у розділі
+> [PicoCalc](#picocalc) нижче; решта README описує основну версію з HAT (гілка `main`).
+
 Кишенькова ігрова консоль / AI-термінал на **Raspberry Pi Zero 2 W** і **Waveshare 1.44" LCD HAT**
 (128×128, джойстик + 3 кнопки) під звичайною Raspberry Pi OS Bookworm.
 
@@ -18,6 +22,52 @@ Doom, чат з локальною LLM, текстова консоль і ви�
 | ![chess](docs/gif/chess.gif) | ![preferans](docs/gif/preferans.gif) | ![doom](docs/gif/doom.gif) | ![aichat](docs/gif/aichat.gif) |
 
 *(GIF записані прямо з фреймбуфера дисплея скриптом `tools/record_gif.py`, збільшені вдвічі.)*
+
+## PicoCalc
+
+![PicoCalc: меню, тетріс, шахи, Doom, преферанс, AI-чат](docs/picocalc-screens.png)
+
+Ті самі програми на PicoCalc із Zero 2 W під Raspberry Pi OS **Trixie** Lite (32-bit):
+
+- **Дисплей 320×320** (ST7365P, той самий драйвер `panel-mipi-dbi`). Ігри далі рахують у
+  координатах 128×128, а `app/lcd.py` малює все в рідній роздільності: прямокутники, лінії, кола
+  й шрифти множаться на `lcd.S` = 2.5, тож текст і графіка чіткі, а не розтягнуті. На HAT
+  (S = 1) нічого не змінюється.
+- **Клавіатура** PicoCalc (драйвер `picocalc_kbd`) працює як звичайна: стрілки, Enter, Esc,
+  цифри. Підказки на екрані пишуть «Enter / 2 / Esc» замість «PRESS / KEY2 / KEY3».
+- **Звук** - PWM на GPIO 12/13 (`dtoverlay=audremap,pins_12_13`) у динаміки PicoCalc: ефекти в
+  Pong, тетрісі, покері, шахах, преферансі й меню; пункт меню **SOUND** вмикає/вимикає їх, гучність -
+  `LCD_VOLUME` у `/etc/default/lcd-toy`. Doom збирається зі звуком через SDL2_mixer.
+- **Doom** показує кадр 320×200 один до одного (без зменшення), по центру екрана.
+- **AI-чат** - на tty7 шрифтом Terminus 8×16 (40×20 символів).
+- **Консолі:** меню працює на tty8 у графічному режимі (щоб ядро нічого не малювало поверх),
+  **CONSOLE** відкриває звичайну tty1 з автологіном, `lcdmenu` повертає меню. Пункту HDMI
+  немає - він з'являється лише там, де є HDMI-фреймбуфер.
+
+### Встановлення на PicoCalc
+
+1. Raspberry Pi OS Trixie Lite 32-bit, дисплей і клавіатура - за кроками 4-5
+   [picocalc_trixie](https://github.com/ironat/picocalc_trixie) (`picomipi.bin`, `picocalc_kbd`).
+2. Далі:
+
+```bash
+git clone -b picocalc https://github.com/iyalosovetsky/pico2w-toy.git
+cd pico2w-toy
+./install.sh          # --no-doom - не збирати Doom
+```
+
+`install.sh` перевіряє дисплей і клавіатуру, ставить пакети (разом із SDL2 для звуку Doom),
+додає звук у `config.txt`, кладе `/etc/asound.conf` (вихід PWM), `/etc/default/lcd-toy`, збирає
+Doom і вмикає сервіси. Що має бути в `config.txt` - див. [`config/boot-config.txt`](config/boot-config.txt).
+
+### Підводні камені звуку на PicoCalc
+
+- **`dmix` не годиться:** на картці bcm2835 він зависає при закритті пристрою. Тому
+  `/etc/asound.conf` дає прямий доступ (`plug` → `hw:Headphones`), а меню звільняє звук на час гри.
+- **Не вбивати процес зі звуком:** якщо процес убито, поки звук відкритий, драйвер
+  `bcm2835-audio` хвилинами закриває пристрій («failed to close VCHI service connection»).
+  Усі програми виходять штатно по SIGTERM, Doom теж (власний обробник → `I_Quit()`).
+- **Буфер 2048 семплів на 44100 Гц:** з меншим буфером Python не встигає і сиплються underrun.
 
 ## 1. Опис
 
@@ -131,6 +181,9 @@ GPIO 6, 19, 5, 26, 13, 21, 20, 16 (активний низький рівень,
 
 ## 5. Встановлення
 
+> На гілці `picocalc` `install.sh` і `config/` - для PicoCalc (див. [PicoCalc](#picocalc)).
+> Для HAT беріть гілку `main`: `git clone https://github.com/iyalosovetsky/pico2w-toy.git`.
+
 Перевірено на Raspbian 12 (Bookworm) armhf, ядро 6.12, Pi Zero 2 W.
 
 ```bash
@@ -158,6 +211,9 @@ sudo reboot           # лише при першому встановленні:
 безпечно. Оновлення - `git pull && ./install.sh`.
 
 ## 6. Конфігурація
+
+> Таблиця нижче - для HAT (гілка `main`). На гілці `picocalc` у `config/` лежать файли для PicoCalc:
+> `asound.conf`, `lcd-toy.env`, `lcd-vt` і сервіси під tty1/tty7/tty8.
 
 Уся системна конфігурація лежить у [`config/`](config):
 

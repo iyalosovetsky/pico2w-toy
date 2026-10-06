@@ -2,6 +2,10 @@
 
 # pico2w-toy
 
+> **Branch `picocalc`** - the version for the [ClockworkPi PicoCalc](https://www.clockworkpi.com/picocalc)
+> with a Raspberry Pi Zero 2 W instead of the Pico (zero mod). PicoCalc specifics are in the
+> [PicoCalc](#picocalc) section below; the rest of the README describes the main HAT version (branch `main`).
+
 A pocket game console / AI terminal built from a **Raspberry Pi Zero 2 W** and a **Waveshare 1.44" LCD HAT**
 (128×128, joystick + 3 buttons), running stock Raspberry Pi OS Bookworm.
 
@@ -18,6 +22,53 @@ joystick and buttons or with a small USB keyboard.
 | ![chess](docs/gif/chess.gif) | ![preferans](docs/gif/preferans.gif) | ![doom](docs/gif/doom.gif) | ![aichat](docs/gif/aichat.gif) |
 
 *(GIFs are recorded straight from the display's framebuffer with `tools/record_gif.py`, 2× scaled.)*
+
+## PicoCalc
+
+![PicoCalc: menu, Tetris, chess, Doom, Preferans, AI chat](docs/picocalc-screens.png)
+
+The same apps on a PicoCalc with a Zero 2 W running Raspberry Pi OS **Trixie** Lite (32-bit):
+
+- **320×320 display** (ST7365P, the same `panel-mipi-dbi` driver). The games still work in a
+  128×128 coordinate space and `app/lcd.py` draws everything at the native resolution: rects,
+  lines, circles and fonts are multiplied by `lcd.S` = 2.5, so text and graphics are sharp, not
+  upscaled. Nothing changes on the HAT (S = 1).
+- **The PicoCalc keyboard** (`picocalc_kbd` driver) works like any keyboard: arrows, Enter, Esc,
+  digits. On-screen hints say "Enter / 2 / Esc" instead of "PRESS / KEY2 / KEY3".
+- **Sound** - PWM on GPIO 12/13 (`dtoverlay=audremap,pins_12_13`) to the PicoCalc speakers: effects
+  in Pong, Tetris, poker, chess, Preferans and the menu; the **SOUND** menu item turns them on/off,
+  volume is `LCD_VOLUME` in `/etc/default/lcd-toy`. Doom is built with sound via SDL2_mixer.
+- **Doom** shows its 320×200 frame 1:1 (no downscaling), centred.
+- **AI chat** runs on tty7 with the Terminus 8×16 font (40×20 characters).
+- **Consoles:** the menu runs on tty8 in graphics mode (so the kernel draws nothing over it),
+  **CONSOLE** shows the normal auto-login tty1, `lcdmenu` brings the menu back. There is no HDMI
+  item - it only appears where an HDMI framebuffer exists.
+
+### Installing on the PicoCalc
+
+1. Raspberry Pi OS Trixie Lite 32-bit, display and keyboard as in Steps 4-5 of
+   [picocalc_trixie](https://github.com/ironat/picocalc_trixie) (`picomipi.bin`, `picocalc_kbd`).
+2. Then:
+
+```bash
+git clone -b picocalc https://github.com/iyalosovetsky/pico2w-toy.git
+cd pico2w-toy
+./install.sh          # --no-doom: skip Doom
+```
+
+`install.sh` checks the display and keyboard, installs the packages (including SDL2 for Doom
+sound), adds audio to `config.txt`, installs `/etc/asound.conf` (PWM output) and
+`/etc/default/lcd-toy`, builds Doom and enables the services. What `config.txt` needs is in
+[`config/boot-config.txt`](config/boot-config.txt).
+
+### PicoCalc sound gotchas
+
+- **No `dmix`:** on the bcm2835 card it hangs when the device is closed, so `/etc/asound.conf`
+  uses direct access (`plug` → `hw:Headphones`) and the menu releases the sound while a game runs.
+- **Don't kill a process with sound open:** if it is killed while the device is open, the
+  `bcm2835-audio` driver takes minutes to close it ("failed to close VCHI service connection").
+  Every app exits normally on SIGTERM, Doom too (its own handler → `I_Quit()`).
+- **A 2048-sample buffer at 44100 Hz:** with smaller buffers Python can't keep up and underruns.
 
 ## 1. Description
 
@@ -130,6 +181,9 @@ case: [`docs/prototype-v1.jpg`](docs/prototype-v1.jpg).
 
 ## 5. Installation
 
+> On the `picocalc` branch `install.sh` and `config/` are for the PicoCalc (see [PicoCalc](#picocalc)).
+> For the HAT use the `main` branch: `git clone https://github.com/iyalosovetsky/pico2w-toy.git`.
+
 Tested on Raspbian 12 (Bookworm) armhf, kernel 6.12, on a Pi Zero 2 W.
 
 ```bash
@@ -157,6 +211,9 @@ Every system file it changes is backed up once as `<file>.bak-lcd`; it is safe t
 Updating later is `git pull && ./install.sh`.
 
 ## 6. Configuration
+
+> The table below is for the HAT (branch `main`). On the `picocalc` branch `config/` holds the PicoCalc
+> files: `asound.conf`, `lcd-toy.env`, `lcd-vt` and services for tty1/tty7/tty8.
 
 All system configuration lives in [`config/`](config):
 

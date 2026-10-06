@@ -20,7 +20,7 @@ while running:
     pygame.draw.rect(screen, (0, 0, 255), (118, 118, 10, 10))      # bottom-right = blue
     screen.blit(font.render("TOP", True, (255, 255, 255)), (50, 4))
     screen.blit(font.render("key: " + last, True, (255, 255, 0)), (8, 100))
-    screen.blit(font.render("KEY3 = exit", True, (120, 120, 120)), (8, 112))
+    screen.blit(font.render(lcd.BACK + " = exit", True, (120, 120, 120)), (8, 112))
     pygame.draw.circle(screen, (255, 128, 0), (x, y), 6)
     lcd.flip()
     clock.tick(30)

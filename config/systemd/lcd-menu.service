@@ -1,18 +1,16 @@
 [Unit]
-Description=Launcher menu on Waveshare 1.44" LCD HAT
+Description=Launcher menu on the PicoCalc screen
 After=systemd-user-sessions.service
-# the menu and the LCD text console (tty7) share the screen
-Conflicts=getty@tty7.service
 OnSuccess=lcd-console.service
 
 [Service]
 User=@USER@
 WorkingDirectory=@APP_DIR@
-# wait for the LCD framebuffer (it is fb1 when HDMI is fb0)
+EnvironmentFile=-/etc/default/lcd-toy
+# wait for the LCD framebuffer
 ExecStartPre=/bin/sh -c "for i in $(seq 30); do grep -qs mipi /sys/class/graphics/fb*/name && exit 0; sleep 1; done; exit 1"
-# leaving the LCD console: log out tty7 and bring the HDMI console (tty1) to the front
-ExecStartPre=-+/usr/bin/pkill -HUP -t tty7
-ExecStartPre=+/bin/chvt 1
+# the menu draws on tty8 switched to graphics mode, so no console text gets over it
+ExecStartPre=+/usr/local/bin/lcd-vt graphics 8
 ExecStart=/usr/bin/python3 @APP_DIR@/menu.py
 Restart=on-failure
 RestartSec=3
