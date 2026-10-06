@@ -94,6 +94,7 @@ _grabbing = True      # grab inputs at all (False while a child app runs)
 _grab_keyboards = True  # False while the USB keyboard is lent to the HDMI console
 _hat_fds = set()      # HAT buttons (gpio-key), as opposed to keyboards
 _sounds = {}
+_held_arrows = set()  # pygame arrow keys currently held on a keyboard
 _sound_ok = False
 
 
@@ -391,9 +392,20 @@ def _pump_buttons():
             continue
         for i in range(0, len(data) - _EVENT.size + 1, _EVENT.size):
             _, _, etype, code, value = _EVENT.unpack_from(data, i)
-            if etype == 1 and code in KEYMAP and value in (0, 1):  # EV_KEY, no autorepeat
+            if etype == 2 and fd not in _hat_fds:
+                # EV_REL from a keyboard: the PicoCalc's right Shift switched its driver
+                # to mouse mode, arrows now move a pointer and their key-up never
+                # comes - release the held ones so nothing stays pressed
+                for key in list(_held_arrows):
+                    pygame.event.post(pygame.event.Event(pygame.KEYUP, key=key, mod=0, unicode="",
+                                                         scancode=0, hat=False))
+                _held_arrows.clear()
+            elif etype == 1 and code in KEYMAP and value in (0, 1):  # EV_KEY, no autorepeat
+                key = KEYMAP[code]
                 kind = pygame.KEYDOWN if value else pygame.KEYUP
-                pygame.event.post(pygame.event.Event(kind, key=KEYMAP[code], mod=0, unicode="",
+                if fd not in _hat_fds and key in (pygame.K_UP, pygame.K_DOWN, pygame.K_LEFT, pygame.K_RIGHT):
+                    (_held_arrows.add if value else _held_arrows.discard)(key)
+                pygame.event.post(pygame.event.Event(kind, key=key, mod=0, unicode="",
                                                      scancode=code, hat=fd in _hat_fds))
 
 

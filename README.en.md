@@ -47,6 +47,9 @@ The same apps on a PicoCalc with a Zero 2 W running Raspberry Pi OS **Trixie** L
   digits. On-screen hints say "Enter / 2 / Esc" instead of "PRESS / KEY2 / KEY3".
   **CapsLock switches the layout US ↔ UA** in the console and the AI chat (Caps LED = UA,
   Shift+CapsLock is the real Caps Lock).
+  **Right Shift** toggles the PicoCalc driver's mouse mode: arrows then move a pointer and don't reach
+  the games (the games and Doom release held arrows so nothing gets stuck). If the arrows stop
+  working, press right Shift again. Run in Doom with left Shift.
 - **Sound** - PWM on GPIO 12/13 (`dtoverlay=audremap,pins_12_13`) to the PicoCalc speakers: effects
   in Pong, Tetris, poker, chess, Preferans and the menu; the **SOUND** menu item turns them on/off,
   volume is `LCD_VOLUME` in `/etc/default/lcd-toy`. Doom is built with sound via SDL2_mixer.
@@ -173,7 +176,7 @@ Per game:
 | Poker | ←/→ choose FOLD / CHECK-CALL / BET-RAISE, ↑/↓ bet size, 2 - all-in amount |
 | Chess | joystick moves the cursor, Enter picks up / drops a piece, 2 - menu (undo, new game) |
 | Preferans | ←/→ card or bid, ↑/↓ bid one level up / down, Enter confirms; when discarding Enter puts a card aside, ↓ takes it back, Enter again discards; 2 - score sheet |
-| Doom | HAT: joystick move, press fire (+Enter), KEY1 use (+"y"), KEY2 next weapon, KEY3 menu. Keyboard: arrows, Ctrl fire, Space use, Alt strafe, Shift run, 1-7 weapons, Tab map, Esc menu |
+| Doom | HAT: joystick move, press fire (+Enter), KEY1 use (+"y"), KEY2 next weapon, KEY3 menu. Keyboard: arrows, Enter or Ctrl fire (Enter selects in menus), Space use, Alt strafe, left Shift run, 1-7 weapons, Tab map, Esc menu |
 | AI chat | type and Enter; `/new`, `/think` (toggle model reasoning), `/quit` or Ctrl+D; Ctrl+C stops an answer; Alt+Shift switches US/UA |
 
 ## 3. Component list

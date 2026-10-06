@@ -5,8 +5,10 @@
 //
 // Buttons: joystick = move/turn, joystick press = fire (+Enter in menus),
 //          KEY1 = use/open (+"y" to confirm), KEY2 = next weapon, KEY3 = menu (Esc)
-// USB keyboard: arrows, Ctrl = fire, Space = use, Alt = strafe, Shift = run,
-//          Enter, Esc, Tab = map, 1-7 = weapons, y/n, letters for cheats/save names
+// Keyboard: arrows, Enter or Ctrl = fire (Enter also selects in menus), Space = use,
+//          Alt = strafe, left Shift = run, Esc, Tab = map, 1-7 = weapons, y/n,
+//          letters for cheats/save names. (The PicoCalc's right Shift toggles its
+//          driver's mouse mode: arrows stop being keys - see pollButtons.)
 
 #include "doomgeneric.h"
 #include "doomkeys.h"
@@ -86,8 +88,6 @@ static unsigned char keyboardKey(int code)
 	case KEY_DOWN:      return KEY_DOWNARROW;
 	case KEY_LEFT:      return KEY_LEFTARROW;
 	case KEY_RIGHT:     return KEY_RIGHTARROW;
-	case KEY_ENTER:
-	case KEY_KPENTER:   return DOOM_KEY_ENTER;
 	case KEY_ESC:       return KEY_ESCAPE;
 	case KEY_LEFTCTRL:
 	case KEY_RIGHTCTRL: return KEY_FIRE;
@@ -112,6 +112,18 @@ static unsigned char keyboardKey(int code)
 
 static void openButtons(int required);
 
+static unsigned arrowsDown;  // bit (doomkey & 3) per arrow key held on a keyboard
+
+static void releaseArrows(void)
+{
+	static const unsigned char arrows[] = { KEY_UPARROW, KEY_DOWNARROW, KEY_LEFTARROW, KEY_RIGHTARROW };
+
+	for (int a = 0; a < 4; a++)
+		if (arrowsDown & (1 << (arrows[a] & 3)))
+			addKey(0, arrows[a]);
+	arrowsDown = 0;
+}
+
 static void dropInput(int i)
 {
 	close(inputFds[i]);
@@ -134,10 +146,24 @@ static void pollButtons(void)
 		ssize_t n;
 		while ((n = read(inputFds[i], ev, sizeof(ev))) > 0) {
 			for (size_t j = 0; j < n / sizeof(ev[0]); j++) {
+				if (ev[j].type == EV_REL && inputIsKeyboard[i]) {
+					// keyboard in mouse mode (PicoCalc: right Shift): arrows now move
+					// a pointer and their key-up never comes - don't leave them held
+					releaseArrows();
+					continue;
+				}
 				if (ev[j].type != EV_KEY || ev[j].value == 2)  // ignore autorepeat
 					continue;
 				if (inputIsKeyboard[i]) {
+					if (ev[j].code == KEY_ENTER || ev[j].code == KEY_KPENTER) {
+						// Enter: fire in the game, select in the menus
+						addKey(ev[j].value, KEY_FIRE);
+						addKey(ev[j].value, DOOM_KEY_ENTER);
+						continue;
+					}
 					unsigned char k = keyboardKey(ev[j].code);
+					if (k == KEY_UPARROW || k == KEY_DOWNARROW || k == KEY_LEFTARROW || k == KEY_RIGHTARROW)
+						arrowsDown = ev[j].value ? arrowsDown | (1 << (k & 3)) : arrowsDown & ~(1 << (k & 3));
 					if (k)
 						addKey(ev[j].value, k);
 				} else {
