@@ -135,13 +135,40 @@ install_picocalc() {
     sudo cp "$DEV_CONFIG/asound.conf" /etc/asound.conf
     [ -e /etc/default/lcd-toy ] || sudo cp "$DEV_CONFIG/lcd-toy.env" /etc/default/lcd-toy
     sudo install -m 755 "$DEV_CONFIG/lcd-vt" /usr/local/bin/lcd-vt
+
+    install_mmbasic
+}
+
+# MMBasic for Linux (MMB4L, github.com/thwill1000/mmb4l) - the BASIC of the PicoCalc's
+# own PicoMite firmware; its armv6l build runs on the Zero 2 W's 32-bit OS
+MMB4L_VERSION=0.8-alpha.1
+install_mmbasic() {
+    if mmbasic --version 2>/dev/null | grep -q "$MMB4L_VERSION"; then
+        return
+    fi
+    echo "== MMBasic for Linux $MMB4L_VERSION"
+    name="mmb4l-$MMB4L_VERSION-armv6l-glibc-2.29"
+    tmp=$(mktemp -d)
+    curl -fsSL -o "$tmp/m.tgz" \
+        "https://github.com/thwill1000/mmb4l/releases/download/v$MMB4L_VERSION/$name.tgz"
+    tar xzf "$tmp/m.tgz" -C "$tmp"
+    sudo install -m 755 "$tmp/$name/mmbasic" /usr/local/bin/mmbasic
+    sudo install -d /usr/local/share/doc/mmb4l
+    sudo cp "$tmp/$name"/LICENSE* "$tmp/$name/README.md" /usr/local/share/doc/mmb4l/
+    # nano as MMBasic's EDITor, with MMBasic highlighting (nano 4.8+ setup from its README)
+    mkdir -p "$HOME/.mmbasic"
+    for f in mmbasic.nanorc mmbasic.syntax.nanorc; do
+        [ -e "$HOME/.mmbasic/$f" ] || cp "$tmp/$name/$f" "$HOME/.mmbasic/"
+    done
+    rm -rf "$tmp"
 }
 
 # ---------------------------------------------------------------- common
 
 echo "== packages"
 EXTRA=
-[ "$DEVICE" = picocalc ] && EXTRA="libsdl2-dev libsdl2-mixer-dev console-setup"  # Doom sound
+# PicoCalc: SDL for Doom sound, console tools for the PYTHON / BASIC / EDIT menu items
+[ "$DEVICE" = picocalc ] && EXTRA="libsdl2-dev libsdl2-mixer-dev console-setup micro bpython nano curl"
 sudo apt-get update -q
 sudo apt-get install -y python3-pygame python3-numpy python3-pil python3-pip \
     stockfish doom-wad-shareware git build-essential $EXTRA

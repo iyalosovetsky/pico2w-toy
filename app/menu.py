@@ -22,6 +22,9 @@ ITEMS = [
     ("PREFERANS", "", ["/usr/bin/python3", HERE + "/preferans.py"], HERE),
     ("DOOM", "E1", [HERE + "/doom/doomlcd", "-iwad", "/usr/share/games/doom/doom1.wad"], HERE + "/doom"),
     ("AI CHAT", "zen4", "aichat", None),
+    ("PYTHON", "bpython", "term:python", None),
+    ("BASIC", "MMBasic", "term:basic", None),
+    ("EDIT", "micro", "term:edit", None),
     ("CONSOLE", "tty", None, None),
     ("HDMI", "keyboard", "hdmi", None),
     ("SOUND", "", "sound", None),
@@ -39,6 +42,10 @@ def _has_hdmi_fb():
             pass
     return False
 
+
+# console tools (PicoCalc): only where install.sh set up lcd-term@.service
+if not os.path.exists("/etc/systemd/system/lcd-term@.service"):
+    ITEMS = [it for it in ITEMS if not str(it[2]).startswith("term:")]
 
 if not _has_hdmi_fb():  # no monitor framebuffer (e.g. PicoCalc): nothing to lend the keyboard to
     ITEMS = [it for it in ITEMS if it[2] != "hdmi"]
@@ -185,6 +192,12 @@ while running:
                     message("AI CHAT", "starting...")
                     subprocess.run(["sudo", "-n", "/usr/bin/systemctl", "start",
                                     "--no-block", "ai-chat.service"])
+                elif str(cmd).startswith("term:"):
+                    # like the AI chat: a text-console tool on tty7, back to the menu on exit
+                    tool = cmd.split(":", 1)[1]
+                    message(ITEMS[sel][0], "starting...")
+                    subprocess.run(["sudo", "-n", "/usr/bin/systemctl", "start",
+                                    "--no-block", "lcd-term@%s.service" % tool])
                 elif cmd == "hdmi":
                     running = hdmi_console()
                 elif cmd == "sound":

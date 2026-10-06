@@ -3,4 +3,5 @@ Description=Show the text console (tty1) after the menu exits
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c "sleep 1; systemctl is-active -q lcd-menu.service || systemctl is-active -q ai-chat.service || /usr/local/bin/lcd-vt text 1"
+# not when the menu came back or a tool took over tty7 (AI chat, PYTHON / BASIC / EDIT)
+ExecStart=/bin/sh -c "sleep 1; systemctl is-active -q lcd-menu.service || systemctl is-active -q ai-chat.service || systemctl list-units --state=active,activating --no-legend 'lcd-term@*' | grep -q . || /usr/local/bin/lcd-vt text 1"

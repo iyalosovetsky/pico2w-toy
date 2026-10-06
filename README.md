@@ -52,6 +52,14 @@ Doom, чат з локальною LLM, текстова консоль і ви�
   `LCD_VOLUME` у `/etc/default/lcd-toy`. Doom збирається зі звуком через SDL2_mixer.
 - **Doom** показує кадр 320×200 один до одного (без зменшення), по центру екрана.
 - **AI-чат** - на tty7 шрифтом Terminus 8×16 (40×20 символів).
+- **PYTHON / BASIC / EDIT** - консольні інструменти на tty7 шрифтом Terminus 12×6 (53×26 символів),
+  після виходу - назад у меню:
+  - **PYTHON** - [bpython](https://bpython-interpreter.org/): REPL з підсвіткою, підказками й автодоповненням,
+    робоча тека `~/code`; вихід - Ctrl+D;
+  - **BASIC** - [MMBasic для Linux](https://github.com/thwill1000/mmb4l) - BASIC рідної прошивки PicoCalc
+    (PicoMite), тека `~/basic`; `EDIT` відкриває nano з підсвіткою MMBasic; вихід - `QUIT`;
+  - **EDIT** - редактор [micro](https://micro-editor.github.io/) (Ctrl+S, Ctrl+Q, Ctrl+O - відкрити файл),
+    за замовчуванням `~/code/scratch.py`.
 - **Консолі:** меню працює на tty8 у графічному режимі (щоб ядро нічого не малювало поверх),
   **CONSOLE** відкриває звичайну tty1 з автологіном, `lcdmenu` повертає меню. Пункту HDMI
   немає - він з'являється лише там, де є HDMI-фреймбуфер.
@@ -137,6 +145,7 @@ Doom і вмикає сервіси. Що має бути в `config.txt` - ди
 | `app/prefgame/` | Рушій і AI [Python Pref](https://sourceforge.net/projects/python-pref/) 2.34, портовані на Python 3 (GPL-3.0) |
 | `app/ai_chat.py` | Клієнт чату з потоковою відповіддю для llama.cpp / OpenAI-сумісного сервера |
 | `app/demo.py` | Мінімальний приклад на pygame: намалювати щось і прочитати кнопки |
+| `app/term.sh` | Запуск консольних інструментів PicoCalc: PYTHON (bpython), BASIC (MMBasic), EDIT (micro) |
 | `doom/doomgeneric_lcd.c` | Backend для doomgeneric: 320×200 → 128×80 зі згладжуванням, RGB565, кнопки HAT + клавіатура |
 | `doom/Makefile.lcd`, `doom/build.sh` | Збирає `app/doom/doomlcd` із зафіксованої версії doomgeneric |
 | `firmware/mkpanel.py` | Генерує файл ініціалізації дисплея (`waveshare144.bin`, готова копія теж є) |

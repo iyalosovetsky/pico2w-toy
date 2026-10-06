@@ -52,6 +52,14 @@ The same apps on a PicoCalc with a Zero 2 W running Raspberry Pi OS **Trixie** L
   volume is `LCD_VOLUME` in `/etc/default/lcd-toy`. Doom is built with sound via SDL2_mixer.
 - **Doom** shows its 320×200 frame 1:1 (no downscaling), centred.
 - **AI chat** runs on tty7 with the Terminus 8×16 font (40×20 characters).
+- **PYTHON / BASIC / EDIT** - console tools on tty7 with the Terminus 12×6 font (53×26 characters),
+  back to the menu on exit:
+  - **PYTHON** - [bpython](https://bpython-interpreter.org/): a REPL with highlighting, hints and completion,
+    working directory `~/code`; exit with Ctrl+D;
+  - **BASIC** - [MMBasic for Linux](https://github.com/thwill1000/mmb4l), the BASIC of the PicoCalc's own
+    PicoMite firmware, directory `~/basic`; `EDIT` opens nano with MMBasic highlighting; exit with `QUIT`;
+  - **EDIT** - the [micro](https://micro-editor.github.io/) editor (Ctrl+S, Ctrl+Q, Ctrl+O to open a file),
+    `~/code/scratch.py` by default.
 - **Consoles:** the menu runs on tty8 in graphics mode (so the kernel draws nothing over it),
   **CONSOLE** shows the normal auto-login tty1, `lcdmenu` brings the menu back. There is no HDMI
   item - it only appears where an HDMI framebuffer exists.
@@ -137,6 +145,7 @@ How the pieces fit together:
 | `app/prefgame/` | [Python Pref](https://sourceforge.net/projects/python-pref/) 2.34 engine and AI, ported to Python 3 (GPL-3.0) |
 | `app/ai_chat.py` | Streaming chat client for a llama.cpp / OpenAI-compatible server |
 | `app/demo.py` | Minimal pygame example: draw something, read the buttons |
+| `app/term.sh` | Starts the PicoCalc console tools: PYTHON (bpython), BASIC (MMBasic), EDIT (micro) |
 | `doom/doomgeneric_lcd.c` | doomgeneric backend: 320×200 → 128×80 box-filtered RGB565, HAT buttons + keyboard |
 | `doom/Makefile.lcd`, `doom/build.sh` | Builds `app/doom/doomlcd` from a pinned doomgeneric revision |
 | `firmware/mkpanel.py` | Generates the panel init file (`waveshare144.bin`, prebuilt copy included) |

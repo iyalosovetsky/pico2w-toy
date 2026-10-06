@@ -4,7 +4,8 @@
     sudo python3 tools/vkeys.py "wait 3; down down enter; wait 2; type hello; enter; esc"
 
 Words: key names (up down left right enter esc space tab backspace ctrl alt caps key1 key2
-key3, any letter/digit), "wait <sec>", "hold <key> <sec>", "type <text>" (US layout). The HAT buttons
+key3, any letter/digit, combos like ctrl+d), "wait <sec>", "hold <key> <sec>",
+"type <text>" (US layout). The HAT buttons
 KEY1..KEY3 send the same codes as the keyboard digits 1..3.
 Used to record the README GIFs and to test without touching the device.
 """
@@ -19,7 +20,7 @@ EV_SYN, EV_KEY = 0, 1
 KEY_LEFTSHIFT = 42
 NAMES = {"esc": 1, "backspace": 14, "tab": 15, "enter": 28, "space": 57,
          "up": 103, "down": 108, "left": 105, "right": 106,
-         "key1": 2, "key2": 3, "key3": 4, "ctrl": 29, "alt": 56, "caps": 58}
+         "key1": 2, "key2": 3, "key3": 4, "ctrl": 29, "alt": 56, "caps": 58, "shift": 42}
 CHARS = {}
 for row, first in (("1234567890-=", 2), ("qwertyuiop[]", 16), ("asdfghjkl;'", 30), ("zxcvbnm,./", 44)):
     for i, ch in enumerate(row):
@@ -83,7 +84,14 @@ def run(script, kbd):
                 kbd.tap(*CHARS[ch])
         else:
             for name in command.split():
-                if name in NAMES:
+                if "+" in name and len(name) > 1:  # combo: ctrl+d, alt+shift, ...
+                    *mods, key = name.split("+")
+                    for m in mods:
+                        kbd._event(NAMES[m], 1)
+                    kbd.tap(*(((NAMES[key],) if key in NAMES else CHARS[key][:1])))
+                    for m in reversed(mods):
+                        kbd._event(NAMES[m], 0)
+                elif name in NAMES:
                     kbd.tap(NAMES[name])
                 else:
                     kbd.tap(*CHARS[name])

@@ -1,0 +1,22 @@
+[Unit]
+Description=Console tool %i on the PicoCalc screen (tty7)
+After=systemd-user-sessions.service
+Conflicts=lcd-menu.service
+# back to the menu when the tool exits
+OnSuccess=lcd-menu.service
+OnFailure=lcd-menu.service
+
+[Service]
+User=@USER@
+WorkingDirectory=/home/@USER@
+Environment=LANG=C.UTF-8 TERM=linux PYTHONIOENCODING=utf-8 HOME=/home/@USER@
+# Terminus 12x6: 53x26 characters - enough lines for code
+ExecStartPre=+/usr/bin/setfont -C /dev/tty7 /usr/share/consolefonts/Uni2-Terminus12x6.psf.gz
+ExecStartPre=+/usr/local/bin/lcd-vt text 7
+ExecStart=@APP_DIR@/term.sh %i
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty7
+TTYVHangup=yes
+# no TTYReset/TTYVTDisallocate: systemd 257 would reset the font set above
