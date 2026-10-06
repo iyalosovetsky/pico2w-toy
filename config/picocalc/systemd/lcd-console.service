@@ -1,0 +1,6 @@
+[Unit]
+Description=Show the text console (tty1) after the menu exits
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c "sleep 1; systemctl is-active -q lcd-menu.service || systemctl is-active -q ai-chat.service || /usr/local/bin/lcd-vt text 1"

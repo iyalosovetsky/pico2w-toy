@@ -2,12 +2,14 @@
 
 # pico2w-toy
 
-> **PicoCalc:** the same software for the [ClockworkPi PicoCalc](https://www.clockworkpi.com/picocalc) with a Zero 2 W
-> (320×320 display, keyboard, PWM sound) is on the [`picocalc`](https://github.com/iyalosovetsky/pico2w-toy/tree/picocalc) branch.
-> The app code is shared: `app/lcd.py` detects the display; only `install.sh` and `config/` differ.
+A pocket game console / AI terminal built from a **Raspberry Pi Zero 2 W**, for two devices:
 
-A pocket game console / AI terminal built from a **Raspberry Pi Zero 2 W** and a **Waveshare 1.44" LCD HAT**
-(128×128, joystick + 3 buttons), running stock Raspberry Pi OS Bookworm.
+- **Waveshare 1.44" LCD HAT** - 128×128, joystick + 3 buttons, Raspberry Pi OS Bookworm (main description below);
+- **[ClockworkPi PicoCalc](https://www.clockworkpi.com/picocalc)** with a Zero 2 W instead of the Pico (zero mod) -
+  320×320, keyboard, PWM sound, Raspberry Pi OS Trixie (section [PicoCalc](#picocalc)).
+
+The app code is shared: `app/lcd.py` detects the display. `install.sh` detects the device or takes
+`--device=hat|picocalc`; each device's configuration is in `config/hat/` and `config/picocalc/`.
 
 A launcher menu starts at boot and offers Pong, Tetris, Texas Hold'em poker, chess against Stockfish,
 Doom, a chat with a local LLM, a text console and power-off. Everything is controlled with the HAT's
@@ -22,6 +24,74 @@ joystick and buttons or with a small USB keyboard.
 | ![chess](docs/gif/chess.gif) | ![preferans](docs/gif/preferans.gif) | ![doom](docs/gif/doom.gif) | ![aichat](docs/gif/aichat.gif) |
 
 *(GIFs are recorded straight from the display's framebuffer with `tools/record_gif.py`, 2× scaled.)*
+
+## PicoCalc
+
+<img src="docs/picocalc.jpg" width="360" alt="PicoCalc running the pico2w-toy menu">
+
+| Menu | Pong | Tetris | Poker |
+|:---:|:---:|:---:|:---:|
+| ![menu](docs/gif-picocalc/menu.gif) | ![pong](docs/gif-picocalc/pong.gif) | ![tetris](docs/gif-picocalc/tetris.gif) | ![poker](docs/gif-picocalc/poker.gif) |
+| **Chess** | **Preferans** | **Doom** | **AI chat** |
+| ![chess](docs/gif-picocalc/chess.gif) | ![preferans](docs/gif-picocalc/preferans.gif) | ![doom](docs/gif-picocalc/doom.gif) | ![aichat](docs/gif-picocalc/aichat.gif) |
+
+*(GIFs recorded 1:1 from the PicoCalc framebuffer, 320×320, with `tools/record_gif.py`.)*
+
+The same apps on a PicoCalc with a Zero 2 W running Raspberry Pi OS **Trixie** Lite (32-bit):
+
+- **320×320 display** (ST7365P, the same `panel-mipi-dbi` driver). The games still work in a
+  128×128 coordinate space and `app/lcd.py` draws everything at the native resolution: rects,
+  lines, circles and fonts are multiplied by `lcd.S` = 2.5, so text and graphics are sharp, not
+  upscaled. Nothing changes on the HAT (S = 1).
+- **The PicoCalc keyboard** (`picocalc_kbd` driver) works like any keyboard: arrows, Enter, Esc,
+  digits. On-screen hints say "Enter / 2 / Esc" instead of "PRESS / KEY2 / KEY3".
+  **CapsLock switches the layout US ↔ UA** in the console and the AI chat (Caps LED = UA,
+  Shift+CapsLock is the real Caps Lock).
+- **Sound** - PWM on GPIO 12/13 (`dtoverlay=audremap,pins_12_13`) to the PicoCalc speakers: effects
+  in Pong, Tetris, poker, chess, Preferans and the menu; the **SOUND** menu item turns them on/off,
+  volume is `LCD_VOLUME` in `/etc/default/lcd-toy`. Doom is built with sound via SDL2_mixer.
+- **Doom** shows its 320×200 frame 1:1 (no downscaling), centred.
+- **AI chat** runs on tty7 with the Terminus 8×16 font (40×20 characters).
+- **Consoles:** the menu runs on tty8 in graphics mode (so the kernel draws nothing over it),
+  **CONSOLE** shows the normal auto-login tty1, `lcdmenu` brings the menu back. There is no HDMI
+  item - it only appears where an HDMI framebuffer exists.
+
+### Installing on the PicoCalc
+
+1. Raspberry Pi OS Trixie Lite 32-bit, display and keyboard as in Steps 4-5 of
+   [picocalc_trixie](https://github.com/ironat/picocalc_trixie) (`picomipi.bin`, `picocalc_kbd`).
+2. Then:
+
+```bash
+git clone https://github.com/iyalosovetsky/pico2w-toy.git
+cd pico2w-toy
+./install.sh --device=picocalc   # --no-doom: skip Doom
+```
+
+`install.sh` checks the display and keyboard, installs the packages (including SDL2 for Doom
+sound), adds audio to `config.txt`, installs `/etc/asound.conf` (PWM output) and
+`/etc/default/lcd-toy`, builds Doom and enables the services. What `config.txt` needs is in
+[`config/picocalc/boot-config.txt`](config/picocalc/boot-config.txt).
+
+### PicoCalc sound gotchas
+
+- **No `dmix`:** on the bcm2835 card it hangs when the device is closed, so `/etc/asound.conf`
+  uses direct access (`plug` → `hw:Headphones`) and the menu releases the sound while a game runs.
+- **Don't kill a process with sound open:** if it is killed while the device is open, the
+  `bcm2835-audio` driver takes minutes to close it ("failed to close VCHI service connection").
+  Every app exits normally on SIGTERM, Doom too (its own handler → `I_Quit()`).
+- **A 2048-sample buffer at 44100 Hz:** with smaller buffers Python can't keep up and underruns.
+
+### Back cover for the Zero 2 W
+
+![PicoCalc back cover for the Zero 2 W](docs/picocalc-back.png)
+
+A 172×103×20 mm PicoCalc back cover for the zero mod (a Zero 2 W instead of the Pico):
+
+| File | What it is |
+|---|---|
+| [`case/myPicoCalcZero2wV2.FCStd`](case/myPicoCalcZero2wV2.FCStd) | FreeCAD model (body `backCase`) |
+| [`case/picocalc-zero2w-back.stl`](case/picocalc-zero2w-back.stl) | STL for printing (exported from the model, 0.02 mm deflection) |
 
 ## 1. Description
 
@@ -59,7 +129,7 @@ How the pieces fit together:
 
 | File / folder | Purpose |
 |---|---|
-| `install.sh` | One-shot installer for a fresh Raspberry Pi OS Bookworm (packages, driver, fonts, services) |
+| `install.sh` | One-shot installer (packages, driver, fonts, services) for the HAT or the PicoCalc |
 | `app/lcd.py` | Shared display + input layer for all pygame apps |
 | `app/menu.py` | Launcher menu (scrolling list) |
 | `app/pong.py`, `app/tetris.py`, `app/poker.py`, `app/chessgame.py` | The games |
@@ -71,7 +141,7 @@ How the pieces fit together:
 | `doom/Makefile.lcd`, `doom/build.sh` | Builds `app/doom/doomlcd` from a pinned doomgeneric revision |
 | `firmware/mkpanel.py` | Generates the panel init file (`waveshare144.bin`, prebuilt copy included) |
 | `fonts/` | Console fonts 5×7 (console, 25×18 chars) and 6×10 (AI chat, 21×12) + `build-fonts.sh` |
-| `config/` | Everything that goes into the system - see [Configuration](#6-configuration) |
+| `config/` | Everything that goes into the system: `hat/`, `picocalc/` and shared - see [Configuration](#6-configuration) |
 | `tools/` | `vkeys.py` virtual keyboard, `snap.py` screenshot, `record_gif.py` GIF recorder |
 | `case/` | Case: FreeCAD model (`pico-toy.FCStd`) and STL files for printing |
 | `docs/` | GIFs, photos, wiring diagram, case preview |
@@ -134,13 +204,15 @@ case: [`docs/prototype-v1.jpg`](docs/prototype-v1.jpg).
 
 ## 5. Installation
 
+The HAT is below; for the PicoCalc see [Installing on the PicoCalc](#installing-on-the-picocalc).
 Tested on Raspbian 12 (Bookworm) armhf, kernel 6.12, on a Pi Zero 2 W.
 
 ```bash
 git clone https://github.com/iyalosovetsky/pico2w-toy.git
 cd pico2w-toy
-./install.sh          # --no-doom: skip Doom, --keep-desktop: leave the desktop on,
-                      # --hdmi-mode=1280x720@60: another HDMI mode
+./install.sh --device=hat   # without --device the device is detected (or asked)
+                            # --no-doom: skip Doom, --keep-desktop: leave the desktop on,
+                            # --hdmi-mode=1280x720@60: another HDMI mode
 sudo reboot           # first install only: loads the display driver
 ```
 
@@ -148,7 +220,7 @@ sudo reboot           # first install only: loads the display driver
 
 1. installs `python3-pygame python3-numpy python3-pil stockfish doom-wad-shareware git build-essential`;
 2. puts [python-chess](https://github.com/niklasf/python-chess) into `app/vendor` (it is not in the Raspbian repo);
-3. writes `/lib/firmware/waveshare144.bin` and appends `config/boot-config.txt` to `/boot/firmware/config.txt`;
+3. writes `/lib/firmware/waveshare144.bin` and appends `config/hat/boot-config.txt` to `/boot/firmware/config.txt`;
 4. adds `video=HDMI-A-1:1920x1080@60D` to `/boot/firmware/cmdline.txt` (forces HDMI on - the Zero's kernel
    often misses the monitor even though the boot screen shows) and `fbcon=map:0000001` (tty1-6 on HDMI,
    tty7 on the LCD); installs the console fonts, sets the US+UA keyboard layout, creates `/etc/default/lcd-ai-chat`;
@@ -162,7 +234,12 @@ Updating later is `git pull && ./install.sh`.
 
 ## 6. Configuration
 
-All system configuration lives in [`config/`](config):
+All system configuration lives in [`config/`](config): the shared `ai-chat.env` and `lcdmenu`, and the
+per-device files in [`config/hat/`](config/hat) (table below) and [`config/picocalc/`](config/picocalc)
+(`boot-config.txt` for reference, `keyboard` with CapsLock switching, `asound.conf`, `lcd-toy.env`,
+`lcd-vt` and services for tty1/tty7/tty8).
+
+HAT files (`config/hat/`):
 
 | File | Installed as | What it does |
 |---|---|---|

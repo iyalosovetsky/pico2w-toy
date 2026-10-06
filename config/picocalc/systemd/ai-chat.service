@@ -1,0 +1,23 @@
+[Unit]
+Description=Local AI chat on the PicoCalc console (tty7)
+After=systemd-user-sessions.service
+Conflicts=lcd-menu.service
+# back to the menu when the chat ends
+OnSuccess=lcd-menu.service
+OnFailure=lcd-menu.service
+
+[Service]
+User=@USER@
+WorkingDirectory=@APP_DIR@
+Environment=LANG=C.UTF-8 TERM=linux PYTHONIOENCODING=utf-8
+EnvironmentFile=-/etc/default/lcd-ai-chat
+# Terminus 8x16: 40x20 characters on the 320x320 screen
+ExecStartPre=+/usr/bin/setfont -C /dev/tty7 /usr/share/consolefonts/Uni2-Terminus16.psf.gz
+ExecStartPre=+/usr/local/bin/lcd-vt text 7
+ExecStart=/usr/bin/python3 @APP_DIR@/ai_chat.py
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+TTYPath=/dev/tty7
+TTYVHangup=yes
+# no TTYReset/TTYVTDisallocate: systemd 257 would reset the font set above (the chat clears the screen itself)

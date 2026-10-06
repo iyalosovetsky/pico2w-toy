@@ -1,0 +1,9 @@
+# /etc/default/keyboard - US + Ukrainian layouts.
+# PicoCalc: CapsLock switches the layout (Shift+CapsLock is the real Caps Lock);
+# the Caps LED shows the second (UA) layout.
+XKBMODEL="pc105"
+XKBLAYOUT="us,ua"
+XKBVARIANT=""
+XKBOPTIONS="grp:caps_toggle,grp_led:caps"
+
+BACKSPACE="guess"

@@ -7,3 +7,5 @@ doom/build/
 app/chess_save.json
 app/tetris_hi.txt
 app/preferans_save.json
+# FreeCAD backups
+*.FCBak

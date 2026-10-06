@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""Switch the PicoCalc's screen between the menu and text consoles (run as root).
+
+    lcd-vt graphics 8   # tty8 in graphics mode (fbcon stops drawing) + show it:
+                        # the menu and games draw on the framebuffer there
+    lcd-vt text 1       # back to a text console
+
+The LCD is the only display (fbcon=map:0), so every tty shares it with the menu.
+A console left in graphics mode blocks VT switching away from it, so the
+current console is put back into text mode before switching to a text one.
+"""
+import fcntl
+import os
+import subprocess
+import sys
+
+KDSETMODE, KD_TEXT, KD_GRAPHICS = 0x4B3A, 0x00, 0x01
+
+
+def set_mode(vt, mode):
+    fd = os.open("/dev/tty%d" % vt, os.O_RDWR | os.O_NOCTTY)
+    try:
+        fcntl.ioctl(fd, KDSETMODE, mode)
+    finally:
+        os.close(fd)
+
+
+def current_vt():
+    with open("/sys/class/tty/tty0/active") as f:
+        return int(f.read().strip()[3:])
+
+
+mode, vt = sys.argv[1], int(sys.argv[2])
+if mode == "graphics":
+    set_mode(vt, KD_GRAPHICS)
+else:
+    cur = current_vt()
+    if cur != vt:
+        set_mode(cur, KD_TEXT)
+    set_mode(vt, KD_TEXT)
+subprocess.run(["chvt", str(vt)], check=True, timeout=10)

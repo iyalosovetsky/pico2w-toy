@@ -2,12 +2,14 @@
 
 # pico2w-toy
 
-> **PicoCalc:** та сама програма для [ClockworkPi PicoCalc](https://www.clockworkpi.com/picocalc) із Zero 2 W
-> (дисплей 320×320, клавіатура, PWM-звук) - у гілці [`picocalc`](https://github.com/iyalosovetsky/pico2w-toy/tree/picocalc).
-> Код програм спільний: `app/lcd.py` сам визначає дисплей; різняться лише `install.sh` і `config/`.
+Кишенькова ігрова консоль / AI-термінал на **Raspberry Pi Zero 2 W** для двох пристроїв:
 
-Кишенькова ігрова консоль / AI-термінал на **Raspberry Pi Zero 2 W** і **Waveshare 1.44" LCD HAT**
-(128×128, джойстик + 3 кнопки) під звичайною Raspberry Pi OS Bookworm.
+- **Waveshare 1.44" LCD HAT** - 128×128, джойстик + 3 кнопки, Raspberry Pi OS Bookworm (основний опис нижче);
+- **[ClockworkPi PicoCalc](https://www.clockworkpi.com/picocalc)** із Zero 2 W замість Pico (zero mod) -
+  320×320, клавіатура, PWM-звук, Raspberry Pi OS Trixie (розділ [PicoCalc](#picocalc)).
+
+Код програм спільний: `app/lcd.py` сам визначає дисплей. `install.sh` визначає пристрій або бере
+його з `--device=hat|picocalc`; конфігурація для кожного - у `config/hat/` і `config/picocalc/`.
 
 Після ввімкнення запускається меню: Pong, тетріс, покер (техаський холдем), шахи проти Stockfish,
 Doom, чат з локальною LLM, текстова консоль і вимкнення. Керування - джойстиком і кнопками HAT або
@@ -22,6 +24,73 @@ Doom, чат з локальною LLM, текстова консоль і ви�
 | ![chess](docs/gif/chess.gif) | ![preferans](docs/gif/preferans.gif) | ![doom](docs/gif/doom.gif) | ![aichat](docs/gif/aichat.gif) |
 
 *(GIF записані прямо з фреймбуфера дисплея скриптом `tools/record_gif.py`, збільшені вдвічі.)*
+
+## PicoCalc
+
+<img src="docs/picocalc.jpg" width="360" alt="PicoCalc із меню pico2w-toy">
+
+| Меню | Pong | Тетріс | Покер |
+|:---:|:---:|:---:|:---:|
+| ![menu](docs/gif-picocalc/menu.gif) | ![pong](docs/gif-picocalc/pong.gif) | ![tetris](docs/gif-picocalc/tetris.gif) | ![poker](docs/gif-picocalc/poker.gif) |
+| **Шахи** | **Преферанс** | **Doom** | **AI-чат** |
+| ![chess](docs/gif-picocalc/chess.gif) | ![preferans](docs/gif-picocalc/preferans.gif) | ![doom](docs/gif-picocalc/doom.gif) | ![aichat](docs/gif-picocalc/aichat.gif) |
+
+*(GIF записані з фреймбуфера PicoCalc 1:1, 320×320, скриптом `tools/record_gif.py`.)*
+
+Ті самі програми на PicoCalc із Zero 2 W під Raspberry Pi OS **Trixie** Lite (32-bit):
+
+- **Дисплей 320×320** (ST7365P, той самий драйвер `panel-mipi-dbi`). Ігри далі рахують у
+  координатах 128×128, а `app/lcd.py` малює все в рідній роздільності: прямокутники, лінії, кола
+  й шрифти множаться на `lcd.S` = 2.5, тож текст і графіка чіткі, а не розтягнуті. На HAT
+  (S = 1) нічого не змінюється.
+- **Клавіатура** PicoCalc (драйвер `picocalc_kbd`) працює як звичайна: стрілки, Enter, Esc,
+  цифри. Підказки на екрані пишуть «Enter / 2 / Esc» замість «PRESS / KEY2 / KEY3».
+  **CapsLock перемикає розкладку US ↔ UA** у консолі та AI-чаті (світлодіод Caps = UA,
+  Shift+CapsLock - звичайний Caps Lock).
+- **Звук** - PWM на GPIO 12/13 (`dtoverlay=audremap,pins_12_13`) у динаміки PicoCalc: ефекти в
+  Pong, тетрісі, покері, шахах, преферансі й меню; пункт меню **SOUND** вмикає/вимикає їх, гучність -
+  `LCD_VOLUME` у `/etc/default/lcd-toy`. Doom збирається зі звуком через SDL2_mixer.
+- **Doom** показує кадр 320×200 один до одного (без зменшення), по центру екрана.
+- **AI-чат** - на tty7 шрифтом Terminus 8×16 (40×20 символів).
+- **Консолі:** меню працює на tty8 у графічному режимі (щоб ядро нічого не малювало поверх),
+  **CONSOLE** відкриває звичайну tty1 з автологіном, `lcdmenu` повертає меню. Пункту HDMI
+  немає - він з'являється лише там, де є HDMI-фреймбуфер.
+
+### Встановлення на PicoCalc
+
+1. Raspberry Pi OS Trixie Lite 32-bit, дисплей і клавіатура - за кроками 4-5
+   [picocalc_trixie](https://github.com/ironat/picocalc_trixie) (`picomipi.bin`, `picocalc_kbd`).
+2. Далі:
+
+```bash
+git clone https://github.com/iyalosovetsky/pico2w-toy.git
+cd pico2w-toy
+./install.sh --device=picocalc   # --no-doom - не збирати Doom
+```
+
+`install.sh` перевіряє дисплей і клавіатуру, ставить пакети (разом із SDL2 для звуку Doom),
+додає звук у `config.txt`, кладе `/etc/asound.conf` (вихід PWM), `/etc/default/lcd-toy`, збирає
+Doom і вмикає сервіси. Що має бути в `config.txt` - див. [`config/picocalc/boot-config.txt`](config/picocalc/boot-config.txt).
+
+### Підводні камені звуку на PicoCalc
+
+- **`dmix` не годиться:** на картці bcm2835 він зависає при закритті пристрою. Тому
+  `/etc/asound.conf` дає прямий доступ (`plug` → `hw:Headphones`), а меню звільняє звук на час гри.
+- **Не вбивати процес зі звуком:** якщо процес убито, поки звук відкритий, драйвер
+  `bcm2835-audio` хвилинами закриває пристрій («failed to close VCHI service connection»).
+  Усі програми виходять штатно по SIGTERM, Doom теж (власний обробник → `I_Quit()`).
+- **Буфер 2048 семплів на 44100 Гц:** з меншим буфером Python не встигає і сиплються underrun.
+
+### Задня кришка для Zero 2 W
+
+![Задня кришка PicoCalc під Zero 2 W](docs/picocalc-back.png)
+
+Задня кришка PicoCalc 172×103×20 мм під zero mod (Zero 2 W замість Pico):
+
+| Файл | Що це |
+|---|---|
+| [`case/myPicoCalcZero2wV2.FCStd`](case/myPicoCalcZero2wV2.FCStd) | Модель FreeCAD (тіло `backCase`) |
+| [`case/picocalc-zero2w-back.stl`](case/picocalc-zero2w-back.stl) | STL для друку (вивантажено з моделі, точність 0.02 мм) |
 
 ## 1. Опис
 
@@ -60,7 +129,7 @@ Doom, чат з локальною LLM, текстова консоль і ви�
 
 | Файл / папка | Призначення |
 |---|---|
-| `install.sh` | Встановлення «в один крок» на чисту Raspberry Pi OS Bookworm (пакети, драйвер, шрифти, сервіси) |
+| `install.sh` | Встановлення «в один крок» (пакети, драйвер, шрифти, сервіси) для HAT або PicoCalc |
 | `app/lcd.py` | Спільний шар дисплея та вводу для всіх програм на pygame |
 | `app/menu.py` | Меню запуску (список із прокручуванням) |
 | `app/pong.py`, `app/tetris.py`, `app/poker.py`, `app/chessgame.py` | Ігри |
@@ -72,7 +141,7 @@ Doom, чат з локальною LLM, текстова консоль і ви�
 | `doom/Makefile.lcd`, `doom/build.sh` | Збирає `app/doom/doomlcd` із зафіксованої версії doomgeneric |
 | `firmware/mkpanel.py` | Генерує файл ініціалізації дисплея (`waveshare144.bin`, готова копія теж є) |
 | `fonts/` | Консольні шрифти 5×7 (консоль, 25×18 символів) і 6×10 (AI-чат, 21×12) + `build-fonts.sh` |
-| `config/` | Усе, що встановлюється в систему - див. [Конфігурація](#6-конфігурація) |
+| `config/` | Усе, що встановлюється в систему: `hat/`, `picocalc/` і спільне - див. [Конфігурація](#6-конфігурація) |
 | `tools/` | `vkeys.py` - віртуальна клавіатура, `snap.py` - скриншот, `record_gif.py` - запис GIF |
 | `case/` | Корпус: модель FreeCAD (`pico-toy.FCStd`) і STL для друку |
 | `docs/` | GIF, фото, схема підключення, перегляд корпусу |
@@ -135,13 +204,15 @@ GPIO 6, 19, 5, 26, 13, 21, 20, 16 (активний низький рівень,
 
 ## 5. Встановлення
 
+Для HAT нижче; для PicoCalc - [Встановлення на PicoCalc](#встановлення-на-picocalc).
 Перевірено на Raspbian 12 (Bookworm) armhf, ядро 6.12, Pi Zero 2 W.
 
 ```bash
 git clone https://github.com/iyalosovetsky/pico2w-toy.git
 cd pico2w-toy
-./install.sh          # --no-doom - не збирати Doom, --keep-desktop - не вимикати робочий стіл,
-                      # --hdmi-mode=1280x720@60 - інший режим HDMI
+./install.sh --device=hat   # без --device пристрій визначається сам (або спитає)
+                            # --no-doom - не збирати Doom, --keep-desktop - не вимикати робочий стіл,
+                            # --hdmi-mode=1280x720@60 - інший режим HDMI
 sudo reboot           # лише при першому встановленні: завантажити драйвер дисплея
 ```
 
@@ -149,7 +220,7 @@ sudo reboot           # лише при першому встановленні:
 
 1. ставить `python3-pygame python3-numpy python3-pil stockfish doom-wad-shareware git build-essential`;
 2. кладе [python-chess](https://github.com/niklasf/python-chess) в `app/vendor` (у репозиторії Raspbian її немає);
-3. записує `/lib/firmware/waveshare144.bin` і дописує `config/boot-config.txt` у `/boot/firmware/config.txt`;
+3. записує `/lib/firmware/waveshare144.bin` і дописує `config/hat/boot-config.txt` у `/boot/firmware/config.txt`;
 4. дописує в `/boot/firmware/cmdline.txt` `video=HDMI-A-1:1920x1080@60D` (примусово вмикає HDMI - ядро на Zero
    часто не бачить монітор, хоча екран завантаження є) і `fbcon=map:0000001` (tty1-6 на HDMI, tty7 на LCD);
    встановлює консольні шрифти, розкладку US+UA, створює `/etc/default/lcd-ai-chat`;
@@ -163,7 +234,12 @@ sudo reboot           # лише при першому встановленні:
 
 ## 6. Конфігурація
 
-Уся системна конфігурація лежить у [`config/`](config):
+Уся системна конфігурація лежить у [`config/`](config): спільні `ai-chat.env` і `lcdmenu`, а файли
+пристроїв - у [`config/hat/`](config/hat) (таблиця нижче) і [`config/picocalc/`](config/picocalc)
+(`boot-config.txt` для довідки, `keyboard` з перемиканням CapsLock, `asound.conf`, `lcd-toy.env`,
+`lcd-vt` і сервіси під tty1/tty7/tty8).
+
+Файли HAT (`config/hat/`):
 
 | Файл | Куди встановлюється | Що робить |
 |---|---|---|
