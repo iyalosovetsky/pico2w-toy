@@ -43,6 +43,8 @@ Doom, чат з локальною LLM, текстова консоль і ви�
   (S = 1) нічого не змінюється.
 - **Клавіатура** PicoCalc (драйвер `picocalc_kbd`) працює як звичайна: стрілки, Enter, Esc,
   цифри. Підказки на екрані пишуть «Enter / 2 / Esc» замість «PRESS / KEY2 / KEY3».
+  **CapsLock перемикає розкладку US ↔ UA** у консолі та AI-чаті (світлодіод Caps = UA,
+  Shift+CapsLock - звичайний Caps Lock).
 - **Звук** - PWM на GPIO 12/13 (`dtoverlay=audremap,pins_12_13`) у динаміки PicoCalc: ефекти в
   Pong, тетрісі, покері, шахах, преферансі й меню; пункт меню **SOUND** вмикає/вимикає їх, гучність -
   `LCD_VOLUME` у `/etc/default/lcd-toy`. Doom збирається зі звуком через SDL2_mixer.

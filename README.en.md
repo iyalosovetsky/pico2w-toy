@@ -43,6 +43,8 @@ The same apps on a PicoCalc with a Zero 2 W running Raspberry Pi OS **Trixie** L
   upscaled. Nothing changes on the HAT (S = 1).
 - **The PicoCalc keyboard** (`picocalc_kbd` driver) works like any keyboard: arrows, Enter, Esc,
   digits. On-screen hints say "Enter / 2 / Esc" instead of "PRESS / KEY2 / KEY3".
+  **CapsLock switches the layout US ↔ UA** in the console and the AI chat (Caps LED = UA,
+  Shift+CapsLock is the real Caps Lock).
 - **Sound** - PWM on GPIO 12/13 (`dtoverlay=audremap,pins_12_13`) to the PicoCalc speakers: effects
   in Pong, Tetris, poker, chess, Preferans and the menu; the **SOUND** menu item turns them on/off,
   volume is `LCD_VOLUME` in `/etc/default/lcd-toy`. Doom is built with sound via SDL2_mixer.
