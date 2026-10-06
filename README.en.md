@@ -25,6 +25,10 @@ joystick and buttons or with a small USB keyboard.
 
 ## PicoCalc
 
+<img src="https://static.wixstatic.com/media/3833f7_ef04ec7a5e684f79974e9c2f786361c2~mv2.png/v1/fit/w_800,h_400,al_c/3833f7_ef04ec7a5e684f79974e9c2f786361c2~mv2.png" width="480" alt="ClockworkPi PicoCalc">
+
+*Photo: [ClockworkPi](https://www.clockworkpi.com/picocalc).*
+
 | Menu | Pong | Tetris | Poker |
 |:---:|:---:|:---:|:---:|
 | ![menu](docs/gif-picocalc/menu.gif) | ![pong](docs/gif-picocalc/pong.gif) | ![tetris](docs/gif-picocalc/tetris.gif) | ![poker](docs/gif-picocalc/poker.gif) |

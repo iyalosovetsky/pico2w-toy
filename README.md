@@ -25,6 +25,10 @@ Doom, чат з локальною LLM, текстова консоль і ви�
 
 ## PicoCalc
 
+<img src="https://static.wixstatic.com/media/3833f7_ef04ec7a5e684f79974e9c2f786361c2~mv2.png/v1/fit/w_800,h_400,al_c/3833f7_ef04ec7a5e684f79974e9c2f786361c2~mv2.png" width="480" alt="ClockworkPi PicoCalc">
+
+*Фото: [ClockworkPi](https://www.clockworkpi.com/picocalc).*
+
 | Меню | Pong | Тетріс | Покер |
 |:---:|:---:|:---:|:---:|
 | ![menu](docs/gif-picocalc/menu.gif) | ![pong](docs/gif-picocalc/pong.gif) | ![tetris](docs/gif-picocalc/tetris.gif) | ![poker](docs/gif-picocalc/poker.gif) |
