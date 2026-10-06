@@ -168,6 +168,7 @@ class PrefGUI:
             self.desk = {}
         self.desk[gamer.nGamer] = card
         self.prikup = (0, None, None)
+        lcd.play("card")
         computer = not (gamer.human and self.app.mode != demo)
         if len(self.desk) == 3:
             self.sleep(TRICK_PAUSE)
@@ -185,7 +186,7 @@ class PrefGUI:
         self.frame()
 
     def HitReturn(self, forcekey=False, ok=True, anytap=False):
-        self.wait_confirm("PRESS - далі")
+        self.wait_confirm(lcd.OK + " - далі")
 
     def ShowPrikup(self, n, card1=None, card2=None):
         self.prikup = (n, card1, card2)
@@ -222,12 +223,16 @@ class PrefGUI:
             for k in self.events():
                 if k == pygame.K_LEFT:
                     i = (i - 1) % len(labels)
+                    lcd.play("click")
                 elif k == pygame.K_RIGHT:
                     i = (i + 1) % len(labels)
+                    lcd.play("click")
                 elif k in (pygame.K_UP, pygame.K_DOWN) and jumps:
                     i = jumps(i, k == pygame.K_UP)
+                    lcd.play("click")
                 elif k in CONFIRM:
                     self.prompt = None
+                    lcd.play("select")
                     return values[i]
             self.frame()
 
@@ -306,7 +311,7 @@ class PrefGUI:
         old_status = self.status
         if out is not None:
             self.discarding = True
-            self.status = "Знесіть 2 (%d/2)" % out if out < 2 else "PRESS - знос, ↓ - назад"
+            self.status = "Знесіть 2 (%d/2)" % out if out < 2 else lcd.OK + " - знос, ↓ - назад"
         elif gamer.nGamer != 1:
             self.status = "Хід за %s" % NAMES[gamer.nGamer]
         else:
@@ -468,7 +473,7 @@ class PrefGUI:
             self.text(s.nGetMount(), (80, y), RED if s.nGetMount() else LIGHT, self.f10b, right=True)
             self.text("%+d" % s.Vists, (126, y), WHITE, self.f10, right=True)
         self.text("вісти - баланс, як при закритті", (64, 78), GREY, self.f8, center=True)
-        done = "PRESS - далі" if self.paper_mode else "будь-яка кнопка - назад"
+        done = lcd.OK + " - далі" if self.paper_mode else "будь-яка кнопка - назад"
         self.text(done, (64, 112), LIGHT, self.f8, center=True)
 
     def draw(self):
@@ -576,6 +581,7 @@ def start_screen(gui):
 def final_screen(gui):
     app = gui.app
     res = sorted((app.Gamer(n).aScore.Vists, n) for n in (1, 2, 3))[::-1]
+    lcd.play("win" if res[0][1] == 1 else "lose")
     while True:
         if any(k in CONFIRM for k in gui.events()):
             return
@@ -586,7 +592,7 @@ def final_screen(gui):
             y = 36 + r * 16
             gui.text(NAMES[n], (12, y), WHITE, gui.f10)
             gui.text("%+d" % v, (116, y), YELLOW if v > 0 else LIGHT, gui.f10b, right=True)
-        gui.text("PRESS - нова пулька", (64, 104), LIGHT, gui.f8, center=True)
+        gui.text(lcd.OK + " - нова пулька", (64, 104), LIGHT, gui.f8, center=True)
         lcd.flip()
         gui.clock.tick(20)
 

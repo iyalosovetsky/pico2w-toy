@@ -5,6 +5,7 @@ USB keyboard: arrows, Enter / Space - run.
 Games return here when they exit; CONSOLE ends the menu and opens the LCD
 console (tty7); HDMI lends the USB keyboard to the HDMI console (tty1) until KEY3.
 """
+import glob
 import os
 import socket
 import subprocess
@@ -23,8 +24,24 @@ ITEMS = [
     ("AI CHAT", "zen4", "aichat", None),
     ("CONSOLE", "tty", None, None),
     ("HDMI", "keyboard", "hdmi", None),
+    ("SOUND", "", "sound", None),
     ("POWER OFF", "", "poweroff", None),
 ]
+
+
+def _has_hdmi_fb():
+    for path in glob.glob("/sys/class/graphics/fb[0-9]*/name"):
+        try:
+            with open(path) as f:
+                if "vc4" in f.read():
+                    return True
+        except OSError:
+            pass
+    return False
+
+
+if not _has_hdmi_fb():  # no monitor framebuffer (e.g. PicoCalc): nothing to lend the keyboard to
+    ITEMS = [it for it in ITEMS if it[2] != "hdmi"]
 POWEROFF_CMD = ["sudo", "-n", "/usr/bin/systemctl", "poweroff"]
 
 BG = (0, 0, 0)
@@ -33,6 +50,8 @@ DIM = (110, 110, 110)
 ACCENT = (255, 200, 0)
 
 screen = lcd.init()
+if not lcd.sound_available():
+    ITEMS = [it for it in ITEMS if it[2] != "sound"]
 font_title = pygame.font.Font(None, 22)
 TITLE = socket.gethostname().split(".")[0].upper()  # the menu header shows the hostname
 while font_title.size(TITLE)[0] > 120 and font_title.get_height() > 10:  # long names: smaller font
@@ -53,7 +72,9 @@ def draw(sel):
     screen.blit(t, ((128 - t.get_width()) // 2, 5))
     pygame.draw.line(screen, DIM, (8, 22), (119, 22))
     for i in range(top, min(top + VISIBLE, len(ITEMS))):
-        name, hint, _, _ = ITEMS[i]
+        name, hint, cmd, _ = ITEMS[i]
+        if cmd == "sound":
+            hint = "on" if lcd.sound_enabled() else "off"
         y = 28 + (i - top) * ROW_H
         if i == sel:
             pygame.draw.rect(screen, ACCENT, (6, y - 3, 116, ROW_H - 1), border_radius=4)
@@ -89,7 +110,7 @@ def hdmi_console():
     """
     lcd.release_keyboards()
     subprocess.run(["sudo", "-n", "/bin/chvt", "1"])
-    message("HDMI", "keyboard -> HDMI", "console (tty1)", "", "KEY3: back")
+    message("HDMI", "keyboard -> HDMI", "console (tty1)", "", lcd.BACK + ": back")
     try:
         while True:
             for ev in pygame.event.get():
@@ -104,8 +125,8 @@ def hdmi_console():
 
 
 def confirm_poweroff():
-    """Ask for confirmation; True only for PRESS / KEY1."""
-    message("POWER OFF?", "PRESS / KEY1 / Enter: yes", "other key: cancel", color=(255, 80, 80))
+    """Ask for confirmation; True only for PRESS / KEY1 / Enter."""
+    message("POWER OFF?", lcd.OK + ": yes", "other key: cancel", color=(255, 80, 80))
     while True:
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
@@ -133,7 +154,9 @@ def run(cmd, cwd):
     screen.fill(BG)
     lcd.flip()
     lcd.release_inputs()  # the game grabs the keys itself
+    lcd.release_audio()   # ... and opens the sound card
     subprocess.run(cmd, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    lcd.resume_audio()
     lcd.grab_inputs()
     lcd.flush_buttons()
 
@@ -147,9 +170,12 @@ while running:
         elif ev.type == pygame.KEYDOWN:
             if ev.key == pygame.K_UP:
                 sel = (sel - 1) % len(ITEMS)
+                lcd.play("click")
             elif ev.key == pygame.K_DOWN:
                 sel = (sel + 1) % len(ITEMS)
+                lcd.play("click")
             elif ev.key in (pygame.K_RETURN, pygame.K_1, pygame.K_RIGHT, pygame.K_SPACE):
+                lcd.play("select")
                 _, _, cmd, cwd = ITEMS[sel]
                 if cmd is None:
                     running = False
@@ -161,6 +187,9 @@ while running:
                                     "--no-block", "ai-chat.service"])
                 elif cmd == "hdmi":
                     running = hdmi_console()
+                elif cmd == "sound":
+                    lcd.set_sound(not lcd.sound_enabled())
+                    lcd.play("select")
                 elif cmd == "poweroff":
                     if confirm_poweroff():
                         poweroff()

@@ -2,6 +2,10 @@
 
 # pico2w-toy
 
+> **PicoCalc:** the same software for the [ClockworkPi PicoCalc](https://www.clockworkpi.com/picocalc) with a Zero 2 W
+> (320×320 display, keyboard, PWM sound) is on the [`picocalc`](https://github.com/iyalosovetsky/pico2w-toy/tree/picocalc) branch.
+> The app code is shared: `app/lcd.py` detects the display; only `install.sh` and `config/` differ.
+
 A pocket game console / AI terminal built from a **Raspberry Pi Zero 2 W** and a **Waveshare 1.44" LCD HAT**
 (128×128, joystick + 3 buttons), running stock Raspberry Pi OS Bookworm.
 

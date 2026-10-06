@@ -39,7 +39,8 @@ for img, t, t_next in zip(frames, stamps, stamps[1:] + [start + args.seconds]):
         continue
     out.append(img)
     durations.append(ms)
-size = (128 * args.scale, 128 * args.scale)
-out = [img.resize(size, Image.NEAREST).quantize(colors=128, dither=Image.Dither.NONE) for img in out]
+w, h = out[0].size
+scale = args.scale if w <= 128 else 1  # the 320x320 PicoCalc is recorded 1:1
+out = [img.resize((w * scale, h * scale), Image.NEAREST).quantize(colors=128, dither=Image.Dither.NONE) for img in out]
 out[0].save(args.out, save_all=True, append_images=out[1:], duration=durations, loop=0, optimize=True)
 print("%s: %d frames, %.1f KB" % (args.out, len(out), os.path.getsize(args.out) / 1024))

@@ -2,6 +2,10 @@
 
 # pico2w-toy
 
+> **PicoCalc:** та сама програма для [ClockworkPi PicoCalc](https://www.clockworkpi.com/picocalc) із Zero 2 W
+> (дисплей 320×320, клавіатура, PWM-звук) - у гілці [`picocalc`](https://github.com/iyalosovetsky/pico2w-toy/tree/picocalc).
+> Код програм спільний: `app/lcd.py` сам визначає дисплей; різняться лише `install.sh` і `config/`.
+
 Кишенькова ігрова консоль / AI-термінал на **Raspberry Pi Zero 2 W** і **Waveshare 1.44" LCD HAT**
 (128×128, джойстик + 3 кнопки) під звичайною Raspberry Pi OS Bookworm.
 

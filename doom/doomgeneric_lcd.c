@@ -1,5 +1,7 @@
-// doomgeneric backend for the Waveshare 1.44" LCD HAT (128x128 RGB565 fb via
-// panel-mipi-dbi) with the HAT buttons exposed as gpio-key evdev devices.
+// doomgeneric backend for small RGB565 framebuffer LCDs (panel-mipi-dbi):
+// the Waveshare 1.44" LCD HAT (128x128, the HAT buttons exposed as gpio-key
+// evdev devices) and the PicoCalc (320x320, I2C keyboard). The 320x200 frame
+// is box-filtered down to the LCD width (1:1 on the PicoCalc) and centred.
 //
 // Buttons: joystick = move/turn, joystick press = fire (+Enter in menus),
 //          KEY1 = use/open (+"y" to confirm), KEY2 = next weapon, KEY3 = menu (Esc)
@@ -11,19 +13,19 @@
 #include "i_system.h"
 
 #include <dirent.h>
+#include <stdlib.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/input.h>
 #include <stdio.h>
 #include <string.h>
+#include <signal.h>
 #include <time.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
 
-#define LCD_W 128
-#define LCD_H 128
-#define OUT_H (DOOMGENERIC_RESY * LCD_W / DOOMGENERIC_RESX)  // 80, keeps aspect
-#define OUT_Y ((LCD_H - OUT_H) / 2)
+static int lcdW = 128, lcdH = 128;  // read from the framebuffer in DG_Init
+static int outH, outY;              // height of the picture (keeps aspect) and its top row
 
 #define NEXT_WEAPON_KEY 0x5d  // ]
 // linux/input.h redefines KEY_ENTER as 28; Doom expects 13
@@ -38,11 +40,13 @@
 extern int key_nextweapon;
 
 static int fbFd = -1;
-static uint16_t frame[LCD_W * LCD_H];
-static int srcX[LCD_W + 1], srcY[OUT_H + 1];
+static uint16_t *frame;
+static size_t frameBytes;
+static int *srcX, *srcY;
 
 #define MAX_INPUTS 16
 static int inputFds[MAX_INPUTS];
+static char inputNames[MAX_INPUTS][16];  // "eventN", to skip devices already open
 static int inputIsKeyboard[MAX_INPUTS];
 static int numInputFds;
 
@@ -106,10 +110,26 @@ static unsigned char keyboardKey(int code)
 	return 0;
 }
 
+static void openButtons(int required);
+
+static void dropInput(int i)
+{
+	close(inputFds[i]);
+	numInputFds--;
+	inputFds[i] = inputFds[numInputFds];
+	inputIsKeyboard[i] = inputIsKeyboard[numInputFds];
+	memcpy(inputNames[i], inputNames[numInputFds], sizeof(inputNames[i]));
+}
+
 static void pollButtons(void)
 {
 	struct input_event ev[16];
+	static uint32_t lastScan;
 
+	if (DG_GetTicksMs() - lastScan > 2000) {  // pick up keyboards plugged in later
+		lastScan = DG_GetTicksMs();
+		openButtons(0);
+	}
 	for (int i = 0; i < numInputFds; i++) {
 		ssize_t n;
 		while ((n = read(inputFds[i], ev, sizeof(ev))) > 0) {
@@ -124,6 +144,10 @@ static void pollButtons(void)
 					handleButton(ev[j].code, ev[j].value);
 				}
 			}
+		}
+		if (n < 0 && errno == ENODEV) {  // unplugged
+			dropInput(i);
+			i--;
 		}
 	}
 }
@@ -155,7 +179,7 @@ static int isKeyboard(const char *event)
 	return 1;
 }
 
-static void openButtons(void)
+static void openButtons(int required)
 {
 	DIR *dir = opendir("/sys/class/input");
 	struct dirent *de;
@@ -165,6 +189,11 @@ static void openButtons(void)
 		I_Error("Cannot open /sys/class/input: %s", strerror(errno));
 	while ((de = readdir(dir)) && numInputFds < MAX_INPUTS) {
 		if (strncmp(de->d_name, "event", 5))
+			continue;
+		int known = 0;
+		for (int i = 0; i < numInputFds; i++)
+			known |= !strcmp(inputNames[i], de->d_name);
+		if (known)
 			continue;
 		snprintf(path, sizeof(path), "/sys/class/input/%s/device/name", de->d_name);
 		FILE *f = fopen(path, "r");
@@ -178,14 +207,15 @@ static void openButtons(void)
 			if (fd >= 0) {
 				ioctl(fd, EVIOCGRAB, 1);  // keys must not also reach the HDMI console
 				inputIsKeyboard[numInputFds] = keyboard;
+				snprintf(inputNames[numInputFds], sizeof(inputNames[0]), "%s", de->d_name);
 				inputFds[numInputFds++] = fd;
 			}
 		}
 		fclose(f);
 	}
 	closedir(dir);
-	if (numInputFds == 0)
-		I_Error("No HAT buttons found (gpio-key overlay not loaded?)");
+	if (required && numInputFds == 0)
+		I_Error("No HAT buttons or keyboard found");
 }
 
 static int openLcd(void)
@@ -200,6 +230,13 @@ static int openLcd(void)
 		int found = fgets(name, sizeof(name), f) && strstr(name, "mipi");
 		fclose(f);
 		if (found) {
+			snprintf(path, sizeof(path), "/sys/class/graphics/fb%d/virtual_size", i);
+			f = fopen(path, "r");
+			if (f) {
+				if (fscanf(f, "%d,%d", &lcdW, &lcdH) != 2)
+					lcdW = lcdH = 128;
+				fclose(f);
+			}
 			snprintf(path, sizeof(path), "/dev/fb%d", i);
 			return open(path, O_WRONLY);
 		}
@@ -213,21 +250,32 @@ void DG_Init()
 	if (fbFd < 0)
 		I_Error("LCD framebuffer not found");
 
-	// source pixel ranges for box-filter downscaling 320x200 -> 128x80
-	for (int x = 0; x <= LCD_W; x++)
-		srcX[x] = x * DOOMGENERIC_RESX / LCD_W;
-	for (int y = 0; y <= OUT_H; y++)
-		srcY[y] = y * DOOMGENERIC_RESY / OUT_H;
+	outH = DOOMGENERIC_RESY * lcdW / DOOMGENERIC_RESX;  // 80 on 128, 200 on 320
+	if (outH > lcdH)
+		outH = lcdH;
+	outY = (lcdH - outH) / 2;
+	frameBytes = (size_t)lcdW * lcdH * 2;
+	frame = calloc(lcdW * lcdH, 2);
+	srcX = malloc((lcdW + 1) * sizeof(int));
+	srcY = malloc((outH + 1) * sizeof(int));
+	if (!frame || !srcX || !srcY)
+		I_Error("out of memory");
 
-	openButtons();
+	// source pixel ranges for box-filter downscaling 320x200 -> lcdW x outH
+	for (int x = 0; x <= lcdW; x++)
+		srcX[x] = x * DOOMGENERIC_RESX / lcdW;
+	for (int y = 0; y <= outH; y++)
+		srcY[y] = y * DOOMGENERIC_RESY / outH;
+
+	openButtons(1);
 	clock_gettime(CLOCK_MONOTONIC, &startTime);
 }
 
 void DG_DrawFrame()
 {
-	for (int y = 0; y < OUT_H; y++) {
-		uint16_t *out = &frame[(OUT_Y + y) * LCD_W];
-		for (int x = 0; x < LCD_W; x++) {
+	for (int y = 0; y < outH; y++) {
+		uint16_t *out = &frame[(outY + y) * lcdW];
+		for (int x = 0; x < lcdW; x++) {
 			unsigned r = 0, g = 0, b = 0, n = 0;
 			for (int sy = srcY[y]; sy < srcY[y + 1]; sy++) {
 				const pixel_t *row = &DG_ScreenBuffer[sy * DOOMGENERIC_RESX];
@@ -239,11 +287,15 @@ void DG_DrawFrame()
 					n++;
 				}
 			}
+			if (n == 0) {  // LCD wider than 320: nearest source pixel
+				uint32_t p = DG_ScreenBuffer[srcY[y] * DOOMGENERIC_RESX + srcX[x]];
+				r = (p >> 16) & 0xff; g = (p >> 8) & 0xff; b = p & 0xff; n = 1;
+			}
 			r /= n; g /= n; b /= n;
 			out[x] = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 		}
 	}
-	pwrite(fbFd, frame, sizeof(frame), 0);
+	pwrite(fbFd, frame, frameBytes, 0);
 	pollButtons();
 }
 
@@ -277,12 +329,29 @@ void DG_SetWindowTitle(const char *title)
 {
 }
 
+// SIGTERM (systemctl stop, poweroff) must end in a normal I_Quit(): being
+// killed while the sound device is open leaves the PicoCalc's bcm2835 PWM audio
+// driver stuck closing it for minutes.
+static volatile sig_atomic_t quitRequested;
+
+static void onSignal(int sig)
+{
+	(void)sig;
+	quitRequested = 1;
+}
+
 int main(int argc, char **argv)
 {
+	signal(SIGTERM, onSignal);
+	signal(SIGINT, onSignal);
+	signal(SIGHUP, onSignal);
 	doomgeneric_Create(argc, argv);
 	key_nextweapon = NEXT_WEAPON_KEY;
 
-	for (;;)
+	for (;;) {
 		doomgeneric_Tick();
+		if (quitRequested)
+			I_Quit();
+	}
 	return 0;
 }

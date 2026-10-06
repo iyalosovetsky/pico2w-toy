@@ -85,8 +85,10 @@ class Game:
         self.by += self.vy
         if self.by <= 0:
             self.by, self.vy = 0, abs(self.vy)
+            lcd.play("wall")
         elif self.by >= H - BALL:
             self.by, self.vy = H - BALL, -abs(self.vy)
+            lcd.play("wall")
 
         if self.vx < 0 and self.bx <= 2 + PAD_W and self.bx >= 0:
             self.hit(self.player_y, 1)
@@ -106,6 +108,7 @@ class Game:
             self.vx = speed * direction
             self.vy = rel * 2.2 + random.uniform(-0.2, 0.2)
             self.bx = 2 + PAD_W if direction > 0 else W - 2 - PAD_W - BALL
+            lcd.play("hit")
 
     def predict_y(self):
         """Where the ball will cross the AI paddle line (with wall bounces)."""
@@ -123,7 +126,9 @@ class Game:
         self.score[who] += 1
         if self.score[who] >= WIN_SCORE:
             self.state = "over"
+            lcd.play("win" if who == 0 else "lose")
         else:
+            lcd.play("point" if who == 0 else "score")
             self.serve(direction=-1 if who == 0 else 1)
 
     def draw(self):
@@ -141,12 +146,12 @@ class Game:
             pygame.draw.rect(screen, WHITE, (round(self.bx), round(self.by), BALL, BALL))
 
         if self.state == "title":
-            self.banner("PONG", "PRESS: start", "KEY2: " + LEVELS[self.level][0])
+            self.banner("PONG", lcd.OK + ": start", lcd.ALT + ": " + LEVELS[self.level][0])
         elif self.state == "pause":
-            self.banner("PAUSE", "PRESS: resume", "KEY3: exit")
+            self.banner("PAUSE", lcd.OK + ": resume", lcd.BACK + ": exit")
         elif self.state == "over":
             won = self.score[0] > self.score[1]
-            self.banner("YOU WIN!" if won else "AI WINS", "PRESS: again", "KEY2: " + LEVELS[self.level][0])
+            self.banner("YOU WIN!" if won else "AI WINS", lcd.OK + ": again", lcd.ALT + ": " + LEVELS[self.level][0])
         lcd.flip()
 
     def banner(self, title, *lines):

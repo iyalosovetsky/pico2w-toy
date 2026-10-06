@@ -96,6 +96,7 @@ class Game:
         self.fall = 0
         if self.collides(self.cells, self.px, self.py):
             self.state = "over"
+            lcd.play("lose")
             if self.score > self.hi:
                 self.hi = self.score
                 save_hi(self.hi)
@@ -119,6 +120,7 @@ class Game:
         for kick in (0, -1, 1, -2, 2):  # simple wall kicks
             if not self.collides(new, self.px + kick, self.py):
                 self.cells, self.px = new, self.px + kick
+                lcd.play("click")
                 return
 
     def hard_drop(self):
@@ -141,7 +143,9 @@ class Game:
         self.clearing = [r for r in range(ROWS) if all(self.board[r])]
         if self.clearing:
             self.flash = 12
+            lcd.play("line")
         else:
+            lcd.play("drop")
             self.spawn()
 
     def finish_clear(self):
@@ -209,9 +213,9 @@ class Game:
             screen.blit(font.render(str(value), True, WHITE), (sx, y + 10))
 
         if self.state == "pause":
-            self.banner("PAUSE", "KEY2: resume")
+            self.banner("PAUSE", lcd.ALT + ": resume")
         elif self.state == "over":
-            self.banner("GAME OVER", "PRESS: again")
+            self.banner("GAME OVER", lcd.OK + ": again")
         lcd.flip()
 
     def banner(self, title, hint):
@@ -244,10 +248,12 @@ while running:
                 game.state = "play" if game.state == "pause" else "pause"
             elif game.state == "play" and not game.clearing:
                 if k == pygame.K_LEFT:
-                    game.move(-1, 0)
+                    if game.move(-1, 0):
+                        lcd.play("move")
                     repeat[k] = 0
                 elif k == pygame.K_RIGHT:
-                    game.move(1, 0)
+                    if game.move(1, 0):
+                        lcd.play("move")
                     repeat[k] = 0
                 elif k in (pygame.K_UP, pygame.K_RETURN):
                     game.turn()

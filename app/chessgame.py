@@ -46,7 +46,7 @@ def make_piece_images():
             fill, edge = ((250, 250, 250), (20, 20, 20)) if color else ((15, 15, 15), (235, 235, 235))
             base = glyph_font.render(ch, True, fill)
             outline = glyph_font.render(ch, True, edge)
-            img = pygame.Surface((base.get_width() + 2, base.get_height() + 2), pygame.SRCALPHA)
+            img = lcd.Surface((base.get_width() + 2, base.get_height() + 2), pygame.SRCALPHA)
             for dx, dy in ((0, 1), (2, 1), (1, 0), (1, 2)):
                 img.blit(outline, (dx, dy))
             img.blit(base, (1, 1))
@@ -132,6 +132,14 @@ class Game:
         if self.board.is_game_over(claim_draw=True):
             self.state = "over"
             self.delete_save()
+            winner = self.board.outcome(claim_draw=True).winner
+            lcd.play("click" if winner is None else "win" if winner == self.player else "lose")
+
+    def push(self, move):
+        """Make a move with a sound: capture, check or a plain move."""
+        capture = self.board.is_capture(move)
+        self.board.push(move)
+        lcd.play("check" if self.board.is_check() else "hit" if capture else "move")
 
     def ai_turn(self):
         """Let Stockfish move if it is its turn (blocks for up to a second)."""
@@ -139,7 +147,7 @@ class Game:
             return
         draw(self, thinking=True)
         result = self.engine.play(self.board, chess.engine.Limit(time=LEVELS[self.level][1]))
-        self.board.push(result.move)
+        self.push(result.move)
         self.check_over()
         self.save()
 
@@ -165,7 +173,7 @@ class Game:
             self.selected = sq
 
     def make_move(self, move):
-        self.board.push(move)
+        self.push(move)
         self.selected = None
         self.check_over()
         self.save()
@@ -280,7 +288,7 @@ def draw(g, thinking=False):
                [(label, WHITE, i == g.menu_row) for i, label in enumerate(GAME_MENU)])
     elif g.state == "over":
         title, reason = g.result_text()
-        banner([(title, YELLOW, False), (reason, WHITE, False), ("PRESS: new game", GREY, False)])
+        banner([(title, YELLOW, False), (reason, WHITE, False), (lcd.OK + ": new game", GREY, False)])
     lcd.flip()
 
 

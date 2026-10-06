@@ -28,6 +28,7 @@ screen = lcd.init()
 font = pygame.font.Font(None, 14)
 font_card = pygame.font.Font(None, 17)
 font_big = pygame.font.Font(None, 20)
+font_tiny = pygame.font.Font(None, 12)  # action labels that don't fit the bar
 clock = pygame.time.Clock()
 
 
@@ -145,6 +146,7 @@ class Table:
         for p in self.players:
             p.reset()
             p.hole = [self.deck.pop(), self.deck.pop()]
+        lcd.play("card")
         sb, bb = self.blinds
         dealer = self.players[self.button]  # heads-up: dealer posts the small blind
         big = self.other(dealer)
@@ -180,12 +182,14 @@ class Table:
             p.last = "FOLD"
         elif action == "call":
             need = self.to_call(p)
+            lcd.play("chip" if need else "click")
             p.put(need)
             p.last = "CALL %d" % need if need else "CHECK"
             if p.stack == 0 and need:
                 p.last = "ALL-IN"
         else:  # raise to `amount`
             amount = max(self.min_raise_to(p), min(amount, self.max_raise_to(p)))
+            lcd.play("chip")
             self.min_raise = max(self.min_raise, amount - self.current_bet)
             p.put(amount - p.bet)
             p.last = ("BET %d" if self.current_bet == 0 else "RAISE %d") % amount
@@ -225,6 +229,7 @@ class Table:
             winner.stack += self.pot
             self.pot = 0
             self.mode = "result"
+            lcd.play("point" if winner is self.you else "score")
             return
         if self.street == 3 or any(p.stack == 0 for p in self.players):
             while len(self.board) < 5:  # all-in: run out the board
@@ -233,6 +238,7 @@ class Table:
             return
         self.street += 1
         self.board += [self.deck.pop() for _ in range(3 if self.street == 1 else 1)]
+        lcd.play("card")
         for p in self.players:
             p.acted = False
             p.last = ""
@@ -269,10 +275,12 @@ class Table:
             self.result = ["SPLIT POT", names]
         self.pot = 0
         self.mode = "result"
+        lcd.play("point" if vy > va else "score" if va > vy else "click")
 
     def next_hand(self):
         if self.you.stack == 0 or self.ai.stack == 0:
             self.mode = "over"
+            lcd.play("win" if self.you.stack else "lose")
         else:
             self.new_hand()
 
@@ -396,7 +404,8 @@ def draw(t, sel, raise_to):
             box = pygame.Rect(i * w + 1, 115, w - 2, 13)
             selected = i == sel
             pygame.draw.rect(screen, YELLOW if selected else (0, 45, 22), box, border_radius=3)
-            text(label, (box.centerx, 116), BLACK if selected else WHITE, center=True)
+            f = font if font.size(label)[0] <= box.w - 2 else font_tiny
+            text(label, (box.centerx, 116 if f is font else 117), BLACK if selected else WHITE, f, center=True)
     elif t.mode == "ai":
         text("AI is thinking...", (64, 116), GREY, center=True)
     elif t.mode == "result":
@@ -409,7 +418,7 @@ def draw(t, sel, raise_to):
         pygame.draw.rect(screen, BLACK, box)
         pygame.draw.rect(screen, YELLOW, box, 1)
         text("YOU WIN!" if you.stack else "AI WINS", (64, 45), YELLOW, font_big, center=True)
-        text("PRESS: new game", (64, 64), WHITE, center=True)
+        text(lcd.OK + ": new game", (64, 64), WHITE, center=True)
     lcd.flip()
 
 
