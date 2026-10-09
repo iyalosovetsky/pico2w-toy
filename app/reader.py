@@ -117,6 +117,49 @@ def message(title, *lines):
     lcd.flip()
 
 
+# ---------------------------------------------------------------- hyphenation
+
+VOWELS = set("аеєиіїоуюяыэёАЕЄИІЇОУЮЯЫЭЁaeiouyAEIOUY")
+NO_LINE_START = set("ьъйЬЪЙ'’ʼ")
+APOSTROPHES = set("'’ʼ")
+
+
+def hyphen_points(word):
+    """Simple syllable breaks (word[:p] | word[p:]), rightmost first: at least two
+    letters and a vowel on each side, never before ь / й / an apostrophe; between a
+    vowel and consonant+vowel, between two consonants, between two vowels, or after
+    a hyphen already in the word."""
+    pts = []
+    letters = [c.isalpha() or c in APOSTROPHES for c in word]
+    for p in range(1, len(word)):
+        a, b = word[p - 1], word[p]
+        if a == "-":
+            if sum(letters[:p]) >= 2 and sum(letters[p:]) >= 2:
+                pts.append(p)
+            continue
+        if not (letters[p - 1] and letters[p]) or b in NO_LINE_START or a in APOSTROPHES:
+            continue
+        left, right = word[:p], word[p:]
+        if sum(c.isalpha() for c in left) < 2 or sum(c.isalpha() for c in right) < 2:
+            continue  # never leave or carry a single letter
+        if not any(c in VOWELS for c in left) or not any(c in VOWELS for c in right):
+            continue
+        c = word[p + 1] if p + 1 < len(word) else ""
+        va, vb, vc = a in VOWELS, b in VOWELS, c in VOWELS
+        if (va and not vb and vc) or (not va and not vb) or (va and vb):
+            pts.append(p)
+    return pts[::-1]
+
+
+def hyphenate(word, fits):
+    """Longest syllable prefix of word that fits(prefix + "-"): (chars, shown) or None."""
+    for p in hyphen_points(word):
+        shown = word[:p] if word[p - 1] == "-" else word[:p] + "-"
+        if fits(shown):
+            return p, shown
+    return None
+
+
 # ---------------------------------------------------------------- page layout
 
 class Layout:
@@ -138,25 +181,33 @@ class Layout:
         self._paginate()
 
     def _wrap(self, s, f, width, indent):
+        """Greedy word wrap with syllable hyphenation -> [(line, char offset)]."""
         out, line, start, off = [], "", 0, 0
         for word in s.split(" "):
-            cand = word if not line else line + " " + word
-            avail = width - (indent if not out else 0)
-            if f.size(cand)[0] <= avail:
-                if not line:
-                    start = off
-                line = cand
-            else:
-                if line:
+            w_off, rest = off, word
+            while rest:
+                avail = width - (indent if not out else 0)
+                cand = rest if not line else line + " " + rest
+                if f.size(cand)[0] <= avail:
+                    if not line:
+                        start = w_off
+                    line, rest = cand, ""
+                    continue
+                prefix = line + " " if line else ""
+                cut = hyphenate(rest, lambda part: f.size(prefix + part)[0] <= avail)
+                if cut:  # part of the word + "-" fits at the end of this line
+                    k, shown = cut
+                    out.append((prefix + shown, start if line else w_off))
+                    line, rest, w_off = "", rest[k:], w_off + k
+                elif line:  # move the whole word to the next line
                     out.append((line, start))
                     line = ""
-                while f.size(word)[0] > width - (indent if not out else 0) and len(word) > 1:
-                    cut = len(word)  # an over-long word: break it
-                    while cut > 1 and f.size(word[:cut])[0] > width - (indent if not out else 0):
-                        cut -= 1
-                    out.append((word[:cut], off))
-                    word, off = word[cut:], off + cut
-                line, start = word, off
+                else:  # no syllable break fits: cut the over-long word anywhere
+                    k = len(rest)
+                    while k > 1 and f.size(rest[:k])[0] > avail:
+                        k -= 1
+                    out.append((rest[:k], w_off))
+                    rest, w_off = rest[k:], w_off + k
             off += len(word) + 1
         if line:
             out.append((line, start))
