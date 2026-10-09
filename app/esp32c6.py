@@ -200,7 +200,7 @@ def main():
         link = None
     st, row, typing = None, 0, None
     note, note_color, note_until = "", DIM, 0
-    held, next_repeat = None, 0
+    held, held_hat, next_repeat = None, False, 0
     last_try = 0
 
     def send(cmd):
@@ -241,6 +241,7 @@ def main():
             if ev.type != pygame.KEYDOWN:
                 continue
             k, hat = ev.key, getattr(ev, "hat", False)
+            held = None  # any key press ends a repeat
             if k == pygame.K_ESCAPE or (k == pygame.K_3 and hat):
                 if typing is not None:
                     typing = None
@@ -274,11 +275,13 @@ def main():
             elif k in (pygame.K_LEFT, pygame.K_RIGHT):
                 typing = None
                 change(1 if k == pygame.K_RIGHT else -1, False)
-                held, next_repeat = k, now + 0.4
+                held, held_hat, next_repeat = k, hat, now + 0.4
             elif k in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS) or (k == pygame.K_1 and hat):
                 change(1, True)
             elif k in (pygame.K_MINUS, pygame.K_KP_MINUS) or (k == pygame.K_2 and hat):
                 change(-1, True)
+        if held and not held_hat and held not in lcd._held_arrows:  # a keyboard says it's up
+            held = None
         if held and st and time.monotonic() >= next_repeat and row < 2:  # held arrow repeats
             change(1 if held == pygame.K_RIGHT else -1, False)
             next_repeat = time.monotonic() + 0.12

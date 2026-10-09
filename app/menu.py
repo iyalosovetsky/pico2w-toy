@@ -24,7 +24,7 @@ ITEMS = [
     ("PREFERANS", "", ["/usr/bin/python3", HERE + "/preferans.py"], HERE),
     ("BOOKS", "epub fb2", ["/usr/bin/python3", HERE + "/reader.py"], HERE),
     ("DOOM", "E1", [HERE + "/doom/doomlcd", "-iwad", "/usr/share/games/doom/doom1.wad"], HERE + "/doom"),
-    ("GENERATOR", "ESP32-C6", ["/usr/bin/python3", HERE + "/esp32c6.py"], HERE),
+    ("GENERATOR", "", ["/usr/bin/python3", HERE + "/esp32c6.py"], HERE),
     ("AI CHAT", "zen4", "aichat", None),
     ("PYTHON", "bpython", "term:python", None),
     ("BASIC", "MMBasic", "term:basic", None),
