@@ -119,6 +119,7 @@ A 172×103×20 mm PicoCalc back cover for the zero mod (a Zero 2 W instead of th
 | **PREFERANS** | Preferans (Russian whist) against two computer players: Sochi (default) or Leningrad rules, chosen when a new pulka starts, pulka to 20, auto-saved. Engine and AI: [Python Pref](https://python-pref.sourceforge.io/index_ru.html) (the same one that ran on Nokia/Symbian), ported to Python 3 |
 | **BOOKS** | EPUB / FB2 / TXT (also zipped) and PDF reader for the `~/books` folder: images, contents, font size, light/dark theme; PDF as zoomed page fragments with smooth scrolling; the position in every book is saved |
 | **DOOM** | Doom (shareware episode 1) via [doomgeneric](https://github.com/ozkl/doomgeneric), downscaled to 128×80 |
+| **GENERATOR** | Square wave generator on the ESP32-C6 (PicoCalc, over the UART): frequency, duty cycle, on/off; the ESP's LED shows the duty and the frequency - see [ESP32-C6](#picocalc-components) |
 | **AI CHAT** | Chat with a local LLM (llama.cpp / any OpenAI-compatible server) on the text console, US/UA keyboard |
 | **CONSOLE** | Leaves the menu and opens a text console with login on the LCD (tty7); `lcdmenu` brings the menu back |
 | **HDMI** | Lends the USB keyboard to the console on the monitor (tty1); the HAT buttons stay with the menu, KEY3 takes the keyboard back |
