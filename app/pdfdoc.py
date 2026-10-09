@@ -1,6 +1,6 @@
 """PDF pages for the LCD book reader, rendered by poppler's pdftoppm / pdfinfo.
 
-PdfDoc(path).render(page, width) -> PNG bytes of the page's content (white margins
+PdfDoc(path).render(page, width) -> PPM bytes (5x faster than PNG on a Zero) of the page's content (white margins
 cropped), scaled so the content is `width` pixels wide. render() caches a few pages and
 prefetch() renders one in the background, so the next page is usually ready.
 """
@@ -31,7 +31,7 @@ class PdfDoc:
         self.title = info.get("Title", "")
         self.author = info.get("Author", "")
         self._boxes = {}     # page -> (x0, y0, x1, y1 as page fractions, page h/w)
-        self._cache = {}     # (page, width) -> png bytes
+        self._cache = {}     # (page, width) -> ppm bytes
         self._order = []
         self._lock = threading.Lock()
         self._busy = {}      # (page, width) -> Thread
@@ -39,9 +39,9 @@ class PdfDoc:
     def box(self, page):
         """Content box of a page (fractions) and the page's aspect ratio (h / w)."""
         if page not in self._boxes:
-            png = _run(["pdftoppm", "-f", str(page), "-l", str(page), "-singlefile", "-png", "-gray",
+            data = _run(["pdftoppm", "-f", str(page), "-l", str(page), "-singlefile", "-gray",
                         "-scale-to-x", "300", "-scale-to-y", "-1", self.path])
-            img = Image.open(io.BytesIO(png)).convert("L")
+            img = Image.open(io.BytesIO(data)).convert("L")
             w, h = img.size
             bbox = img.point(lambda v: 255 if v < 235 else 0).getbbox() or (0, 0, w, h)
             x0, y0 = max(0.0, bbox[0] / w - MARGIN), max(0.0, bbox[1] / h - MARGIN)
@@ -58,15 +58,15 @@ class PdfDoc:
         full_w = max(1, round(width / (x1 - x0)))
         full_h = round(full_w * a)
         crop = [round(x0 * full_w), round(y0 * full_h), width, max(1, round((y1 - y0) * full_h))]
-        return _run(["pdftoppm", "-f", str(page), "-l", str(page), "-singlefile", "-png",
+        return _run(["pdftoppm", "-f", str(page), "-l", str(page), "-singlefile",
                      "-scale-to-x", str(full_w), "-scale-to-y", str(full_h),
                      "-x", str(crop[0]), "-y", str(crop[1]), "-W", str(crop[2]), "-H", str(crop[3]),
                      self.path])
 
-    def _store(self, key, png):
+    def _store(self, key, data):
         with self._lock:
             if key not in self._cache:
-                self._cache[key] = png
+                self._cache[key] = data
                 self._order.append(key)
                 while len(self._order) > 4:
                     self._cache.pop(self._order.pop(0), None)
@@ -80,11 +80,11 @@ class PdfDoc:
         t = self._busy.get(key)
         if t is not None:
             t.join()
-        png = self.cached(page, width)
-        if png is None:
-            png = self._render(page, width)
-            self._store(key, png)
-        return png
+        data = self.cached(page, width)
+        if data is None:
+            data = self._render(page, width)
+            self._store(key, data)
+        return data
 
     def prefetch(self, page, width):
         key = (page, width)

@@ -503,8 +503,8 @@ class PdfView:
         if (self.page, w) != self.key:
             if self.img is not None and not self.doc.cached(self.page, w):
                 self.draw(busy=True)
-            png = self.doc.render(self.page, w)
-            self.img = pygame.image.load(io.BytesIO(png), "page.png")
+            data = self.doc.render(self.page, w)
+            self.img = pygame.image.load(io.BytesIO(data), "page.ppm")
             self.key = (self.page, w)
         if ZOOMS[self.zi] and self.page < self.doc.pages:
             self.doc.prefetch(self.page + 1, w)
