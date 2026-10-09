@@ -1,11 +1,19 @@
-"""Book reader (EPUB / FB2, also zipped) for the LCD - library in ~/books.
+"""Book reader (EPUB / FB2 / TXT, also zipped, and PDF) for the LCD - library in ~/books.
 
 Library: UP/DOWN choose, PRESS / Enter open, KEY3 / Esc exit.
 Reading: RIGHT / DOWN / PRESS / Space / PgDn - next page, LEFT / UP / PgUp - previous,
 KEY2 / 2 / Tab - menu (contents, font size, theme, library), KEY3 / Esc - library,
 + / - font size, Home / End chapter start / end (keyboard). The position in every book is saved
 (~/.config/lcdtoy/reader.json) as a place in the text, so it survives font changes.
+
+PDF (rendered by poppler's pdftoppm, white margins cropped) - fragments: UP / DOWN page,
+LEFT / RIGHT the zoomed fragments of the page (up to 3 x 3, in reading order), + / - zoom
+(KEY1 / KEY2 on the HAT), PRESS / Enter / Space - scroll the fragment smoothly with the arrows,
+KEY3 / Esc - back to the fragments, then to the library. Page, zoom, fragment and the scroll
+position are saved too.
 """
+import io
+import math
 import json
 import os
 import sys
@@ -17,6 +25,7 @@ sys.path.insert(0, HERE)
 import pygame  # noqa: E402
 import lcd  # noqa: E402
 import books  # noqa: E402
+import pdfdoc  # noqa: E402
 
 BOOKS_DIR = os.path.expanduser(os.environ.get("LCD_BOOKS", "~/books"))
 STATE_FILE = os.path.expanduser("~/.config/lcdtoy/reader.json")
@@ -436,6 +445,275 @@ class Reader:
         lcd.flip()
 
 
+# ---------------------------------------------------------------- PDF
+
+NW, NH = lcd.NATIVE_W, lcd.NATIVE_H  # screen in native pixels
+# zoom levels: 0 = the whole page, else the page content is that many screens wide
+ZOOMS = [0, 1, 1.5, 2, 2.5, 3, 4] if lcd.S > 1 else [0, 1, 1.5, 2, 3, 4, 6, 8]
+DEFAULT_ZOOM = 3 if lcd.S > 1 else 5      # 2x / 4x: A4 text about readable
+PLUS = (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS, pygame.K_1)
+MINUS = (pygame.K_MINUS, pygame.K_KP_MINUS, pygame.K_2)
+PAN_KEYS = {pygame.K_LEFT: (-1, 0), pygame.K_RIGHT: (1, 0), pygame.K_UP: (0, -1), pygame.K_DOWN: (0, 1)}
+PDF_BG = (60, 60, 60)
+
+
+def _axis(isz, ssz):
+    """Fragment offsets along one axis: enough to cover the page, at most 3."""
+    if isz <= ssz:
+        return [(isz - ssz) // 2]  # smaller than the screen: centred
+    n = min(3, math.ceil(isz / ssz - 0.05))
+    if n == 1:
+        return [(isz - ssz) // 2]
+    return [round(i * (isz - ssz) / (n - 1)) for i in range(n)]
+
+
+def _clamp(v, isz, ssz):
+    return (isz - ssz) // 2 if isz <= ssz else int(min(max(0, v), isz - ssz))
+
+
+class PdfView:
+    def __init__(self, path):
+        self.path = path
+        self.doc = pdfdoc.PdfDoc(path)
+        info = state["books"].setdefault(path, {})
+        info["title"] = self.doc.title or os.path.basename(path).rsplit(".", 1)[0]
+        info["author"] = self.doc.author
+        v = info.get("pdf", {})
+        self.page = min(max(1, v.get("page", 1)), self.doc.pages)
+        self.zi = min(max(0, v.get("zoom", DEFAULT_ZOOM)), len(ZOOMS) - 1)
+        self.frag = v.get("frag", 0)
+        self.pan = v.get("mode") == "pan"
+        self.img, self.key = None, None
+        self.vx = self.vy = 0
+        self.load()
+        if self.pan:
+            cx, cy = v.get("center", (0.5, 0.0))
+            self.center_on(cx, cy)
+        self.status_until = time.time() + 2
+
+    # --- rendering
+    def width(self):
+        z = ZOOMS[self.zi]
+        if z == 0:
+            return max(16, int(min(NW, NH / self.doc.content_aspect(self.page))))
+        return int(NW * z)
+
+    def load(self):
+        w = self.width()
+        if (self.page, w) != self.key:
+            if self.img is not None and not self.doc.cached(self.page, w):
+                self.draw(busy=True)
+            png = self.doc.render(self.page, w)
+            self.img = pygame.image.load(io.BytesIO(png), "page.png")
+            self.key = (self.page, w)
+        if ZOOMS[self.zi] and self.page < self.doc.pages:
+            self.doc.prefetch(self.page + 1, w)
+        xs, ys = self.grid()
+        if self.frag < 0:
+            self.frag = len(xs) * len(ys) - 1
+        self.frag = min(self.frag, len(xs) * len(ys) - 1)
+
+    def grid(self):
+        iw, ih = self.img.get_size()
+        return _axis(iw, NW), _axis(ih, NH)
+
+    def view(self):
+        """Top-left of the screen in page pixels (negative: the page is centred)."""
+        if self.pan:
+            return self.vx, self.vy
+        xs, ys = self.grid()
+        f = min(max(0, self.frag), len(xs) * len(ys) - 1)
+        return xs[f % len(xs)], ys[f // len(xs)]
+
+    def center(self):
+        vx, vy = self.view()
+        iw, ih = self.img.get_size()
+        return (vx + NW / 2) / iw, (vy + NH / 2) / ih
+
+    def center_on(self, cx, cy):
+        """Show the point (page fractions) in the middle: scroll there, or pick the nearest fragment."""
+        iw, ih = self.img.get_size()
+        px, py = cx * iw - NW / 2, cy * ih - NH / 2
+        if self.pan:
+            self.vx, self.vy = _clamp(px, iw, NW), _clamp(py, ih, NH)
+        else:
+            xs, ys = self.grid()
+            col = min(range(len(xs)), key=lambda i: abs(xs[i] - px))
+            row = min(range(len(ys)), key=lambda i: abs(ys[i] - py))
+            self.frag = row * len(xs) + col
+
+    # --- actions
+    def goto(self, page, frag=0):
+        if not 1 <= page <= self.doc.pages or page == self.page:
+            return False
+        self.page, self.frag = page, frag
+        self.load()
+        if self.pan:  # scrolling: the top of the new page
+            iw, ih = self.img.get_size()
+            self.vx, self.vy = _clamp(self.vx, iw, NW), _clamp(0, ih, NH)
+        return True
+
+    def step(self, d):
+        """Next / previous fragment, over to the next / previous page."""
+        xs, ys = self.grid()
+        f = self.frag + d
+        if 0 <= f < len(xs) * len(ys):
+            self.frag = f
+            return True
+        return self.goto(self.page + d, 0 if d > 0 else -1)
+
+    def zoom(self, d):
+        zi = min(max(0, self.zi + d), len(ZOOMS) - 1)
+        if zi == self.zi:
+            return False
+        c = self.center()
+        self.zi = zi
+        self.load()
+        self.center_on(*c)
+        return True
+
+    def start_pan(self):
+        self.vx, self.vy = self.view()
+        iw, ih = self.img.get_size()
+        self.vx, self.vy = _clamp(self.vx, iw, NW), _clamp(self.vy, ih, NH)
+        self.pan = True
+
+    def stop_pan(self):
+        c = self.center()
+        self.pan = False
+        self.center_on(*c)
+
+    def scroll(self, dx, dy):
+        iw, ih = self.img.get_size()
+        vx, vy = _clamp(self.vx + dx, iw, NW), _clamp(self.vy + dy, ih, NH)
+        moved = (vx, vy) != (self.vx, self.vy)
+        self.vx, self.vy = vx, vy
+        return moved
+
+    def save(self):
+        info = state["books"][self.path]
+        info["pdf"] = {"page": self.page, "zoom": self.zi, "frag": self.frag,
+                       "mode": "pan" if self.pan else "frag", "center": list(self.center())}
+        info["pct"] = int(100 * self.page / self.doc.pages)
+        info["time"] = time.time()
+        state["last"] = self.path
+        save_state(state)
+
+    # --- drawing
+    def draw(self, busy=False):
+        t = theme()
+        screen.fill(PDF_BG)
+        vx, vy = self.view()
+        area = pygame.Rect(max(0, vx), max(0, vy), NW, NH)
+        screen.blit(self.img, (max(0, -vx) / lcd.S, max(0, -vy) / lcd.S), area)
+        if self.pan:
+            pygame.draw.rect(screen, t["accent"], (0, 0, 128, 128), 1)
+        if busy or time.time() < self.status_until:
+            sh = status_height()
+            sy = 128 - sh
+            pygame.draw.rect(screen, t["bg"], (0, sy - 1, 128, sh + 1))
+            z = ZOOMS[self.zi]
+            zs = "сторінка" if z == 0 else ("%g×" % z)
+            left = "%d/%d  %s" % (self.page, self.doc.pages, "…" if busy else zs)
+            text(left, (M, sy), t["fg"])
+            # the page in miniature with the part on the screen
+            iw, ih = self.img.get_size()
+            ph = sh - 2
+            pw = max(3, ph * iw / ih)
+            px, py = 125 - pw, sy + 1
+            pygame.draw.rect(screen, t["dim"], (px, py, pw, ph), 1)
+            fx, fy = max(0, vx) / iw, max(0, vy) / ih
+            fw, fh = min(1, NW / iw), min(1, NH / ih)
+            pygame.draw.rect(screen, t["accent"], (px + fx * pw, py + fy * ph, max(1, fw * pw), max(1, fh * ph)))
+        lcd.flip()
+
+
+def read_pdf(path):
+    message("Відкриваю…", os.path.basename(path))
+    try:
+        v = PdfView(path)
+    except FileNotFoundError:
+        message("Немає pdftoppm", "sudo apt install poppler-utils")
+        wait_key()
+        return
+    except Exception as e:  # broken file
+        message("Не вдалося відкрити", os.path.basename(path), str(e)[:60])
+        wait_key()
+        return
+    held = {}  # arrow -> time pressed (smooth scrolling)
+    dirty, changed, last_save = True, False, time.time()
+    status_shown = True
+    while True:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                v.save()
+                raise SystemExit
+            if ev.type == pygame.KEYUP:
+                held.pop(ev.key, None)
+                continue
+            if ev.type != pygame.KEYDOWN:
+                continue
+            k = ev.key
+            acted = True
+            if k in BACK:
+                if v.pan:
+                    v.stop_pan()
+                    held.clear()
+                else:
+                    v.save()
+                    return
+            elif k in PLUS:
+                acted = v.zoom(+1)
+            elif k in MINUS:
+                acted = v.zoom(-1)
+            elif k == pygame.K_PAGEDOWN:
+                acted = v.goto(v.page + 1)
+            elif k == pygame.K_PAGEUP:
+                acted = v.goto(v.page - 1)
+            elif k == pygame.K_HOME:
+                acted = v.goto(1)
+            elif k == pygame.K_END:
+                acted = v.goto(v.doc.pages)
+            elif v.pan:
+                if k in PAN_KEYS:
+                    held[k] = time.time()
+                acted = False
+            elif k in (pygame.K_RETURN, pygame.K_SPACE):
+                v.start_pan()
+            elif k == pygame.K_DOWN:
+                acted = v.goto(v.page + 1)
+            elif k == pygame.K_UP:
+                acted = v.goto(v.page - 1)
+            elif k == pygame.K_RIGHT:
+                acted = v.step(+1)
+            elif k == pygame.K_LEFT:
+                acted = v.step(-1)
+            else:
+                acted = False
+            if acted:
+                dirty = changed = True
+                v.status_until = time.time() + 1.5
+        ms = clock.tick(30)
+        if v.pan and held:
+            now = time.time()
+            dx = dy = 0.0
+            for k, since in held.items():
+                speed = NW * 0.7 * (1 + 2 * min(1.0, now - since))  # native px / s, speeding up
+                dx += PAN_KEYS[k][0] * speed * ms / 1000
+                dy += PAN_KEYS[k][1] * speed * ms / 1000
+            if v.scroll(round(dx), round(dy)):
+                dirty = changed = True
+        shown = time.time() < v.status_until
+        if shown != status_shown:
+            dirty, status_shown = True, shown
+        if dirty:
+            v.draw()
+            dirty = False
+            if changed and time.time() - last_save > 5:
+                v.save()
+                changed, last_save = False, time.time()
+
+
 def choose(title, items, sel=0, sub=None):
     """Scrolling list; returns the chosen index or None (KEY3 / Esc / 2)."""
     t = theme()
@@ -482,6 +760,8 @@ def choose(title, items, sel=0, sub=None):
 
 
 def read(path):
+    if path.lower().endswith(".pdf"):
+        return read_pdf(path)
     message("Відкриваю…", os.path.basename(path))
     try:
         r = Reader(path)
@@ -575,7 +855,7 @@ def library():
         info = state["books"]
         files.sort(key=lambda p: (-info.get(p, {}).get("time", 0), os.path.basename(p).lower()))
         if not files:
-            message("Бібліотека порожня", "Покладіть .epub / .fb2 / .zip", "у теку " + BOOKS_DIR.replace(os.path.expanduser("~"), "~"))
+            message("Бібліотека порожня", "Покладіть .epub .fb2 .txt .pdf", "у теку " + BOOKS_DIR.replace(os.path.expanduser("~"), "~"))
             wait_key()
             return
         titles, subs = [], []

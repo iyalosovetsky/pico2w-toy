@@ -6,8 +6,9 @@ load(path) -> Book with chapters of simple blocks:
     ("sep", "")   empty line
     ("img", key)  image; Book.image_bytes(key) -> (bytes, name hint) or None
 
-Supported: .epub, .fb2, .fb2.zip and .zip archives with an .fb2 or .epub inside
-(or a zipped epub). FB2 in any encoding its XML declaration names (windows-1251, koi8-r, ...).
+Supported: .epub, .fb2, .txt, and .zip archives with an .fb2, .epub or .txt inside
+(or a zipped epub). FB2 in any encoding its XML declaration names (windows-1251, koi8-r, ...);
+plain text in UTF-8, windows-1251 or KOI8-U/R. PDF is shown as pages by pdfdoc.py instead.
 """
 import base64
 import io
@@ -73,6 +74,8 @@ def load(path):
         data = f.read()
     if low.endswith(".fb2"):
         return parse_fb2(data, path)
+    if low.endswith(".txt"):
+        return parse_txt(data, path)
     if zipfile.is_zipfile(io.BytesIO(data)):
         return _load_zip(data, path)
     raise ValueError("unsupported file")
@@ -87,14 +90,17 @@ def _load_zip(data, path):
         if n.lower().endswith(".fb2"):
             return parse_fb2(z.read(n), path)
     for n in names:
+        if n.lower().endswith(".txt"):
+            return parse_txt(z.read(n), path)
+    for n in names:
         if n.lower().endswith(".epub"):
             return parse_epub(zipfile.ZipFile(io.BytesIO(z.read(n))), path)
-    raise ValueError("no .fb2 or .epub in the archive")
+    raise ValueError("no .fb2, .epub or .txt in the archive")
 
 
 def is_book(name):
     low = name.lower()
-    return low.endswith((".epub", ".fb2", ".zip"))
+    return low.endswith((".epub", ".fb2", ".zip", ".txt", ".pdf"))
 
 
 # ---------------------------------------------------------------- FB2
@@ -221,6 +227,64 @@ def _fb2_blocks(el, out):
             _fb2_blocks(child, out)
         if name in ("stanza", "poem"):
             out.append(("sep", ""))
+
+
+# ---------------------------------------------------------------- plain text
+
+# a short line like this starts a chapter
+_HEADING = re.compile(r"^(глава|розділ|раздел|частина|часть|chapter|part|книга|book|пролог|епілог|эпилог|prologue|epilogue)\b"
+                      r"|^[IVXLC]+\.?$|^\d{1,3}\.?$", re.IGNORECASE)
+
+
+def _decode_text(data):
+    if data.startswith(b"\xef\xbb\xbf"):
+        return data[3:].decode("utf-8", "replace")
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16", "replace")
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    # windows-1251 or KOI8-U (a superset of KOI8-R): the one that gives more lowercase Cyrillic letters wins
+    best, score = None, -1
+    for enc in ("cp1251", "koi8_u"):
+        text = data.decode(enc, "replace")
+        n = sum(1 for ch in text[:20000] if "а" <= ch <= "я" or ch in "іїєґ")
+        if n > score:
+            best, score = text, n
+    return best
+
+
+def parse_txt(data, path):
+    lines = _decode_text(data).replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    blank = sum(1 for ln in lines if not ln.strip())
+    # paragraphs: separated by blank lines (hard-wrapped text), or one per line
+    by_blank = blank > len(lines) / 8 and blank > 0
+    paras, buf = [], []
+    for ln in lines:
+        if not ln.strip():
+            if buf:
+                paras.append(" ".join(buf))
+                buf = []
+        elif by_blank:
+            buf.append(ln.strip())
+        else:
+            paras.append(ln.strip())
+    if buf:
+        paras.append(" ".join(buf))
+    title = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    chapters, blocks, ch_title = [], [], title
+    for p in paras:
+        p = _norm(p)
+        if len(p) < 60 and _HEADING.match(p):
+            if blocks:
+                chapters.append(Chapter(ch_title, blocks))
+            ch_title, blocks = p, [("h", p)]
+        else:
+            blocks.append(("p", p))
+    if blocks:
+        chapters.append(Chapter(ch_title, blocks))
+    return Book(path, title, "", chapters, {})
 
 
 # ---------------------------------------------------------------- EPUB

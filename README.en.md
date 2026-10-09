@@ -117,7 +117,7 @@ A 172×103×20 mm PicoCalc back cover for the zero mod (a Zero 2 W instead of th
 | **POKER** | Heads-up Texas Hold'em vs. a Monte-Carlo AI, rising blinds |
 | **CHESS** | Chess vs. Stockfish 15 (8 levels), undo, promotion choice, auto-saved game |
 | **PREFERANS** | Preferans (Russian whist) against two computer players: Sochi (default) or Leningrad rules, chosen when a new pulka starts, pulka to 20, auto-saved. Engine and AI: [Python Pref](https://python-pref.sourceforge.io/index_ru.html) (the same one that ran on Nokia/Symbian), ported to Python 3 |
-| **BOOKS** | EPUB / FB2 reader (also zipped) for the `~/books` folder: images, contents, font size, light/dark theme; the position in every book is saved |
+| **BOOKS** | EPUB / FB2 / TXT (also zipped) and PDF reader for the `~/books` folder: images, contents, font size, light/dark theme; PDF as zoomed page fragments with smooth scrolling; the position in every book is saved |
 | **DOOM** | Doom (shareware episode 1) via [doomgeneric](https://github.com/ozkl/doomgeneric), downscaled to 128×80 |
 | **AI CHAT** | Chat with a local LLM (llama.cpp / any OpenAI-compatible server) on the text console, US/UA keyboard |
 | **CONSOLE** | Leaves the menu and opens a text console with login on the LCD (tty7); `lcdmenu` brings the menu back |
@@ -150,7 +150,7 @@ How the pieces fit together:
 | `app/menu.py` | Launcher menu (scrolling list) |
 | `app/pong.py`, `app/tetris.py`, `app/poker.py`, `app/chessgame.py` | The games |
 | `app/preferans.py` | 128×128 Preferans front-end for the PyPref engine |
-| `app/reader.py`, `app/books.py` | The reader: UI and EPUB / FB2 / ZIP parsing (FB2 in any encoding) |
+| `app/reader.py`, `app/books.py`, `app/pdfdoc.py` | The reader: UI, EPUB / FB2 / TXT / ZIP parsing (FB2 and TXT in any encoding), PDF pages via `pdftoppm` |
 | `app/prefgame/` | [Python Pref](https://sourceforge.net/projects/python-pref/) 2.34 engine and AI, ported to Python 3 (GPL-3.0) |
 | `app/ai_chat.py` | Streaming chat client for a llama.cpp / OpenAI-compatible server |
 | `app/demo.py` | Minimal pygame example: draw something, read the buttons |
@@ -183,7 +183,7 @@ Per game:
 | Poker | ←/→ choose FOLD / CHECK-CALL / BET-RAISE, ↑/↓ bet size, 2 - all-in amount |
 | Chess | joystick moves the cursor, Enter picks up / drops a piece, 2 - menu (undo, new game) |
 | Preferans | ←/→ card or bid, ↑/↓ bid one level up / down, Enter confirms; when discarding Enter puts a card aside, ↓ takes it back, Enter again discards; 2 - score sheet |
-| Books | ←/→ (↑/↓, PgUp/PgDn, Space) pages, KEY2 / 2 / Tab menu (contents, font, theme), KEY3 / Esc back to the library; keyboard + / - font size, Home / End chapter start / end |
+| Books | ←/→ (↑/↓, PgUp/PgDn, Space) pages, KEY2 / 2 / Tab menu (contents, font, theme), KEY3 / Esc back to the library; keyboard + / - font size, Home / End chapter start / end. PDF: ↑/↓ page, ←/→ fragments, + / - (KEY1 / KEY2) zoom, Enter / press smooth scrolling with the arrows, Esc / KEY3 back to the fragments |
 | Doom | HAT: joystick move, press fire (+Enter), KEY1 use (+"y"), KEY2 next weapon, KEY3 menu. Keyboard: arrows, Enter or Ctrl fire (Enter selects in menus), Space use, Alt strafe, left Shift run, 1-7 weapons, Tab map, Esc menu |
 | AI chat | type and Enter; `/new`, `/think` (toggle model reasoning), `/quit` or Ctrl+D; Ctrl+C stops an answer; Alt+Shift switches US/UA |
 

@@ -171,7 +171,7 @@ EXTRA=
 [ "$DEVICE" = picocalc ] && EXTRA="libsdl2-dev libsdl2-mixer-dev console-setup micro bpython nano curl"
 sudo apt-get update -q
 sudo apt-get install -y python3-pygame python3-numpy python3-pil python3-pip \
-    stockfish doom-wad-shareware git build-essential fonts-dejavu-core $EXTRA
+    stockfish doom-wad-shareware git build-essential fonts-dejavu-core poppler-utils $EXTRA
 mkdir -p "$HOME/books"  # the BOOKS reader's library (.epub / .fb2 / .zip)
 
 echo "== python-chess (into app/vendor, not in the Raspbian repo)"
