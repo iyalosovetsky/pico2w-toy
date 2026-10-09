@@ -22,6 +22,8 @@ Doom, чат з локальною LLM, текстова консоль і ви�
 | ![menu](docs/gif/menu.gif) | ![pong](docs/gif/pong.gif) | ![tetris](docs/gif/tetris.gif) | ![poker](docs/gif/poker.gif) |
 | **Шахи** | **Преферанс** | **Doom** | **AI-чат** |
 | ![chess](docs/gif/chess.gif) | ![preferans](docs/gif/preferans.gif) | ![doom](docs/gif/doom.gif) | ![aichat](docs/gif/aichat.gif) |
+| **Книжки** | | | |
+| ![reader](docs/gif/reader.gif) | | | |
 
 *(GIF записані прямо з фреймбуфера дисплея скриптом `tools/record_gif.py`, збільшені вдвічі.)*
 
@@ -34,6 +36,8 @@ Doom, чат з локальною LLM, текстова консоль і ви�
 | ![menu](docs/gif-picocalc/menu.gif) | ![pong](docs/gif-picocalc/pong.gif) | ![tetris](docs/gif-picocalc/tetris.gif) | ![poker](docs/gif-picocalc/poker.gif) |
 | **Шахи** | **Преферанс** | **Doom** | **AI-чат** |
 | ![chess](docs/gif-picocalc/chess.gif) | ![preferans](docs/gif-picocalc/preferans.gif) | ![doom](docs/gif-picocalc/doom.gif) | ![aichat](docs/gif-picocalc/aichat.gif) |
+| **Книжки** | | | |
+| ![reader](docs/gif-picocalc/reader.gif) | | | |
 
 *(GIF записані з фреймбуфера PicoCalc 1:1, 320×320, скриптом `tools/record_gif.py`.)*
 

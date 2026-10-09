@@ -22,6 +22,8 @@ joystick and buttons or with a small USB keyboard.
 | ![menu](docs/gif/menu.gif) | ![pong](docs/gif/pong.gif) | ![tetris](docs/gif/tetris.gif) | ![poker](docs/gif/poker.gif) |
 | **Chess** | **Preferans** | **Doom** | **AI chat** |
 | ![chess](docs/gif/chess.gif) | ![preferans](docs/gif/preferans.gif) | ![doom](docs/gif/doom.gif) | ![aichat](docs/gif/aichat.gif) |
+| **Books** | | | |
+| ![reader](docs/gif/reader.gif) | | | |
 
 *(GIFs are recorded straight from the display's framebuffer with `tools/record_gif.py`, 2× scaled.)*
 
@@ -34,6 +36,8 @@ joystick and buttons or with a small USB keyboard.
 | ![menu](docs/gif-picocalc/menu.gif) | ![pong](docs/gif-picocalc/pong.gif) | ![tetris](docs/gif-picocalc/tetris.gif) | ![poker](docs/gif-picocalc/poker.gif) |
 | **Chess** | **Preferans** | **Doom** | **AI chat** |
 | ![chess](docs/gif-picocalc/chess.gif) | ![preferans](docs/gif-picocalc/preferans.gif) | ![doom](docs/gif-picocalc/doom.gif) | ![aichat](docs/gif-picocalc/aichat.gif) |
+| **Books** | | | |
+| ![reader](docs/gif-picocalc/reader.gif) | | | |
 
 *(GIFs recorded 1:1 from the PicoCalc framebuffer, 320×320, with `tools/record_gif.py`.)*
 
