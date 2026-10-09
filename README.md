@@ -222,6 +222,21 @@ Doom і вмикає сервіси. Що має бути в `config.txt` - ди
 `install.sh --device=picocalc` вмикає його (`enable_uart=1` у `config.txt`) і прибирає з
 `cmdline.txt` консоль `console=serial0,115200`, щоб порт був вільний для програм.
 
+**Генератор меандру на ESP32-C6** ([`tools/esp32c6/`](tools/esp32c6)). На ESP32-C6 стоїть MicroPython;
+програма [`main.py`](tools/esp32c6/main.py) видає меандр на **GPIO19** (2 Гц - 1 МГц) і слухає команди
+з UART. Вбудований RGB-світлодіод світить тим яскравіше, чим більша скважність, а колір залежить від
+частоти (логарифмічно: 2 Гц червоний … 1 МГц фіолетовий). Керування із Zero - команда `esp32c6`
+(її ставить `install.sh`):
+
+```bash
+esp32c6 freq 2.5k duty 25    # частота (Гц, k, M) і скважність (%)
+esp32c6 off                  # вимкнути вихід; on - увімкнути
+esp32c6 get                  # ok freq=2500 duty=25 out=on
+```
+
+Залити програму на ESP32-C6, під'єднану Type-C до Zero (`/dev/ttyACM0`):
+`python3 tools/esp32c6/mpy_put.py /dev/ttyACM0 tools/esp32c6/main.py`.
+
 ## 4. Схема
 
 ![Схема](docs/wiring.svg)

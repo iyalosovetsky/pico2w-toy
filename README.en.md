@@ -222,6 +222,21 @@ On the Zero this is the default UART `/dev/serial0` (the mini UART `ttyS0`; Blue
 PL011). `install.sh --device=picocalc` enables it (`enable_uart=1` in `config.txt`) and takes the
 `console=serial0,115200` login console out of `cmdline.txt`, so programs can use the port.
 
+**Square wave generator on the ESP32-C6** ([`tools/esp32c6/`](tools/esp32c6)). The ESP32-C6 runs
+MicroPython; [`main.py`](tools/esp32c6/main.py) puts a square wave on **GPIO19** (2 Hz - 1 MHz) and
+takes commands over the UART. The onboard RGB LED gets brighter with the duty cycle and changes colour
+with the frequency (log scale: 2 Hz red … 1 MHz violet). From the Zero, the `esp32c6` command
+(installed by `install.sh`):
+
+```bash
+esp32c6 freq 2.5k duty 25    # frequency (Hz, k, M) and duty cycle (%)
+esp32c6 off                  # stop the output; on - start it
+esp32c6 get                  # ok freq=2500 duty=25 out=on
+```
+
+To flash the program onto the ESP32-C6 plugged into the Zero by Type-C (`/dev/ttyACM0`):
+`python3 tools/esp32c6/mpy_put.py /dev/ttyACM0 tools/esp32c6/main.py`.
+
 ## 4. Wiring
 
 ![Wiring](docs/wiring.svg)

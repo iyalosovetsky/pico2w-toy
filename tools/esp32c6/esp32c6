@@ -1,0 +1,50 @@
+#!/bin/bash
+# Control the ESP32-C6-Zero square wave generator (tools/esp32c6/main.py) over the UART.
+#
+#   esp32c6 freq 2k duty 25     set frequency (Hz, k, M) and duty (%) - any order, either one
+#   esp32c6 on | off            start / stop the output
+#   esp32c6 get | ping          show the settings / check the link
+#
+# Every command prints the board's answer ("ok freq=... duty=... out=..." or "err ...").
+# ESP32C6_PORT overrides the port (default /dev/serial0, 115200 baud).
+PORT=${ESP32C6_PORT:-/dev/serial0}
+
+usage() {
+    sed -n '2,9s/^# \{0,1\}//p' "$0"
+    exit "${1:-0}"
+}
+[ $# -eq 0 ] && set -- get
+case "$1" in -h|--help|help) usage ;; esac
+
+stty -F "$PORT" 115200 raw -echo -hupcl 2>/dev/null || { echo "can't open $PORT" >&2; exit 1; }
+exec 3<>"$PORT"
+
+send() {  # send one command line, print the answer
+    local reply
+    while read -r -t 0.05 -u 3 _; do :; done  # drop anything stale
+    printf '%s\n' "$*" >&3
+    if read -r -t 2 -u 3 reply; then
+        echo "${reply%$'\r'}"
+        [[ $reply == err* ]] && status=1
+    else
+        echo "no answer from the ESP32-C6 on $PORT" >&2
+        exit 1
+    fi
+}
+
+status=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        freq|duty)
+            [ $# -ge 2 ] || usage 1
+            send "$1 $2"
+            shift 2 ;;
+        on|off|get|ping)
+            send "$1"
+            shift ;;
+        *)
+            echo "unknown: $1" >&2
+            usage 1 ;;
+    esac
+done
+exit $status

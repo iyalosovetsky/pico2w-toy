@@ -143,6 +143,7 @@ install_picocalc() {
         sudo sed -i "s/console=serial0,[0-9]* //" "$CMDLINE"
         REBOOT=1
     fi
+    sudo install -m 755 "$REPO/tools/esp32c6/esp32c6" /usr/local/bin/esp32c6
 
     install_mmbasic
 }
