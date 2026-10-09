@@ -199,6 +199,16 @@ Doom і вмикає сервіси. Що має бути в `config.txt` - ди
 | **Понижувальний CA-1235** | <img src="https://gadgetpcb.com/wp-content/uploads/ca-1235-dc-dc-step-down-buck-converter.webp" width="200"> | Перетворювач на MP1495, вхід 5-16 В, вихід 1.25-5 В на вибір, 3 А - виставлений на 5 В | [приклад](https://www.aliexpress.us/item/3256802445813752.html) |
 | **Міні-клавіатура** | <img src="docs/keyboard.jpg" width="160"> | Бездротова міні-клавіатура з тачпадом (типу Rii i8), USB-приймач 2.4 ГГц у хабі; підійде будь-яка USB-клавіатура | — |
 
+### Компоненти PicoCalc
+
+| Компонент | Фото | Опис | Документація / магазин |
+|---|---|---|---|
+| **ClockworkPi PicoCalc** | <img src="docs/picocalc.jpg" width="200"> | Кишеньковий комп’ютер: екран 320×320, клавіатура, динаміки, відсік для акумуляторів; Zero 2 W стоїть замість Pico (zero mod) | [clockworkpi.com](https://www.clockworkpi.com/picocalc) |
+| **Raspberry Pi Zero 2 W** | <img src="https://arduino.ua/products_pictures/usa146/large_usa146-1.jpg" width="200"> | Той самий Zero 2 W, що й у версії з HAT | [raspberrypi.com](https://www.raspberrypi.com/products/raspberry-pi-zero-2-w/) |
+| **Pololu U3V40F5** | <img src="https://arduino.ua/products_pictures/usa138/large_USA138-8.jpg" width="200"> | Підвищувальний DC-DC перетворювач на 5 В: вхід 1.3-5 В (старт від 2.7 В), до 4 А вхідного струму, 15×15 мм | [arduino.ua](https://arduino.ua/prod5037-povishaushhii-dc-dc-preobrazovatel-5v-u3v40f5-ot-pololu), [pololu.com](https://www.pololu.com/product/4012) |
+| **Модуль USB 2.0 Hub FE1.1S** | <img src="https://images.prom.ua/7505726655_w640_h640_modul-usb-20.jpg" width="200"> | USB-хаб 1→4 порти на FE1.1S | [ekran.in.ua](https://ekran.in.ua/ua/p3100872448-modul-usb-hub.html) |
+| **Waveshare ESP32-C6-Zero** | <img src="https://www.waveshare.com/media/catalog/product/cache/1/image/800x800/9df78eab33525d08d6e5fb8d27136e95/e/s/esp32-c6-zero-1.jpg" width="200"> | ESP32-C6 (RISC-V 160 МГц), Wi-Fi 6, Bluetooth 5 LE, Zigbee/Thread, 8 МБ Flash, USB Type-C; підключена до UART Zero 2 W | [Waveshare Wiki](https://docs.waveshare.com/ESP32-C6-Zero), [магазин](https://www.waveshare.com/esp32-c6-zero.htm) |
+
 ## 4. Схема
 
 ![Схема](docs/wiring.svg)

@@ -199,6 +199,16 @@ Per game:
 | **CA-1235 step-down** | <img src="https://gadgetpcb.com/wp-content/uploads/ca-1235-dc-dc-step-down-buck-converter.webp" width="200"> | MP1495 buck converter, 5-16 V in, selectable 1.25-5 V out, 3 A - set to 5 V | [example listing](https://www.aliexpress.us/item/3256802445813752.html) |
 | **Mini keyboard** | <img src="docs/keyboard.jpg" width="160"> | Wireless mini keyboard with touchpad (Rii i8 type), 2.4 GHz USB dongle in the hub; any USB keyboard works | — |
 
+### PicoCalc components
+
+| Component | Photo | Description | Docs / shop |
+|---|---|---|---|
+| **ClockworkPi PicoCalc** | <img src="docs/picocalc.jpg" width="200"> | Pocket computer: 320×320 screen, keyboard, speakers, battery bay; the Zero 2 W replaces the Pico (zero mod) | [clockworkpi.com](https://www.clockworkpi.com/picocalc) |
+| **Raspberry Pi Zero 2 W** | <img src="https://arduino.ua/products_pictures/usa146/large_usa146-1.jpg" width="200"> | The same Zero 2 W as in the HAT build | [raspberrypi.com](https://www.raspberrypi.com/products/raspberry-pi-zero-2-w/) |
+| **Pololu U3V40F5** | <img src="https://arduino.ua/products_pictures/usa138/large_USA138-8.jpg" width="200"> | 5 V step-up DC-DC converter: 1.3-5 V in (starts from 2.7 V), up to 4 A input current, 15×15 mm | [arduino.ua](https://arduino.ua/prod5037-povishaushhii-dc-dc-preobrazovatel-5v-u3v40f5-ot-pololu), [pololu.com](https://www.pololu.com/product/4012) |
+| **USB 2.0 Hub module FE1.1S** | <img src="https://images.prom.ua/7505726655_w640_h640_modul-usb-20.jpg" width="200"> | 1→4 port USB hub on the FE1.1S | [ekran.in.ua](https://ekran.in.ua/ua/p3100872448-modul-usb-hub.html) |
+| **Waveshare ESP32-C6-Zero** | <img src="https://www.waveshare.com/media/catalog/product/cache/1/image/800x800/9df78eab33525d08d6e5fb8d27136e95/e/s/esp32-c6-zero-1.jpg" width="200"> | ESP32-C6 (RISC-V 160 MHz), Wi-Fi 6, Bluetooth 5 LE, Zigbee/Thread, 8 MB flash, USB Type-C; connected to the Zero 2 W's UART | [Waveshare Wiki](https://docs.waveshare.com/ESP32-C6-Zero), [shop](https://www.waveshare.com/esp32-c6-zero.htm) |
+
 ## 4. Wiring
 
 ![Wiring](docs/wiring.svg)
