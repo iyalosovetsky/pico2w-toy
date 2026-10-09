@@ -20,6 +20,7 @@ ITEMS = [
     ("POKER", "hold'em", ["/usr/bin/python3", HERE + "/poker.py"], HERE),
     ("CHESS", "stockfish", ["/usr/bin/python3", HERE + "/chessgame.py"], HERE),
     ("PREFERANS", "", ["/usr/bin/python3", HERE + "/preferans.py"], HERE),
+    ("BOOKS", "epub fb2", ["/usr/bin/python3", HERE + "/reader.py"], HERE),
     ("DOOM", "E1", [HERE + "/doom/doomlcd", "-iwad", "/usr/share/games/doom/doom1.wad"], HERE + "/doom"),
     ("AI CHAT", "zen4", "aichat", None),
     ("PYTHON", "bpython", "term:python", None),
