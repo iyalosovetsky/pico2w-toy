@@ -1,4 +1,5 @@
-"""Signal generator on the ESP32-C6-Zero (tools/esp32c6/main.py), driven over the UART.
+"""Signal generator board (tools/siggen: an RP2350 or an ESP32-C6 running rp2350.py / esp32c6.py
+as its main.py), driven over the UART (/dev/serial0) or USB (/dev/ttyACM*) - whichever answers.
 
 UP / DOWN - row (shape, frequency, duty, signal), LEFT / RIGHT - change (held: repeats),
 + / - (KEY1 / KEY2 on the HAT) - fine step, PRESS / Enter - signal on / off,
@@ -18,7 +19,7 @@ sys.path.insert(0, HERE)
 import pygame  # noqa: E402
 import lcd  # noqa: E402
 
-PORT = os.environ.get("ESP32C6_PORT", "/dev/serial0")
+PORTS = os.environ.get("SIGGEN_PORT", "").split() or ["/dev/serial0", "/dev/ttyACM0", "/dev/ttyACM1"]
 FMIN, FMAX = 1, 1000000           # widest range; the board answers its limit for the shape (fmax)
 SHAPES = ["square", "sine", "triangle", "saw"]
 SHAPE_NAMES = {"square": "меандр", "sine": "синус", "triangle": "трикутник", "saw": "пила"}
@@ -73,7 +74,8 @@ def parse(reply):
         shape = kv.get("shape", "square")  # an older main.py has square only
         return {"shape": shape, "freq": int(kv["freq"]), "duty": float(kv["duty"]),
                 "on": kv.get("out") == "on", "fmax": int(kv.get("fmax", FMAX)),
-                "fmin": 2 if shape == "square" else 1}
+                "fmin": int(kv.get("fmin", 2 if shape == "square" else 1)),
+                "board": kv.get("board", "esp32-c6").upper()}
     except (KeyError, ValueError):
         return None
 
@@ -154,11 +156,12 @@ def text(s, pos, color, f, right=False, center=False):
 
 def draw(st, row, typing, note, note_color):
     screen.fill(BG)
-    text("ГЕНЕРАТОР ESP32-C6", (64, 2), ACCENT, f_title, center=True)
+    title = "ГЕНЕРАТОР " + (st["board"] if st else "")
+    text(title.strip(), (64, 2), ACCENT, f_title, center=True)
     if st is None:
-        text("ESP32-C6 не відповідає", (64, 44), RED, f_label, center=True)
-        text(PORT, (64, 58), DIM, f_small, center=True)
-        text("перевірте дроти TX/RX", (64, 70), DIM, f_small, center=True)
+        text("плата не відповідає", (64, 40), RED, f_label, center=True)
+        text("UART /dev/serial0 або USB", (64, 56), DIM, f_small, center=True)
+        text("перевірте дроти TX/RX", (64, 68), DIM, f_small, center=True)
         text(("KEY3" if HAT else "Esc") + " - назад", (64, 114), DIM, f_small, center=True)
         lcd.flip()
         return
@@ -222,11 +225,21 @@ DIGITS = {getattr(pygame, "K_%d" % d): str(d) for d in range(10)}
 DIGITS.update({pygame.K_PERIOD: ".", pygame.K_KP_PERIOD: ".", pygame.K_k: "k", pygame.K_m: "M"})
 
 
+def connect():
+    """The first port whose board answers ping."""
+    for path in PORTS:
+        try:
+            link = Link(path)
+        except OSError:
+            continue
+        if link.ask("ping", 0.4) == "pong":
+            return link
+        os.close(link.fd)
+    return None
+
+
 def main():
-    try:
-        link = Link(PORT)
-    except OSError:
-        link = None
+    link = None
     st, row, typing = None, 0, None
     note, note_color, note_until = "", DIM, 0
     held, held_hat, next_repeat = None, False, 0
@@ -262,9 +275,14 @@ def main():
 
     while True:
         now = time.monotonic()
-        if st is None and link and now - last_try > 1.5:  # (re)connect
+        if st is None and now - last_try > 1.5:  # (re)connect
             last_try = now
-            send("get")
+            if link is None or not send("get"):
+                if link:
+                    os.close(link.fd)
+                link = connect()
+                if link:
+                    send("get")
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 return

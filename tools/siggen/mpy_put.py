@@ -1,6 +1,6 @@
-"""Copy files to a MicroPython board over its raw REPL, then soft-reset it.
+"""Copy files to a MicroPython board over its raw REPL (USB), then soft-reset it.
 
-    python3 mpy_put.py /dev/ttyACM0 main.py [more.py ...]
+    python3 mpy_put.py /dev/ttyACM0 tools/siggen/rp2350.py:main.py [file[:name] ...]
 """
 import sys
 import time
@@ -43,8 +43,9 @@ _pending[0] = b""
 port.write(b"\r\x01")              # raw REPL
 read_until(port, b"raw REPL; CTRL-B to exit\r\n>")
 print(exec_raw(port, "import sys; print(sys.implementation._machine, sys.version)").decode().strip())
-for path in sys.argv[2:]:
-    name = path.rsplit("/", 1)[-1]
+for arg in sys.argv[2:]:
+    path, _, name = arg.partition(":")
+    name = name or path.rsplit("/", 1)[-1]
     data = open(path, "rb").read()
     exec_raw(port, "f = open(%r, 'wb')" % name)
     for i in range(0, len(data), 256):

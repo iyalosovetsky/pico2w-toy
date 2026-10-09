@@ -36,7 +36,7 @@ joystick and buttons or with a small USB keyboard.
 | ![menu](docs/gif-picocalc/menu.gif) | ![pong](docs/gif-picocalc/pong.gif) | ![tetris](docs/gif-picocalc/tetris.gif) | ![poker](docs/gif-picocalc/poker.gif) |
 | **Chess** | **Preferans** | **Doom** | **AI chat** |
 | ![chess](docs/gif-picocalc/chess.gif) | ![preferans](docs/gif-picocalc/preferans.gif) | ![doom](docs/gif-picocalc/doom.gif) | ![aichat](docs/gif-picocalc/aichat.gif) |
-| **Books** | **PDF** | **GENERATOR** (ESP32-C6) | |
+| **Books** | **PDF** | **GENERATOR** | |
 | ![reader](docs/gif-picocalc/reader.gif) | ![pdf](docs/gif-picocalc/pdf.gif) | ![generator](docs/gif-picocalc/generator.gif) | |
 
 *(GIFs recorded 1:1 from the PicoCalc framebuffer, 320×320, with `tools/record_gif.py`.)*
@@ -119,7 +119,7 @@ A 172×103×20 mm PicoCalc back cover for the zero mod (a Zero 2 W instead of th
 | **PREFERANS** | Preferans (Russian whist) against two computer players: Sochi (default) or Leningrad rules, chosen when a new pulka starts, pulka to 20, auto-saved. Engine and AI: [Python Pref](https://python-pref.sourceforge.io/index_ru.html) (the same one that ran on Nokia/Symbian), ported to Python 3 |
 | **BOOKS** | EPUB / FB2 / TXT (also zipped) and PDF reader for the `~/books` folder: images, contents, font size, light/dark theme; PDF as zoomed page fragments with smooth scrolling; the position in every book is saved |
 | **DOOM** | Doom (shareware episode 1) via [doomgeneric](https://github.com/ozkl/doomgeneric), downscaled to 128×80 |
-| **GENERATOR** | Signal generator on the ESP32-C6 (PicoCalc, over the UART): shape (square, sine, triangle, saw), frequency, duty cycle, on/off; the ESP's LED shows the duty and the frequency - see [ESP32-C6](#picocalc-components) |
+| **GENERATOR** | Signal generator on a separate board (PicoCalc, over the UART or USB): shape (square, sine, triangle, saw), frequency, duty cycle, on/off; the board's LED shows the duty and the frequency - see [generator](#picocalc-components) |
 | **AI CHAT** | Chat with a local LLM (llama.cpp / any OpenAI-compatible server) on the text console, US/UA keyboard |
 | **CONSOLE** | Leaves the menu and opens a text console with login on the LCD (tty7); `lcdmenu` brings the menu back |
 | **HDMI** | Lends the USB keyboard to the console on the monitor (tty1); the HAT buttons stay with the menu, KEY3 takes the keyboard back |
@@ -208,6 +208,7 @@ Per game:
 | **Raspberry Pi Zero 2 W** | <img src="https://arduino.ua/products_pictures/usa146/large_usa146-1.jpg" width="200"> | The same Zero 2 W as in the HAT build | [raspberrypi.com](https://www.raspberrypi.com/products/raspberry-pi-zero-2-w/) |
 | **Pololu U3V40F5** | <img src="https://arduino.ua/products_pictures/usa138/large_USA138-8.jpg" width="200"> | 5 V step-up DC-DC converter: 1.3-5 V in (starts from 2.7 V), up to 4 A input current, 15×15 mm | [arduino.ua](https://arduino.ua/prod5037-povishaushhii-dc-dc-preobrazovatel-5v-u3v40f5-ot-pololu), [pololu.com](https://www.pololu.com/product/4012) |
 | **USB 2.0 Hub module FE1.1S** | <img src="https://images.prom.ua/7505726655_w640_h640_modul-usb-20.jpg" width="200"> | 1→4 port USB hub on the FE1.1S | [ekran.in.ua](https://ekran.in.ua/ua/p3100872448-modul-usb-hub.html) |
+| **Pimoroni Tiny 2350** | <img src="https://cdn.shopify.com/s/files/1/0174/1800/files/tiny2350-oak-1.jpg?v=1723049735" width="200"> | RP2350A (2 cores 150 MHz, PIO, DMA), 520 KB SRAM, 4 MB flash, 12 GPIO (4 ADC), RGB LED, USB Type-C - the signal generator board (instead of the ESP32-C6) | [pimoroni.com](https://shop.pimoroni.com/products/tiny-2350) |
 | **Waveshare ESP32-C6-Zero** | <img src="https://www.waveshare.com/media/catalog/product/cache/1/image/800x800/9df78eab33525d08d6e5fb8d27136e95/e/s/esp32-c6-zero-1.jpg" width="200"> | ESP32-C6 (RISC-V 160 MHz), Wi-Fi 6, Bluetooth 5 LE, Zigbee/Thread, 8 MB flash, USB Type-C; connected to the Zero 2 W's UART | [Waveshare Wiki](https://docs.waveshare.com/ESP32-C6-Zero), [shop](https://www.waveshare.com/esp32-c6-zero.htm) |
 
 **ESP32-C6 ↔ Zero 2 W (UART, 3.3 V on both sides, no level shifting needed).** The ESP32-C6-Zero's
@@ -223,25 +224,37 @@ On the Zero this is the default UART `/dev/serial0` (the mini UART `ttyS0`; Blue
 PL011). `install.sh --device=picocalc` enables it (`enable_uart=1` in `config.txt`) and takes the
 `console=serial0,115200` login console out of `cmdline.txt`, so programs can use the port.
 
-**Signal generator on the ESP32-C6** ([`tools/esp32c6/`](tools/esp32c6)). The ESP32-C6 runs
-MicroPython; [`main.py`](tools/esp32c6/main.py) puts a signal on **GPIO19** and takes commands over
-the UART: square - hardware PWM (2 Hz - 1 MHz, duty 0-100 %); sine, triangle and saw - DDS
-(1 Hz - 10 kHz): a 150 kHz PWM whose duty follows the wave (viper code writes the LEDC registers
-directly). The ESP32-C6 has no DAC, so the analog wave comes after an RC low-pass on the pin,
-e.g. 1 kOhm + 10 nF. The onboard RGB LED gets brighter with the duty cycle and changes colour
-with the frequency (log scale: 2 Hz red … 1 MHz violet). From the Zero, the `esp32c6` command
-(installed by `install.sh`):
+**Signal generator** ([`tools/siggen/`](tools/siggen)) - a separate MicroPython board connected to
+the Zero over the UART (`/dev/serial0`) or USB (`/dev/ttyACM*`; the command and the app find where it
+answers). Shapes: square with duty, sine, triangle, saw. Neither board has a DAC, so the analog wave
+comes after an RC low-pass on the output.
+
+- **Pimoroni Tiny 2350** ([`rp2350.py`](tools/siggen/rp2350.py)), output **GP6**: square - hardware PWM,
+  10 Hz - 10 MHz (below that through DMA, from 1 Hz); sine, triangle and saw - 1 Hz - 20 kHz: a 586 kHz
+  8-bit PWM whose duty a DMA channel takes from the wave table, paced by a DMA timer (150 MHz·X/Y) - the
+  frequency is exact and the CPU is free. Filter e.g. 1 kOhm + 4.7 nF. Pins: GP0 TX → Zero GPIO 15
+  (pin 10), GP1 RX ← Zero GPIO 14 (pin 8), GND; GP7 - second output, GP2-GP5 - SPI0, GP12/13 - I2C
+  (Qw/ST), GP26-29 - ADC. The RGB LED (GP18-20) shows the frequency as colour and the duty as
+  brightness. On the RP2350A GP16-31 share PWM slices with GP0-15 (the LED is on slices 1 and 2), so the
+  output is on GP6 (slice 3).
+- **Waveshare ESP32-C6-Zero** ([`esp32c6.py`](tools/siggen/esp32c6.py)), output **GPIO19**: square
+  2 Hz - 1 MHz; sine, triangle and saw 1 Hz - 10 kHz through a 150 kHz PWM (viper code writes the LEDC
+  registers directly). Filter e.g. 1 kOhm + 10 nF.
+
+From the Zero: the GENERATOR menu item or the `siggen` command (installed by `install.sh`):
 
 ```bash
-esp32c6 shape sine freq 2.5k # shape (square sine triangle saw) and frequency (Hz, k, M)
-esp32c6 shape square duty 25 # square wave, duty cycle (%)
-esp32c6 off                  # stop the output; on - start it
-esp32c6 get                  # ok shape=square freq=2500 duty=25 out=on fmax=1000000
-esp32c6 flash tools/esp32c6/main.py   # update the ESP's program over the UART, no USB
+siggen shape sine freq 2.5k  # shape (square sine triangle saw) and frequency (Hz, k, M)
+siggen shape square duty 25  # square wave, duty cycle (%)
+siggen off                   # stop the output; on - start it
+siggen get                   # ok board=rp2350 shape=square freq=2500 duty=25 out=on fmin=1 fmax=10000000
+siggen probe                 # the board reads its output back: mean level in ten 0.1 s slices
+siggen flash tools/siggen/rp2350.py   # update the board's program over the UART or USB
 ```
 
-The first time (or if the program is broken) over USB, the ESP32-C6 plugged into the Zero by Type-C (`/dev/ttyACM0`):
-`python3 tools/esp32c6/mpy_put.py /dev/ttyACM0 tools/esp32c6/main.py`.
+The first time - over USB: on the RP2350 MicroPython first (hold BOOT, plug in - an RP2350 drive shows
+up, copy the UF2 from [micropython.org](https://micropython.org/download/RPI_PICO2/) onto it), then
+`python3 tools/siggen/mpy_put.py /dev/ttyACM0 tools/siggen/rp2350.py:main.py` (`esp32c6.py:main.py` for the ESP32-C6).
 
 ## 4. Wiring
 

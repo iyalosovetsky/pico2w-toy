@@ -24,7 +24,7 @@ ITEMS = [
     ("PREFERANS", "", ["/usr/bin/python3", HERE + "/preferans.py"], HERE),
     ("BOOKS", "epub fb2", ["/usr/bin/python3", HERE + "/reader.py"], HERE),
     ("DOOM", "E1", [HERE + "/doom/doomlcd", "-iwad", "/usr/share/games/doom/doom1.wad"], HERE + "/doom"),
-    ("GENERATOR", "", ["/usr/bin/python3", HERE + "/esp32c6.py"], HERE),
+    ("GENERATOR", "", ["/usr/bin/python3", HERE + "/siggen.py"], HERE),
     ("AI CHAT", "zen4", "aichat", None),
     ("PYTHON", "bpython", "term:python", None),
     ("BASIC", "MMBasic", "term:basic", None),
@@ -51,8 +51,8 @@ def _has_hdmi_fb():
 if not os.path.exists("/etc/systemd/system/lcd-term@.service"):
     ITEMS = [it for it in ITEMS if not str(it[2]).startswith("term:")]
 
-# the ESP32-C6 generator talks over the GPIO 14/15 UART: only where it is enabled
-if not os.path.exists("/dev/serial0"):
+# the generator board talks over the GPIO 14/15 UART or USB: only where one of them is there
+if not os.path.exists("/dev/serial0") and not glob.glob("/dev/ttyACM*"):
     ITEMS = [it for it in ITEMS if it[0] != "GENERATOR"]
 
 if not _has_hdmi_fb():  # no monitor framebuffer (e.g. PicoCalc): nothing to lend the keyboard to

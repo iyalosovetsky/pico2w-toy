@@ -11,7 +11,8 @@
 # The onboard WS2812 (GPIO8) shows it: brightness = duty (square) / half (other shapes),
 # colour = frequency on a log scale (2 Hz red ... 1 MHz violet).
 #
-# Commands, one per line; answers one line "ok shape=.. freq=.. duty=.. out=.. fmax=.." or "err ..":
+# Commands, one per line; answers one line "ok board=esp32-c6 shape=.. freq=.. duty=.. out=.. fmin=.. fmax=.."
+# or "err ..":
 #   shape square|sine|triangle|saw
 #   freq <Hz>     also 2.5k / 1M
 #   duty <%>      0 .. 100 (square)
@@ -19,7 +20,7 @@
 #   get           current settings
 #   ping          answers "pong"
 #   put <file> <bytes>   then exactly that many raw bytes: replaces a file on the board
-#                        (esp32c6 flash main.py does this - updates without USB)
+#                        (siggen flash tools/siggen/esp32c6.py does this - no USB needed)
 #   reset         restart the board (runs the new main.py)
 import array
 import math
@@ -136,8 +137,9 @@ def number(s):
 
 
 def status():
-    return "ok shape=%s freq=%d duty=%g out=%s fmax=%d" % (
-        state["shape"], state["freq"], state["duty"], "on" if state["on"] else "off", limits()[1])
+    lo, hi = limits()
+    return "ok board=esp32-c6 shape=%s freq=%d duty=%g out=%s fmin=%d fmax=%d" % (
+        state["shape"], state["freq"], state["duty"], "on" if state["on"] else "off", lo, hi)
 
 
 def receive(name, size, head=b""):

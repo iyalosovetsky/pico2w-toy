@@ -143,7 +143,8 @@ install_picocalc() {
         sudo sed -i "s/console=serial0,[0-9]* //" "$CMDLINE"
         REBOOT=1
     fi
-    sudo install -m 755 "$REPO/tools/esp32c6/esp32c6" /usr/local/bin/esp32c6
+    sudo install -m 755 "$REPO/tools/siggen/siggen" /usr/local/bin/siggen
+    sudo rm -f /usr/local/bin/esp32c6  # its old name
 
     install_mmbasic
 }

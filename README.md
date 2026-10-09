@@ -36,7 +36,7 @@ Doom, чат з локальною LLM, текстова консоль і ви�
 | ![menu](docs/gif-picocalc/menu.gif) | ![pong](docs/gif-picocalc/pong.gif) | ![tetris](docs/gif-picocalc/tetris.gif) | ![poker](docs/gif-picocalc/poker.gif) |
 | **Шахи** | **Преферанс** | **Doom** | **AI-чат** |
 | ![chess](docs/gif-picocalc/chess.gif) | ![preferans](docs/gif-picocalc/preferans.gif) | ![doom](docs/gif-picocalc/doom.gif) | ![aichat](docs/gif-picocalc/aichat.gif) |
-| **Книжки** | **PDF** | **GENERATOR** (ESP32-C6) | |
+| **Книжки** | **PDF** | **GENERATOR** | |
 | ![reader](docs/gif-picocalc/reader.gif) | ![pdf](docs/gif-picocalc/pdf.gif) | ![generator](docs/gif-picocalc/generator.gif) | |
 
 *(GIF записані з фреймбуфера PicoCalc 1:1, 320×320, скриптом `tools/record_gif.py`.)*
@@ -118,7 +118,7 @@ Doom і вмикає сервіси. Що має бути в `config.txt` - ди
 | **PREFERANS** | Преферанс проти двох AI: Сочинка (за замовчуванням) або Ленінградка - вибір на старті нової пульки, пулька до 20, автозбереження пульки. Рушій і AI - [Python Pref](https://python-pref.sourceforge.io/index_ru.html) (той самий, що був для Nokia/Symbian), портований на Python 3 |
 | **BOOKS** | Читалка книжок EPUB / FB2 / TXT (і в ZIP) та PDF з теки `~/books`: картинки, зміст, розмір шрифту, світла/темна тема; PDF - збільшені фрагменти сторінки й плавна прокрутка; позиція в кожній книжці зберігається |
 | **DOOM** | Doom (shareware, 1-й епізод) на [doomgeneric](https://github.com/ozkl/doomgeneric), зменшений до 128×80 |
-| **GENERATOR** | Генератор сигналів на ESP32-C6 (PicoCalc, через UART): форма (меандр, синус, трикутник, пила), частота, скважність, увімк/вимк; світлодіод ESP показує скважність і частоту - див. [ESP32-C6](#компоненти-picocalc) |
+| **GENERATOR** | Генератор сигналів на окремій платі (PicoCalc, через UART або USB): форма (меандр, синус, трикутник, пила), частота, скважність, увімк/вимк; світлодіод плати показує скважність і частоту - див. [генератор](#компоненти-picocalc) |
 | **AI CHAT** | Чат з локальною LLM (llama.cpp або будь-який OpenAI-сумісний сервер) у текстовій консолі, розкладка US/UA |
 | **CONSOLE** | Закриває меню і відкриває текстову консоль на LCD (tty7) з логіном; команда `lcdmenu` повертає меню |
 | **HDMI** | Віддає USB-клавіатуру консолі на моніторі (tty1); кнопки HAT лишаються в меню, KEY3 повертає клавіатуру меню |
@@ -208,6 +208,7 @@ Doom і вмикає сервіси. Що має бути в `config.txt` - ди
 | **Raspberry Pi Zero 2 W** | <img src="https://arduino.ua/products_pictures/usa146/large_usa146-1.jpg" width="200"> | Той самий Zero 2 W, що й у версії з HAT | [raspberrypi.com](https://www.raspberrypi.com/products/raspberry-pi-zero-2-w/) |
 | **Pololu U3V40F5** | <img src="https://arduino.ua/products_pictures/usa138/large_USA138-8.jpg" width="200"> | Підвищувальний DC-DC перетворювач на 5 В: вхід 1.3-5 В (старт від 2.7 В), до 4 А вхідного струму, 15×15 мм | [arduino.ua](https://arduino.ua/prod5037-povishaushhii-dc-dc-preobrazovatel-5v-u3v40f5-ot-pololu), [pololu.com](https://www.pololu.com/product/4012) |
 | **Модуль USB 2.0 Hub FE1.1S** | <img src="https://images.prom.ua/7505726655_w640_h640_modul-usb-20.jpg" width="200"> | USB-хаб 1→4 порти на FE1.1S | [ekran.in.ua](https://ekran.in.ua/ua/p3100872448-modul-usb-hub.html) |
+| **Pimoroni Tiny 2350** | <img src="https://cdn.shopify.com/s/files/1/0174/1800/files/tiny2350-oak-1.jpg?v=1723049735" width="200"> | RP2350A (2 ядра 150 МГц, PIO, DMA), 520 КБ SRAM, 4 МБ Flash, 12 GPIO (4 АЦП), RGB-світлодіод, USB Type-C - плата генератора сигналів (замість ESP32-C6) | [pimoroni.com](https://shop.pimoroni.com/products/tiny-2350) |
 | **Waveshare ESP32-C6-Zero** | <img src="https://www.waveshare.com/media/catalog/product/cache/1/image/800x800/9df78eab33525d08d6e5fb8d27136e95/e/s/esp32-c6-zero-1.jpg" width="200"> | ESP32-C6 (RISC-V 160 МГц), Wi-Fi 6, Bluetooth 5 LE, Zigbee/Thread, 8 МБ Flash, USB Type-C; підключена до UART Zero 2 W | [Waveshare Wiki](https://docs.waveshare.com/ESP32-C6-Zero), [магазин](https://www.waveshare.com/esp32-c6-zero.htm) |
 
 **ESP32-C6 ↔ Zero 2 W (UART, 3.3 В на обох боках, рівні узгоджувати не треба).** TX/RX на ESP32-C6-Zero
@@ -223,25 +224,36 @@ Doom і вмикає сервіси. Що має бути в `config.txt` - ди
 `install.sh --device=picocalc` вмикає його (`enable_uart=1` у `config.txt`) і прибирає з
 `cmdline.txt` консоль `console=serial0,115200`, щоб порт був вільний для програм.
 
-**Генератор сигналів на ESP32-C6** ([`tools/esp32c6/`](tools/esp32c6)). На ESP32-C6 стоїть MicroPython;
-програма [`main.py`](tools/esp32c6/main.py) видає сигнал на **GPIO19** і слухає команди з UART:
-меандр - апаратним ШІМ (2 Гц - 1 МГц, скважність 0-100 %), синус, трикутник і пила - синтезом (DDS,
-1 Гц - 10 кГц): ШІМ 150 кГц, скважність якого змінюється за формою сигналу (код на viper пише
-прямо в регістри LEDC). ЦАП в ESP32-C6 немає, тож аналоговий сигнал - після RC-фільтра на виході,
-напр. 1 кОм + 10 нФ. Вбудований RGB-світлодіод світить тим яскравіше, чим більша скважність, а колір залежить від
-частоти (логарифмічно: 2 Гц червоний … 1 МГц фіолетовий). Керування із Zero - команда `esp32c6`
-(її ставить `install.sh`):
+**Генератор сигналів** ([`tools/siggen/`](tools/siggen)) - окрема плата з MicroPython, з'єднана із
+Zero через UART (`/dev/serial0`) або USB (`/dev/ttyACM*`; команда й застосунок самі знаходять, де
+вона відповідає). Форми: меандр зі скважністю, синус, трикутник, пила. ЦАП немає на жодній з плат,
+тож аналоговий сигнал - після RC-фільтра на виході.
+
+- **Pimoroni Tiny 2350** ([`rp2350.py`](tools/siggen/rp2350.py)), вихід **GP6**: меандр - апаратний ШІМ,
+  10 Гц - 10 МГц (нижче - через DMA, від 1 Гц); синус, трикутник і пила - 1 Гц - 20 кГц: ШІМ 586 кГц
+  (8 біт), скважність якого канал DMA бере з таблиці форми, тактований таймером DMA (150 МГц·X/Y) -
+  частота точна, процесор вільний. Фільтр, напр. 1 кОм + 4,7 нФ. Ніжки: GP0 TX → Zero GPIO 15 (пін 10),
+  GP1 RX ← Zero GPIO 14 (пін 8), GND; GP7 - другий вихід, GP2-GP5 - SPI0, GP12/13 - I2C (Qw/ST),
+  GP26-29 - АЦП. Світлодіод RGB (GP18-20) показує частоту кольором і скважність яскравістю. На RP2350A
+  GP16-31 ділять слайси ШІМ із GP0-15 (світлодіод - слайси 1 і 2), тому вихід на GP6 (слайс 3).
+- **Waveshare ESP32-C6-Zero** ([`esp32c6.py`](tools/siggen/esp32c6.py)), вихід **GPIO19**: меандр
+  2 Гц - 1 МГц; синус, трикутник і пила 1 Гц - 10 кГц через ШІМ 150 кГц (viper-код пише прямо в регістри
+  LEDC). Фільтр, напр. 1 кОм + 10 нФ.
+
+Керування із Zero - пункт меню GENERATOR або команда `siggen` (її ставить `install.sh`):
 
 ```bash
-esp32c6 shape sine freq 2.5k # форма (square sine triangle saw) і частота (Гц, k, M)
-esp32c6 shape square duty 25 # меандр, скважність (%)
-esp32c6 off                  # вимкнути вихід; on - увімкнути
-esp32c6 get                  # ok shape=square freq=2500 duty=25 out=on fmax=1000000
-esp32c6 flash tools/esp32c6/main.py   # оновити програму на ESP через UART, без USB
+siggen shape sine freq 2.5k  # форма (square sine triangle saw) і частота (Гц, k, M)
+siggen shape square duty 25  # меандр, скважність (%)
+siggen off                   # вимкнути вихід; on - увімкнути
+siggen get                   # ok board=rp2350 shape=square freq=2500 duty=25 out=on fmin=1 fmax=10000000
+siggen probe                 # плата читає свій вихід: середній рівень у десяти відрізках по 0,1 с
+siggen flash tools/siggen/rp2350.py   # оновити програму на платі через UART або USB
 ```
 
-Перший раз (або якщо програма зламана) - через USB, ESP32-C6 під'єднана Type-C до Zero (`/dev/ttyACM0`):
-`python3 tools/esp32c6/mpy_put.py /dev/ttyACM0 tools/esp32c6/main.py`.
+Перший раз - через USB: на RP2350 спершу MicroPython (затиснути BOOT, підключити - з'явиться диск
+RP2350, скопіювати на нього UF2 з [micropython.org](https://micropython.org/download/RPI_PICO2/)), далі
+`python3 tools/siggen/mpy_put.py /dev/ttyACM0 tools/siggen/rp2350.py:main.py` (для ESP32-C6 - `esp32c6.py:main.py`).
 
 ## 4. Схема
 

@@ -1,43 +1,64 @@
 #!/bin/bash
-# Control the ESP32-C6-Zero signal generator (tools/esp32c6/main.py) over the UART.
+# Control the signal generator board (tools/siggen: rp2350.py or esp32c6.py running as its
+# main.py) over the UART (/dev/serial0) or over USB (/dev/ttyACM*) - whichever answers.
 #
-#   esp32c6 shape sine freq 2k  shape: square sine triangle saw; frequency (Hz, k, M)
-#   esp32c6 duty 25             duty (%) of the square wave - commands combine in any order
-#   esp32c6 on | off            start / stop the output
-#   esp32c6 get | ping          show the settings / check the link
-#   esp32c6 flash main.py       upload a new program over the UART and restart the board
+#   siggen shape sine freq 2k   shape: square sine triangle saw; frequency (Hz, k, M)
+#   siggen duty 25              duty (%) of the square wave - commands combine in any order
+#   siggen on | off             start / stop the output
+#   siggen get | ping | probe   settings / link check / the board reads its output back
+#   siggen flash tools/siggen/rp2350.py   upload a program as the board's main.py, restart it
 #
-# Every command prints the board's answer ("ok shape=... freq=... ..." or "err ...").
-# ESP32C6_PORT overrides the port (default /dev/serial0, 115200 baud).
-PORT=${ESP32C6_PORT:-/dev/serial0}
+# Every command prints the board's answer ("ok board=... shape=... freq=..." or "err ...").
+# SIGGEN_PORT sets the port instead of looking for one (115200 baud).
 
 usage() {
-    sed -n '2,11s/^# \{0,1\}//p' "$0"
+    sed -n '2,12s/^# \{0,1\}//p' "$0"
     exit "${1:-0}"
 }
 [ $# -eq 0 ] && set -- get
 case "$1" in -h|--help|help) usage ;; esac
 
-stty -F "$PORT" 115200 raw -echo -hupcl 2>/dev/null || { echo "can't open $PORT" >&2; exit 1; }
-exec 3<>"$PORT"
+open_port() {  # open_port <dev>: fd 3 on it, raw 115200
+    stty -F "$1" 115200 raw -echo -hupcl 2>/dev/null || return 1
+    exec 3<>"$1"
+}
 
-send() {  # send one command line (+ a file for put), print the answer
-    local reply file=$2 wait=2
+ask() {  # ask <line> [file] [seconds]: send a command (+ a file), answer -> $reply
+    local file=$2 wait=${3:-2}
     while read -r -t 0.05 -u 3 _; do :; done  # drop anything stale
     printf '%s\n' "$1" >&3
-    if [ -n "$file" ]; then
-        cat "$file" >&3
-        wait=$(( $(stat -c %s "$file") / 5000 + 10 ))
-    fi
-    if read -r -t "$wait" -u 3 reply; then
-        echo "${reply%$'\r'}"
+    [ -n "$file" ] && cat "$file" >&3
+    read -r -t "$wait" -u 3 reply || return 1
+    reply=${reply%$'\r'}
+}
+
+find_port() {
+    local p
+    for p in ${SIGGEN_PORT:-/dev/serial0 /dev/ttyACM*}; do
+        [ -e "$p" ] || continue
+        if open_port "$p" && { [ -n "$SIGGEN_PORT" ] || { ask ping "" 0.5 && [ "$reply" = pong ]; }; }; then
+            PORT=$p
+            return 0
+        fi
+        exec 3>&-
+    done
+    echo "no signal generator board answers (${SIGGEN_PORT:-/dev/serial0, /dev/ttyACM*})" >&2
+    exit 1
+}
+
+send() {  # send <line> [file]: print the answer, remember errors
+    local wait=2
+    [ -n "$2" ] && wait=$(( $(stat -c %s "$2") / 5000 + 10 ))
+    if ask "$1" "$2" "$wait"; then
+        echo "$reply"
         [[ $reply == err* ]] && status=1
     else
-        echo "no answer from the ESP32-C6 on $PORT" >&2
+        echo "no answer from the board on $PORT" >&2
         exit 1
     fi
 }
 
+find_port
 status=0
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -47,10 +68,10 @@ while [ $# -gt 0 ]; do
             shift 2 ;;
         flash)
             [ $# -ge 2 ] && [ -f "$2" ] || usage 1
-            send "put $(basename "$2") $(stat -c %s "$2")" "$2"
+            send "put main.py $(stat -c %s "$2")" "$2"
             [ $status = 0 ] && send reset
             shift 2 ;;
-        on|off|get|ping)
+        on|off|get|ping|probe)
             send "$1"
             shift ;;
         *)
