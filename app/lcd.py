@@ -81,6 +81,7 @@ KEYMAP = {
     1: pygame.K_ESCAPE, 57: pygame.K_SPACE, 96: pygame.K_RETURN, 15: pygame.K_TAB,
     14: pygame.K_BACKSPACE, 104: pygame.K_PAGEUP, 109: pygame.K_PAGEDOWN,
     102: pygame.K_HOME, 107: pygame.K_END, 12: pygame.K_MINUS, 13: pygame.K_EQUALS,
+    59: pygame.K_F1,
 }
 
 _fb = None

@@ -1,7 +1,7 @@
 """Launcher menu for the Waveshare 1.44\" LCD HAT: Pong / Tetris / Poker / Chess / Preferans / Doom / AI chat / Console / HDMI / Power off.
 
-Joystick UP/DOWN - choose, PRESS or KEY1 - run.
-USB keyboard: arrows, Enter / Space - run.
+Joystick UP/DOWN - choose, PRESS or RIGHT - run, KEY1 - help for the item.
+Keyboard: arrows, Enter / Space - run, F1 - help.
 Games return here when they exit; CONSOLE ends the menu and opens the LCD
 console (tty7); HDMI lends the USB keyboard to the HDMI console (tty1) until KEY3.
 """
@@ -12,6 +12,7 @@ import subprocess
 
 import pygame
 import lcd
+import help as helptext
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ITEMS = [
@@ -100,6 +101,65 @@ def draw(sel):
     lcd.flip()
 
 
+def _dejavu(name, px):
+    """DejaVu font px native pixels high (the default pygame font has no Cyrillic)."""
+    size = px / lcd.S if lcd.S != 1 else int(px)
+    try:
+        return pygame.font.Font("/usr/share/fonts/truetype/dejavu/" + name, size)
+    except (FileNotFoundError, OSError):
+        return pygame.font.Font(None, size)
+
+
+def show_help(item):
+    """Help for a menu item: UP/DOWN scroll, any other key closes."""
+    f = _dejavu("DejaVuSans.ttf", 13 if lcd.S > 1 else 8)
+    fb = _dejavu("DejaVuSans-Bold.ttf", 13 if lcd.S > 1 else 8)
+    ft = _dejavu("DejaVuSans-Bold.ttf", 17 if lcd.S > 1 else 10)
+    width = 120
+    rows = []  # (text, font, color)
+    for line in helptext.lines(item, lcd.DEVICE):
+        bold = line.startswith("# ")
+        text = line[2:] if bold else line
+        style = (fb, ACCENT) if bold else (f, FG)
+        cur = ""
+        for w in text.split(" "):
+            cand = w if not cur else cur + " " + w
+            if cur and style[0].size(cand)[0] > width:
+                rows.append((cur, *style))
+                cur = "  " + w  # continuation lines are indented
+            else:
+                cur = cand
+        rows.append((cur, *style))
+    line_h = f.get_linesize()
+    top_y = ft.get_linesize() + 4
+    visible = int((128 - top_y - 2) // line_h)
+    top = 0
+    lcd.play("select")
+    while True:
+        screen.fill(BG)
+        t = ft.render(item, True, ACCENT)
+        screen.blit(t, ((128 - t.get_width()) / 2, 1))
+        pygame.draw.line(screen, DIM, (4, top_y - 2), (124, top_y - 2))
+        for i, (text, font, color) in enumerate(rows[top:top + visible]):
+            screen.blit(font.render(text, True, color), (4, top_y + i * line_h))
+        if top > 0:
+            pygame.draw.polygon(screen, DIM, [(122, top_y + 1), (126, top_y + 5), (118, top_y + 5)])
+        if top + visible < len(rows):
+            pygame.draw.polygon(screen, DIM, [(122, 127), (126, 123), (118, 123)])
+        lcd.flip()
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                return False
+            if ev.type == pygame.KEYDOWN:
+                if ev.key == pygame.K_UP:
+                    top = max(0, top - 1)
+                elif ev.key == pygame.K_DOWN:
+                    top = min(max(0, len(rows) - visible), top + 1)
+                else:
+                    return True
+        clock.tick(20)
+
+
 def message(title, *lines, color=ACCENT):
     screen.fill(BG)
     t = font_item.render(title, True, color)
@@ -182,6 +242,9 @@ while running:
             elif ev.key == pygame.K_DOWN:
                 sel = (sel + 1) % len(ITEMS)
                 lcd.play("click")
+            elif ev.key == pygame.K_F1 or (ev.key == pygame.K_1 and getattr(ev, "hat", False)):
+                # F1 (keyboard) / KEY1 (HAT): help for the selected item
+                running = show_help(ITEMS[sel][0])
             elif ev.key in (pygame.K_RETURN, pygame.K_1, pygame.K_RIGHT, pygame.K_SPACE):
                 lcd.play("select")
                 _, _, cmd, cwd = ITEMS[sel]

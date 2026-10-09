@@ -172,6 +172,7 @@ How the pieces fit together:
 | Confirm / start | joystick press or KEY1 | Enter / Space |
 | Secondary action (pause, difficulty, all-in, game menu) | KEY2 | 2 |
 | Back to the menu | KEY3 | Esc |
+| Help for the selected main-menu item (controls, commands) | KEY1 | F1 |
 
 Per game:
 
