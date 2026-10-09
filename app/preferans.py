@@ -46,6 +46,8 @@ TRICK_PAUSE = 0.9   # s the full trick stays on the table
 GREEN = (0, 80, 40)
 WHITE, BLACK, GREY, LIGHT = (255, 255, 255), (0, 0, 0), (150, 170, 155), (210, 225, 215)
 YELLOW, RED, CARD_RED = (255, 210, 0), (230, 60, 50), (200, 20, 30)
+OPEN_RED = (255, 150, 150)  # red suits of an open hand: readable on the green table
+GOOD = (120, 230, 120)
 
 CONFIRM = (pygame.K_RETURN, pygame.K_1, pygame.K_SPACE)
 
@@ -86,6 +88,26 @@ class PrefGUI:
         self.status = ""
         self.paper_mode = False
         self.discarding = False  # show the discarded cards in the middle
+        self.base = None         # scores after the previous deal
+        self.delta = None        # what each player won in the last deal
+
+    def scores(self):
+        return {n: (self.app.Gamer(n).aScore.nGetBull(), self.app.Gamer(n).aScore.nGetMount(),
+                    self.app.Gamer(n).aScore.Vists) for n in (1, 2, 3)}
+
+    def start_scores(self):
+        """Remember the scores a new or resumed pulka starts from."""
+        self.base = self.scores()
+        self.delta = None
+
+    def leader(self):
+        """Who led the current trick; before it is led, who will (first hand before the first trick)."""
+        app = self.app
+        if self.desk:
+            return next(iter(self.desk))
+        if any(app.Gamer(n).nGetsCard for n in (1, 2, 3)):
+            return app.nCurrentMove.nValue
+        return app.nCurrentStart.nValue
 
     # ---------------------------------------------------------------- helpers
     def set_rules(self, rules):
@@ -205,6 +227,10 @@ class PrefGUI:
 
     def ShowPaper(self, forcekey=None, load=None):
         save_pulka(self.app)
+        cur = self.scores()
+        if self.base is not None:
+            self.delta = {n: tuple(c - b for c, b in zip(cur[n], self.base[n])) for n in cur}
+        self.base = cur
         self.paper_mode = True
         self.show_sheet = True
         while self.show_sheet:
@@ -373,7 +399,7 @@ class PrefGUI:
         for row, mast in enumerate((1, 3, 2, 4)):
             y = 30 + row * 9
             in_suit = [c for c in cards if c.CMast == mast]
-            color = CARD_RED if mast in (3, 4) else WHITE
+            color = OPEN_RED if mast in (3, 4) else WHITE
             parts = [(SUIT_CH[mast], None)] + [(RANK_CH[c.CName], c) for c in in_suit]
             width = sum(self.f8.size(p)[0] + 1 for p, _ in parts)
             x = 126 - width if right else 2
@@ -387,12 +413,20 @@ class PrefGUI:
                     self.text(label, (x, y), GREY if dim else color, self.f8)
                 x += w + 1
 
+    def lead_mark(self, x, y):
+        """Yellow dot: this hand leads (or led) the trick."""
+        pygame.draw.circle(self.screen, YELLOW, (x, y), 3)
+        pygame.draw.circle(self.screen, BLACK, (x, y), 3, 1)
+
     def draw_players(self):
         app = self.app
+        lead = self.leader()
         for n, x, right in ((2, 2, False), (3, 126, True)):
             g = app.Gamer(n)
             mover = app.nCurrentMove.nValue == n and self.desk.get(n) is None and app.CurrentGame != undefined
-            self.text(NAMES[n], (x, 1), YELLOW if mover else WHITE, self.f9, right=right)
+            w = self.text(NAMES[n], (x, 1), YELLOW if mover else WHITE, self.f9, right=right)
+            if lead == n:
+                self.lead_mark(x - w - 5 if right else x + w + 4, 6)
             self.text(self.labels.get(n, ""), (x, 11), YELLOW, self.f9, right=right)
             if g.nGetsCard:
                 self.text("взят %d" % g.nGetsCard, (x, 21), LIGHT, self.f8, right=right)
@@ -421,10 +455,13 @@ class PrefGUI:
             self.text("взят %d" % me.nGetsCard, (64, 21), LIGHT, self.f8, center=True)
         # trick / talon row
         spots = {2: 30, 1: 56, 3: 82}
+        lead = self.leader()
+        if lead == 1:
+            self.lead_mark(5, 98)
         if self.desk:
             for n, c in self.desk.items():
                 if c is not None:
-                    self.draw_card(spots[n], 68, c, small=False)
+                    self.draw_card(spots[n], 68, c, small=False, border=YELLOW if n == lead else None)
         else:
             cnt, c1, c2 = self.prikup
             shown = [c for c in (c1, c2) if c] or (me.aOut.items if self.discarding else [])
@@ -467,12 +504,19 @@ class PrefGUI:
             self.text(label, (x, 17), GREY, self.f8, right=True)
         for row, n in enumerate((1, 2, 3)):
             s = app.Gamer(n).aScore
-            y = 30 + row * 15
+            y = 28 + row * 21
             self.text(NAMES[n], (2, y), WHITE, self.f10)
             self.text(s.nGetBull(), (54, y), YELLOW, self.f10b, right=True)
             self.text(s.nGetMount(), (80, y), RED if s.nGetMount() else LIGHT, self.f10b, right=True)
             self.text("%+d" % s.Vists, (126, y), WHITE, self.f10, right=True)
-        self.text("вісти - баланс, як при закритті", (64, 78), GREY, self.f8, center=True)
+            if self.delta:
+                db, dm, dv = self.delta[n]
+                for x, d, bad in ((54, db, False), (80, dm, True), (126, dv, False)):
+                    if d:
+                        self.text("%+d" % d, (x, y + 11), (GOOD if (d > 0) != bad else RED), self.f8, right=True)
+        if self.delta:
+            self.text("дрібно - за цю роздачу", (64, 92), GREY, self.f8, center=True)
+        self.text("вісти - баланс при закритті", (64, 101), GREY, self.f8, center=True)
         done = lcd.OK + " - далі" if self.paper_mode else "будь-яка кнопка - назад"
         self.text(done, (64, 112), LIGHT, self.f8, center=True)
 
@@ -609,9 +653,11 @@ def main():
             TPlScore.rcnt = 0
             if resume:
                 load_pulka(app)
+                gui.start_scores()
                 app.RunGame(run, loaded=True)
             else:
                 delete_save()
+                gui.start_scores()
                 app.RunGame(run)
             if app.EndOfGame():
                 delete_save()
