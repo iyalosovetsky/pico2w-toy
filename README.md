@@ -218,9 +218,9 @@ Doom і вмикає сервіси. Що має бути в `config.txt` - ди
 | RX (GPIO17, UART0 RX) | TXD - GPIO 14, пін 8 |
 | GND | GND, напр. пін 6 |
 
-На Zero це стандартний UART `/dev/serial0`: у `config.txt` має бути `enable_uart=1`, а якщо порт
-потрібен програмам, з `cmdline.txt` прибирається `console=serial0,115200` (або `raspi-config` →
-Interface Options → Serial Port: login shell - ні, апаратний порт - так).
+На Zero це стандартний UART `/dev/serial0` (mini UART `ttyS0`, Bluetooth лишається на PL011).
+`install.sh --device=picocalc` вмикає його (`enable_uart=1` у `config.txt`) і прибирає з
+`cmdline.txt` консоль `console=serial0,115200`, щоб порт був вільний для програм.
 
 ## 4. Схема
 

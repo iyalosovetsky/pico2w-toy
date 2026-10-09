@@ -218,9 +218,9 @@ TX/RX are labelled in the top right corner (chip side up, Type-C at the top) - i
 | RX (GPIO17, UART0 RX) | TXD - GPIO 14, pin 8 |
 | GND | GND, e.g. pin 6 |
 
-On the Zero this is the default UART `/dev/serial0`: `config.txt` needs `enable_uart=1`, and for
-programs to use the port, `console=serial0,115200` comes out of `cmdline.txt` (or `raspi-config` →
-Interface Options → Serial Port: login shell - no, hardware port - yes).
+On the Zero this is the default UART `/dev/serial0` (the mini UART `ttyS0`; Bluetooth keeps the
+PL011). `install.sh --device=picocalc` enables it (`enable_uart=1` in `config.txt`) and takes the
+`console=serial0,115200` login console out of `cmdline.txt`, so programs can use the port.
 
 ## 4. Wiring
 

@@ -136,6 +136,14 @@ install_picocalc() {
     [ -e /etc/default/lcd-toy ] || sudo cp "$DEV_CONFIG/lcd-toy.env" /etc/default/lcd-toy
     sudo install -m 755 "$DEV_CONFIG/lcd-vt" /usr/local/bin/lcd-vt
 
+    echo "== UART on GPIO 14/15 (/dev/serial0) for the ESP32-C6, without a login console"
+    add_config "enable_uart=1"
+    if grep -q "console=serial0" "$CMDLINE"; then
+        backup "$CMDLINE"
+        sudo sed -i "s/console=serial0,[0-9]* //" "$CMDLINE"
+        REBOOT=1
+    fi
+
     install_mmbasic
 }
 

@@ -17,4 +17,7 @@ dtparam=clock-frequency=50
 # Sound: PWM on GPIO 12/13 -> the PicoCalc's amplifier and speakers
 dtparam=audio=on
 dtoverlay=audremap,pins_12_13
+# UART on GPIO 14/15 (/dev/serial0 = ttyS0) to the ESP32-C6-Zero; Bluetooth keeps the PL011.
+# install.sh also takes console=serial0 out of cmdline.txt so programs can use the port.
+enable_uart=1
 # --- end PicoCalc ---
