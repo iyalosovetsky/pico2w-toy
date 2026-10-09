@@ -209,6 +209,19 @@ Per game:
 | **USB 2.0 Hub module FE1.1S** | <img src="https://images.prom.ua/7505726655_w640_h640_modul-usb-20.jpg" width="200"> | 1→4 port USB hub on the FE1.1S | [ekran.in.ua](https://ekran.in.ua/ua/p3100872448-modul-usb-hub.html) |
 | **Waveshare ESP32-C6-Zero** | <img src="https://www.waveshare.com/media/catalog/product/cache/1/image/800x800/9df78eab33525d08d6e5fb8d27136e95/e/s/esp32-c6-zero-1.jpg" width="200"> | ESP32-C6 (RISC-V 160 MHz), Wi-Fi 6, Bluetooth 5 LE, Zigbee/Thread, 8 MB flash, USB Type-C; connected to the Zero 2 W's UART | [Waveshare Wiki](https://docs.waveshare.com/ESP32-C6-Zero), [shop](https://www.waveshare.com/esp32-c6-zero.htm) |
 
+**ESP32-C6 ↔ Zero 2 W (UART, 3.3 V on both sides, no level shifting needed).** The ESP32-C6-Zero's
+TX/RX are labelled in the top right corner (chip side up, Type-C at the top) - its UART0:
+
+| ESP32-C6-Zero | Zero 2 W |
+|---|---|
+| TX (GPIO16, UART0 TX) | RXD - GPIO 15, pin 10 |
+| RX (GPIO17, UART0 RX) | TXD - GPIO 14, pin 8 |
+| GND | GND, e.g. pin 6 |
+
+On the Zero this is the default UART `/dev/serial0`: `config.txt` needs `enable_uart=1`, and for
+programs to use the port, `console=serial0,115200` comes out of `cmdline.txt` (or `raspi-config` →
+Interface Options → Serial Port: login shell - no, hardware port - yes).
+
 ## 4. Wiring
 
 ![Wiring](docs/wiring.svg)

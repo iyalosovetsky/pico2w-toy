@@ -209,6 +209,19 @@ Doom і вмикає сервіси. Що має бути в `config.txt` - ди
 | **Модуль USB 2.0 Hub FE1.1S** | <img src="https://images.prom.ua/7505726655_w640_h640_modul-usb-20.jpg" width="200"> | USB-хаб 1→4 порти на FE1.1S | [ekran.in.ua](https://ekran.in.ua/ua/p3100872448-modul-usb-hub.html) |
 | **Waveshare ESP32-C6-Zero** | <img src="https://www.waveshare.com/media/catalog/product/cache/1/image/800x800/9df78eab33525d08d6e5fb8d27136e95/e/s/esp32-c6-zero-1.jpg" width="200"> | ESP32-C6 (RISC-V 160 МГц), Wi-Fi 6, Bluetooth 5 LE, Zigbee/Thread, 8 МБ Flash, USB Type-C; підключена до UART Zero 2 W | [Waveshare Wiki](https://docs.waveshare.com/ESP32-C6-Zero), [магазин](https://www.waveshare.com/esp32-c6-zero.htm) |
 
+**ESP32-C6 ↔ Zero 2 W (UART, 3.3 В на обох боках, рівні узгоджувати не треба).** TX/RX на ESP32-C6-Zero
+підписані у верхньому правому куті (стороною з чипом до себе, Type-C угорі) - це її UART0:
+
+| ESP32-C6-Zero | Zero 2 W |
+|---|---|
+| TX (GPIO16, UART0 TX) | RXD - GPIO 15, пін 10 |
+| RX (GPIO17, UART0 RX) | TXD - GPIO 14, пін 8 |
+| GND | GND, напр. пін 6 |
+
+На Zero це стандартний UART `/dev/serial0`: у `config.txt` має бути `enable_uart=1`, а якщо порт
+потрібен програмам, з `cmdline.txt` прибирається `console=serial0,115200` (або `raspi-config` →
+Interface Options → Serial Port: login shell - ні, апаратний порт - так).
+
 ## 4. Схема
 
 ![Схема](docs/wiring.svg)
