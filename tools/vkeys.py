@@ -20,7 +20,7 @@ EV_SYN, EV_KEY = 0, 1
 KEY_LEFTSHIFT = 42
 NAMES = {"esc": 1, "backspace": 14, "tab": 15, "enter": 28, "space": 57,
          "up": 103, "down": 108, "left": 105, "right": 106,
-         "key1": 2, "key2": 3, "key3": 4, "ctrl": 29, "alt": 56, "caps": 58, "shift": 42}
+         "key1": 2, "key2": 3, "key3": 4, "ctrl": 29, "alt": 56, "caps": 58, "shift": 42, "f1": 59}
 CHARS = {}
 for row, first in (("1234567890-=", 2), ("qwertyuiop[]", 16), ("asdfghjkl;'", 30), ("zxcvbnm,./", 44)):
     for i, ch in enumerate(row):
