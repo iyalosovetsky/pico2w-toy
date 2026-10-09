@@ -119,7 +119,7 @@ A 172×103×20 mm PicoCalc back cover for the zero mod (a Zero 2 W instead of th
 | **PREFERANS** | Preferans (Russian whist) against two computer players: Sochi (default) or Leningrad rules, chosen when a new pulka starts, pulka to 20, auto-saved. Engine and AI: [Python Pref](https://python-pref.sourceforge.io/index_ru.html) (the same one that ran on Nokia/Symbian), ported to Python 3 |
 | **BOOKS** | EPUB / FB2 / TXT (also zipped) and PDF reader for the `~/books` folder: images, contents, font size, light/dark theme; PDF as zoomed page fragments with smooth scrolling; the position in every book is saved |
 | **DOOM** | Doom (shareware episode 1) via [doomgeneric](https://github.com/ozkl/doomgeneric), downscaled to 128×80 |
-| **GENERATOR** | Square wave generator on the ESP32-C6 (PicoCalc, over the UART): frequency, duty cycle, on/off; the ESP's LED shows the duty and the frequency - see [ESP32-C6](#picocalc-components) |
+| **GENERATOR** | Signal generator on the ESP32-C6 (PicoCalc, over the UART): shape (square, sine, triangle, saw), frequency, duty cycle, on/off; the ESP's LED shows the duty and the frequency - see [ESP32-C6](#picocalc-components) |
 | **AI CHAT** | Chat with a local LLM (llama.cpp / any OpenAI-compatible server) on the text console, US/UA keyboard |
 | **CONSOLE** | Leaves the menu and opens a text console with login on the LCD (tty7); `lcdmenu` brings the menu back |
 | **HDMI** | Lends the USB keyboard to the console on the monitor (tty1); the HAT buttons stay with the menu, KEY3 takes the keyboard back |
@@ -223,19 +223,24 @@ On the Zero this is the default UART `/dev/serial0` (the mini UART `ttyS0`; Blue
 PL011). `install.sh --device=picocalc` enables it (`enable_uart=1` in `config.txt`) and takes the
 `console=serial0,115200` login console out of `cmdline.txt`, so programs can use the port.
 
-**Square wave generator on the ESP32-C6** ([`tools/esp32c6/`](tools/esp32c6)). The ESP32-C6 runs
-MicroPython; [`main.py`](tools/esp32c6/main.py) puts a square wave on **GPIO19** (2 Hz - 1 MHz) and
-takes commands over the UART. The onboard RGB LED gets brighter with the duty cycle and changes colour
+**Signal generator on the ESP32-C6** ([`tools/esp32c6/`](tools/esp32c6)). The ESP32-C6 runs
+MicroPython; [`main.py`](tools/esp32c6/main.py) puts a signal on **GPIO19** and takes commands over
+the UART: square - hardware PWM (2 Hz - 1 MHz, duty 0-100 %); sine, triangle and saw - DDS
+(1 Hz - 10 kHz): a 150 kHz PWM whose duty follows the wave (viper code writes the LEDC registers
+directly). The ESP32-C6 has no DAC, so the analog wave comes after an RC low-pass on the pin,
+e.g. 1 kOhm + 10 nF. The onboard RGB LED gets brighter with the duty cycle and changes colour
 with the frequency (log scale: 2 Hz red … 1 MHz violet). From the Zero, the `esp32c6` command
 (installed by `install.sh`):
 
 ```bash
-esp32c6 freq 2.5k duty 25    # frequency (Hz, k, M) and duty cycle (%)
+esp32c6 shape sine freq 2.5k # shape (square sine triangle saw) and frequency (Hz, k, M)
+esp32c6 shape square duty 25 # square wave, duty cycle (%)
 esp32c6 off                  # stop the output; on - start it
-esp32c6 get                  # ok freq=2500 duty=25 out=on
+esp32c6 get                  # ok shape=square freq=2500 duty=25 out=on fmax=1000000
+esp32c6 flash tools/esp32c6/main.py   # update the ESP's program over the UART, no USB
 ```
 
-To flash the program onto the ESP32-C6 plugged into the Zero by Type-C (`/dev/ttyACM0`):
+The first time (or if the program is broken) over USB, the ESP32-C6 plugged into the Zero by Type-C (`/dev/ttyACM0`):
 `python3 tools/esp32c6/mpy_put.py /dev/ttyACM0 tools/esp32c6/main.py`.
 
 ## 4. Wiring

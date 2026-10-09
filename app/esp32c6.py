@@ -1,6 +1,6 @@
-"""Square wave generator on the ESP32-C6-Zero (tools/esp32c6/main.py), driven over the UART.
+"""Signal generator on the ESP32-C6-Zero (tools/esp32c6/main.py), driven over the UART.
 
-UP / DOWN - row (frequency, duty, signal), LEFT / RIGHT - change (held: repeats),
+UP / DOWN - row (shape, frequency, duty, signal), LEFT / RIGHT - change (held: repeats),
 + / - (KEY1 / KEY2 on the HAT) - fine step, PRESS / Enter - signal on / off,
 keyboard digits (and k / M for the frequency) + Enter - exact value, KEY3 / Esc - exit.
 Every change is sent at once; the screen shows what the board answered.
@@ -19,7 +19,9 @@ import pygame  # noqa: E402
 import lcd  # noqa: E402
 
 PORT = os.environ.get("ESP32C6_PORT", "/dev/serial0")
-FMIN, FMAX = 2, 1000000           # as in tools/esp32c6/main.py
+FMIN, FMAX = 1, 1000000           # widest range; the board answers its limit for the shape (fmax)
+SHAPES = ["square", "sine", "triangle", "saw"]
+SHAPE_NAMES = {"square": "меандр", "sine": "синус", "triangle": "трикутник", "saw": "пила"}
 SERIES = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8]  # coarse frequency steps in a decade
 LED_MAX = 80
 
@@ -63,12 +65,15 @@ class Link:
 
 
 def parse(reply):
-    """'ok freq=1000 duty=50 out=on' -> dict, or None."""
+    """'ok shape=sine freq=1000 duty=50 out=on fmax=1000' -> dict, or None."""
     if not reply or not reply.startswith("ok "):
         return None
     kv = dict(w.split("=", 1) for w in reply[3:].split() if "=" in w)
     try:
-        return {"freq": int(kv["freq"]), "duty": float(kv["duty"]), "on": kv.get("out") == "on"}
+        shape = kv.get("shape", "square")  # an older main.py has square only
+        return {"shape": shape, "freq": int(kv["freq"]), "duty": float(kv["duty"]),
+                "on": kv.get("out") == "on", "fmax": int(kv.get("fmax", FMAX)),
+                "fmin": 2 if shape == "square" else 1}
     except (KeyError, ValueError):
         return None
 
@@ -102,9 +107,10 @@ def led_color(st):
     """The colour the board's LED shows (main.py: hue by log frequency, value by duty)."""
     if not st["on"]:
         return (0, 0, 0)
-    pos = math.log10(st["freq"] / FMIN) / math.log10(FMAX / FMIN)
+    pos = math.log10(max(st["freq"], 2) / 2) / math.log10(FMAX / 2)
     h = (270 * pos % 360) / 60
-    v = 255 * max(st["duty"], 8) / 100  # brighter than the LED itself, so it shows on the LCD
+    duty = st["duty"] if st["shape"] == "square" else 50
+    v = 255 * max(duty, 8) / 100  # brighter than the LED itself, so it shows on the LCD
     i, f = int(h), h - int(h)
     p, q, t = 0, v * (1 - f), v * f
     return tuple(int(c) for c in [(v, t, p), (q, v, p), (p, v, t), (p, q, v), (t, p, v), (v, p, q)][i % 6])
@@ -130,7 +136,9 @@ f_label = font("DejaVuSans.ttf", 15 if BIG else 8)
 f_value = font("DejaVuSans-Bold.ttf", 24 if BIG else 11)
 f_title = font("DejaVuSans-Bold.ttf", 16 if BIG else 8)
 
-ROWS = ["Частота", "Скважність", "Сигнал"]
+ROWS = ["Форма", "Частота", "Скважність", "Сигнал"]
+R_SHAPE, R_FREQ, R_DUTY, R_OUT = range(4)
+ROW_H = 16
 HAT = lcd.DEVICE == "hat144"
 
 
@@ -154,32 +162,53 @@ def draw(st, row, typing, note, note_color):
         text(("KEY3" if HAT else "Esc") + " - назад", (64, 114), DIM, f_small, center=True)
         lcd.flip()
         return
-    values = [freq_text(st["freq"]), "%g %%" % st["duty"], "УВІМК" if st["on"] else "ВИМК"]
+    square = st["shape"] == "square"
+    values = [SHAPE_NAMES.get(st["shape"], st["shape"]), freq_text(st["freq"]),
+              "%g %%" % st["duty"] if square else "—", "УВІМК" if st["on"] else "ВИМК"]
     for i, name in enumerate(ROWS):
-        y = 15 + i * 20
+        y = 14 + i * ROW_H
         sel = i == row
         if sel:
-            pygame.draw.rect(screen, ACCENT, (2, y - 1, 124, 19), border_radius=3)
-        text(name, (6, y + 4), BG if sel else DIM, f_label)
+            pygame.draw.rect(screen, ACCENT, (2, y - 1, 124, ROW_H - 1), border_radius=3)
+        text(name, (6, y + 2), BG if sel else DIM, f_label)
         value = typing + "_" if sel and typing is not None else values[i]
-        color = BG if sel else (GREEN if i == 2 and st["on"] else RED if i == 2 else FG)
-        text(value, (122, y + 1), color, f_value, right=True)
-    # the wave: three periods with the duty cycle, in the LED's colour
+        if sel:
+            color = BG
+        elif i == R_OUT:
+            color = GREEN if st["on"] else RED
+        else:
+            color = DIM if i == R_DUTY and not square else FG
+        text(value, (122, y), color, f_value, right=True)
+    # the wave: three periods of the shape, in the LED's colour
     color = led_color(st)
     wave = color if st["on"] else DIM
-    x0, x1, lo, hi = 22, 124, 90, 76
+    x0, x1, lo, hi = 22, 124, 94, 80
     period = (x1 - x0) / 3
-    pts = [(x0, lo)]
-    for k in range(3):
-        a = x0 + k * period
-        b = a + period * st["duty"] / 100 if st["on"] else a
-        pts += [(a, lo), (a, hi), (b, hi), (b, lo)] if st["on"] and st["duty"] > 0 else [(a, lo)]
-    pts.append((x1, lo))
+    if not st["on"]:
+        pts = [(x0, lo), (x1, lo)]
+    elif square:
+        pts = [(x0, lo)]
+        for k in range(3):
+            a = x0 + k * period
+            b = a + period * st["duty"] / 100
+            pts += [(a, lo), (a, hi), (b, hi), (b, lo)] if st["duty"] > 0 else [(a, lo)]
+        pts.append((x1, lo))
+    else:
+        level = {"sine": lambda t: 0.5 + 0.5 * math.sin(2 * math.pi * t),
+                 "triangle": lambda t: 2 * t if t < 0.5 else 2 - 2 * t,
+                 "saw": lambda t: t}.get(st["shape"], lambda t: 0.5)
+        pts = []
+        for i in range(61):
+            t = i / 60 * 3
+            v = level(t % 1) if not (st["shape"] == "saw" and i and t % 1 == 0) else 1
+            pts.append((x0 + (x1 - x0) * i / 60, lo - (lo - hi) * v))
+            if st["shape"] == "saw" and i and t % 1 == 0 and i < 60:
+                pts.append((x0 + (x1 - x0) * i / 60, lo))  # the drop of the saw
     pygame.draw.lines(screen, wave, False, pts, 2 if BIG else 1)
-    pygame.draw.circle(screen, color, (10, 83), 6)        # the LED
-    pygame.draw.circle(screen, DIM, (10, 83), 6, 1)
+    pygame.draw.circle(screen, color, (10, 87), 6)        # the LED
+    pygame.draw.circle(screen, DIM, (10, 87), 6, 1)
     if note:
-        text(note, (64, 96), note_color, f_small, center=True)
+        text(note, (64, 97), note_color, f_small, center=True)
     if HAT:
         hints = ["←/→ змінити, KEY1/2 точно", "натиск - сигнал, KEY3 - назад"]
     else:
@@ -217,11 +246,16 @@ def main():
         return got
 
     def change(sign, fine):
-        if row == 0:
+        if row == R_SHAPE:
+            i = SHAPES.index(st["shape"]) if st["shape"] in SHAPES else 0
+            send("shape " + SHAPES[(i + sign) % len(SHAPES)])
+        elif row == R_FREQ:
             f = st["freq"]
             new = f + sign * max(1, round(f * 0.01)) if fine else freq_step(f, sign > 0)
-            send("freq %d" % min(FMAX, max(FMIN, new)))
-        elif row == 1:
+            send("freq %d" % min(st["fmax"], max(st["fmin"], new)))
+        elif row == R_DUTY:
+            if st["shape"] != "square":
+                return
             send("duty %g" % min(100, max(0, st["duty"] + sign * (1 if fine else 5))))
         else:
             send("on" if sign > 0 else "off")
@@ -249,8 +283,8 @@ def main():
                 return
             if st is None:
                 continue
-            if k in DIGITS and not hat and row < 2:
-                if DIGITS[k] in "kM" and row != 0:
+            if k in DIGITS and not hat and row in (R_FREQ, R_DUTY):
+                if DIGITS[k] in "kM" and row != R_FREQ:
                     continue
                 typing = (typing or "") + DIGITS[k]
             elif k == pygame.K_BACKSPACE and typing is not None:
@@ -259,7 +293,7 @@ def main():
                 if typing is not None:
                     try:
                         v = number(typing)
-                        send(("freq %d" % round(v)) if row == 0 else ("duty %g" % v))
+                        send(("freq %d" % round(v)) if row == R_FREQ else ("duty %g" % v))
                     except ValueError:
                         note, note_color, note_until = "не число: " + typing, RED, now + 3
                     typing = None
@@ -267,10 +301,10 @@ def main():
                     send("off" if st["on"] else "on")
                     lcd.play("select")
             elif k == pygame.K_UP:
-                row, typing = (row - 1) % 3, None
+                row, typing = (row - 1) % len(ROWS), None
                 lcd.play("click")
             elif k == pygame.K_DOWN:
-                row, typing = (row + 1) % 3, None
+                row, typing = (row + 1) % len(ROWS), None
                 lcd.play("click")
             elif k in (pygame.K_LEFT, pygame.K_RIGHT):
                 typing = None
@@ -282,7 +316,7 @@ def main():
                 change(-1, True)
         if held and not held_hat and held not in lcd._held_arrows:  # a keyboard says it's up
             held = None
-        if held and st and time.monotonic() >= next_repeat and row < 2:  # held arrow repeats
+        if held and st and time.monotonic() >= next_repeat and row in (R_FREQ, R_DUTY):  # repeats
             change(1 if held == pygame.K_RIGHT else -1, False)
             next_repeat = time.monotonic() + 0.12
         if note and time.monotonic() > note_until and note_color == RED:
