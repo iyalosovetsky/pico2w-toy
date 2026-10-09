@@ -9,6 +9,7 @@ import glob
 import os
 import socket
 import subprocess
+import time
 
 import pygame
 import lcd
@@ -61,9 +62,30 @@ ACCENT = (255, 200, 0)
 screen = lcd.init()
 if not lcd.sound_available():
     ITEMS = [it for it in ITEMS if it[2] != "sound"]
+# PicoCalc battery (its firmware driver): percent, or 128 + percent while charging
+BATTERY_FILE = "/sys/firmware/picocalc/battery_percent"
+HAS_BATTERY = os.path.exists(BATTERY_FILE)
+_battery = {"t": 0, "value": None}
+
+
+def battery():
+    """(percent, charging) or None; read every 10 s."""
+    now = time.monotonic()
+    if now - _battery["t"] > 10:
+        _battery["t"] = now
+        try:
+            with open(BATTERY_FILE) as f:
+                v = int(f.read().strip())
+            _battery["value"] = (min(100, v - 128), True) if v > 100 else (v, False)
+        except (OSError, ValueError):
+            _battery["value"] = None
+    return _battery["value"]
+
+
 font_title = pygame.font.Font(None, 22)
 TITLE = socket.gethostname().split(".")[0].upper()  # the menu header shows the hostname
-while font_title.size(TITLE)[0] > 120 and font_title.get_height() > 10:  # long names: smaller font
+TITLE_W = 84 if HAS_BATTERY else 120  # the battery takes the right of the header
+while font_title.size(TITLE)[0] > TITLE_W and font_title.get_height() > 10:  # long names: smaller font
     font_title = pygame.font.Font(None, font_title.get_height() - 2)
 font_item = pygame.font.Font(None, 20)
 VISIBLE = 5     # rows on screen; the list scrolls
@@ -73,12 +95,36 @@ font_small = pygame.font.Font(None, 14)
 clock = pygame.time.Clock()
 
 
+def draw_battery():
+    """Percent and a battery icon at the right of the header; a bolt while charging."""
+    b = battery()
+    if b is None:
+        return
+    pct, charging = b
+    color = (90, 200, 90) if pct > 50 else ACCENT if pct > 20 else (230, 60, 50)
+    x, y = 107, 8  # icon body 12 x 7
+    pygame.draw.rect(screen, FG, (x, y, 12, 7), 1)
+    pygame.draw.rect(screen, FG, (x + 12, y + 2, 1, 3))
+    fill = round(10 * max(0, min(100, pct)) / 100)
+    if fill:
+        pygame.draw.rect(screen, color, (x + 1, y + 1, fill, 5))
+    if charging:
+        pygame.draw.polygon(screen, (80, 200, 255), [(x + 7, y - 1), (x + 3, y + 4), (x + 6, y + 4),
+                                                     (x + 5, y + 8), (x + 9, y + 3), (x + 6, y + 3)])
+    t = font_small.render("%d%%" % pct, True, FG)
+    screen.blit(t, (x - 2 - t.get_width(), y - 1))
+
+
 def draw(sel):
     global top
     top = min(max(top, sel - VISIBLE + 1), sel)  # keep the selection on screen
     screen.fill(BG)
     t = font_title.render(TITLE, True, ACCENT)
-    screen.blit(t, ((128 - t.get_width()) // 2, 5))
+    if HAS_BATTERY:
+        screen.blit(t, (8, 5))
+        draw_battery()
+    else:
+        screen.blit(t, ((128 - t.get_width()) // 2, 5))
     pygame.draw.line(screen, DIM, (8, 22), (119, 22))
     for i in range(top, min(top + VISIBLE, len(ITEMS))):
         name, hint, cmd, _ = ITEMS[i]
