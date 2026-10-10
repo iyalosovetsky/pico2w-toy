@@ -18,6 +18,7 @@
 #   shape square|sine|triangle|saw     freq <Hz> (2.5k, 1M)     duty <%> (square)
 #   on / off     get     ping     reset
 #   probe        self-check: the mean level of the output in ten 0.1 s slices (0..100 %)
+#   power        whether the board dozes (48 MHz after 30 s idle with the output off); doze - now
 #   adc          voltages on GP26-GP29 (ADC0-3; GP26 = the PicoCalc's J703.7), 64-sample mean
 #   scope <rate> [level]   oscilloscope on GP26: 256 8-bit samples at <rate> samples/s
 #                (500 .. 500 k; each sample is the mean of the ~500 k/s conversions in its
@@ -1027,6 +1028,11 @@ def command(line):
     try:
         if cmd == "ping":
             return "pong"
+        if cmd == "power":
+            return power_status()
+        if cmd == "doze":                # for testing: doze now
+            doze()
+            return power_status()
         if cmd == "get":
             return status()
         if cmd == "reset":
@@ -1153,8 +1159,37 @@ def usb_read(n):
 streams = [Stream(lambda n: uart.read(min(n, uart.any())), uart_write, uart.any),
            Stream(usb_read, sys.stdout.buffer.write, lambda: usb.poll(0))]
 
+# ---------------------------------------------------------------- saving power when idle
+# After IDLE_MS without a command, with the generator output off, the board slows its clock to
+# DOZE_HZ and polls less often; any command brings 150 MHz back (the output's PWM / DMA timing
+# needs it, so with the output on the board never dozes).
+IDLE_MS, DOZE_HZ = 30000, 48000000
+power = {"dozing": False, "last": time.ticks_ms()}
+
+
+def wake():
+    power["last"] = time.ticks_ms()
+    if power["dozing"]:
+        machine.freq(CLK)
+        power["dozing"] = False
+
+
+def doze():
+    if not power["dozing"] and not state["on"]:
+        machine.freq(DOZE_HZ)
+        power["dozing"] = True
+
+
+def power_status():
+    return "ok power dozing=%d freq=%d idle_after=%d s" % (power["dozing"], machine.freq(), IDLE_MS // 1000)
+
+
 apply()
 while True:
     for s in streams:
-        s.poll()
-    time.sleep_ms(1)
+        if s.avail():
+            wake()
+            s.poll()
+    if not power["dozing"] and time.ticks_diff(time.ticks_ms(), power["last"]) > IDLE_MS:
+        doze()
+    time.sleep_ms(10 if power["dozing"] else 1)
