@@ -18,6 +18,7 @@
 #   shape square|sine|triangle|saw     freq <Hz> (2.5k, 1M)     duty <%> (square)
 #   on / off     get     ping     reset
 #   probe        self-check: the mean level of the output in ten 0.1 s slices (0..100 %)
+#   adc          voltages on GP26-GP29 (ADC0-3; GP26 = the PicoCalc's J703.7), 64-sample mean
 #   put <file> <bytes>   answers "ok send", then takes that many raw bytes: replaces a file
 #                        (program updates over the UART: siggen flash)
 import array
@@ -166,6 +167,20 @@ def probe():
     return "ok probe " + " ".join(out)
 
 
+ADCS = [machine.ADC(Pin(p)) for p in (26, 27, 28, 29)]
+
+
+def adc():
+    """Mean of 64 readings per ADC input, in volts (3.3 V reference)."""
+    out = []
+    for p, a in zip((26, 27, 28, 29), ADCS):
+        total = 0
+        for _ in range(64):
+            total += a.read_u16()
+        out.append("gp%d=%.3f" % (p, total / 64 * 3.3 / 65535))
+    return "ok adc " + " ".join(out)
+
+
 def number(s):
     s = s.strip().lower()
     mult = {"k": 1000, "m": 1000000}.get(s[-1:], 1)
@@ -193,6 +208,8 @@ def command(line):
             return "reset"
         if cmd == "probe":
             return probe()
+        if cmd == "adc":
+            return adc()
         if cmd == "shape" and len(args) == 1 and args[0].lower() in SHAPES:
             state["shape"] = args[0].lower()
             lo, hi = limits()

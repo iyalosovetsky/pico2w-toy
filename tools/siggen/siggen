@@ -6,13 +6,14 @@
 #   siggen duty 25              duty (%) of the square wave - commands combine in any order
 #   siggen on | off             start / stop the output
 #   siggen get | ping | probe   settings / link check / the board reads its output back
+#   siggen adc                  voltages on the board's ADC inputs (RP2350: GP26-29)
 #   siggen flash tools/siggen/rp2350.py   upload a program as the board's main.py, restart it
 #
 # Every command prints the board's answer ("ok board=... shape=... freq=..." or "err ...").
 # SIGGEN_PORT sets the port instead of looking for one (115200 baud).
 
 usage() {
-    sed -n '2,12s/^# \{0,1\}//p' "$0"
+    sed -n '2,13s/^# \{0,1\}//p' "$0"
     exit "${1:-0}"
 }
 [ $# -eq 0 ] && set -- get
@@ -97,7 +98,7 @@ while [ $# -gt 0 ]; do
             send "put main.py $(stat -c %s "$2")" "$2"
             [ $status = 0 ] && send reset && wait_board
             shift 2 ;;
-        on|off|get|ping|probe)
+        on|off|get|ping|probe|adc)
             send "$1"
             shift ;;
         *)
