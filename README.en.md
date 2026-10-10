@@ -289,6 +289,10 @@ UART 8N1 (RX - J703.4), I2C (SDA - J703.4, SCL - J703.5: START, address R/W, byt
 SPI modes 0-3 (SCK .6, MOSI .3, MISO .4, CS .5). The "test" source makes the board send its own
 traffic with its hardware UART / I2C / SPI on the same lines.
 
+<img src="docs/picocalc-display-test.jpg" width="360" alt="Display test: a GMT147 (ST7789V3 172x320) on the PicoCalc's J703">
+
+*Display test: a GMT147SPI module (ST7789V3, 172x320) on the J703 ribbon, the "grid" picture.*
+
 **Display tester** - the board sets up a display and draws test pictures: colours, bars, a grid with a
 border and coloured corners (shows window offset errors, which differ between ST7789 versions) and text.
 SPI: ST7789 240x240, 240x320, 240x280 (V2), 135x240, 170x320 and 172x320 (V3), ILI9341, ILI9488 (RGB666),
