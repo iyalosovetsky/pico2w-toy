@@ -208,38 +208,24 @@ Per game:
 | **Raspberry Pi Zero 2 W** | <img src="https://arduino.ua/products_pictures/usa146/large_usa146-1.jpg" width="200"> | The same Zero 2 W as in the HAT build | [raspberrypi.com](https://www.raspberrypi.com/products/raspberry-pi-zero-2-w/) |
 | **Pololu U3V40F5** | <img src="https://arduino.ua/products_pictures/usa138/large_USA138-8.jpg" width="200"> | 5 V step-up DC-DC converter: 1.3-5 V in (starts from 2.7 V), up to 4 A input current, 15×15 mm | [arduino.ua](https://arduino.ua/prod5037-povishaushhii-dc-dc-preobrazovatel-5v-u3v40f5-ot-pololu), [pololu.com](https://www.pololu.com/product/4012) |
 | **USB 2.0 Hub module FE1.1S** | <img src="https://images.prom.ua/7505726655_w640_h640_modul-usb-20.jpg" width="200"> | 1→4 port USB hub on the FE1.1S | [ekran.in.ua](https://ekran.in.ua/ua/p3100872448-modul-usb-hub.html) |
-| **Pimoroni Tiny 2350** | <img src="https://cdn.shopify.com/s/files/1/0174/1800/files/tiny2350-oak-1.jpg?v=1723049735" width="200"> | RP2350A (2 cores 150 MHz, PIO, DMA), 520 KB SRAM, 4 MB flash, 12 GPIO (4 ADC), RGB LED, USB Type-C - the signal generator board (instead of the ESP32-C6) | [pimoroni.com](https://shop.pimoroni.com/products/tiny-2350) |
-| **Waveshare ESP32-C6-Zero** | <img src="https://www.waveshare.com/media/catalog/product/cache/1/image/800x800/9df78eab33525d08d6e5fb8d27136e95/e/s/esp32-c6-zero-1.jpg" width="200"> | ESP32-C6 (RISC-V 160 MHz), Wi-Fi 6, Bluetooth 5 LE, Zigbee/Thread, 8 MB flash, USB Type-C; connected to the Zero 2 W's UART | [Waveshare Wiki](https://docs.waveshare.com/ESP32-C6-Zero), [shop](https://www.waveshare.com/esp32-c6-zero.htm) |
+| **Pimoroni Tiny 2350** | <img src="https://cdn.shopify.com/s/files/1/0174/1800/files/tiny2350-oak-1.jpg?v=1723049735" width="200"> | RP2350A (2 cores 150 MHz, PIO, DMA), 520 KB SRAM, 4 MB flash, 12 GPIO (4 ADC), RGB LED, USB Type-C - the signal generator, voltmeter and oscilloscope board | [pimoroni.com](https://shop.pimoroni.com/products/tiny-2350) |
 
-**ESP32-C6 ↔ Zero 2 W (UART, 3.3 V on both sides, no level shifting needed).** The ESP32-C6-Zero's
-TX/RX are labelled in the top right corner (chip side up, Type-C at the top) - its UART0:
-
-| ESP32-C6-Zero | Zero 2 W |
-|---|---|
-| TX (GPIO16, UART0 TX) | RXD - GPIO 15, pin 10 |
-| RX (GPIO17, UART0 RX) | TXD - GPIO 14, pin 8 |
-| GND | GND, e.g. pin 6 |
-
-On the Zero this is the default UART `/dev/serial0` (the mini UART `ttyS0`; Bluetooth keeps the
+**UART to the Tiny 2350.** On the Zero this is the default UART `/dev/serial0` (the mini UART `ttyS0`; Bluetooth keeps the
 PL011). `install.sh --device=picocalc` enables it (`enable_uart=1` in `config.txt`) and takes the
 `console=serial0,115200` login console out of `cmdline.txt`, so programs can use the port.
 
-**Signal generator** ([`tools/siggen/`](tools/siggen)) - a separate MicroPython board connected to
-the Zero over the UART (`/dev/serial0`) or USB (`/dev/ttyACM*`; the command and the app find where it
-answers). Shapes: square with duty, sine, triangle, saw. Neither board has a DAC, so the analog wave
-comes after an RC low-pass on the output.
+**Signal generator** ([`tools/siggen/`](tools/siggen)) - a Pimoroni Tiny 2350 running MicroPython
+([`rp2350.py`](tools/siggen/rp2350.py)), connected to the Zero over the UART (`/dev/serial0`) or USB
+(`/dev/ttyACM*`; the command and the app find where it answers). Shapes: square with duty, sine,
+triangle, saw; output **GP6**. The RP2350 has no DAC, so the analog wave comes after an RC low-pass on
+the output.
 
-- **Pimoroni Tiny 2350** ([`rp2350.py`](tools/siggen/rp2350.py)), output **GP6**: square - hardware PWM,
-  10 Hz - 10 MHz (below that through DMA, from 1 Hz); sine, triangle and saw - 1 Hz - 20 kHz: a 586 kHz
-  8-bit PWM whose duty a DMA channel takes from the wave table, paced by a DMA timer (150 MHz·X/Y) - the
-  frequency is exact and the CPU is free. Filter e.g. 1 kOhm + 4.7 nF. Pins - see the table below.
-  The RGB LED (GP18-20) shows the frequency as colour and the duty as
-  brightness. On the RP2350A GP16-31 share PWM slices with GP0-15 (the LED is on slices 1 and 2), so the
-  output is on GP6 (slice 3).
-- **Waveshare ESP32-C6-Zero** ([`esp32c6.py`](tools/siggen/esp32c6.py)), output **GPIO19**: square
-  2 Hz - 1 MHz; sine, triangle and saw 1 Hz - 10 kHz through a 150 kHz PWM (viper code writes the LEDC
-  registers directly). Filter e.g. 1 kOhm + 10 nF.
-
+Square - hardware PWM, 10 Hz - 10 MHz (below that through DMA, from 1 Hz); sine, triangle and saw -
+1 Hz - 20 kHz: a 586 kHz 8-bit PWM whose duty a DMA channel takes from the wave table, paced by a
+DMA timer (150 MHz·X/Y) - the frequency is exact and the CPU is free. Filter e.g. 1 kOhm + 4.7 nF.
+Pins - see the table below. The RGB LED (GP18-20) shows the frequency as colour and the duty as
+brightness. On the RP2350A GP16-31 share PWM slices with GP0-15 (the LED is on slices 1 and 2), so
+the output is on GP6 (slice 3).
 
 **Tiny 2350 wiring in the PicoCalc.** The UART goes to the Zero, the rest to the PicoCalc's external
 header **J703**. Its lines come from the mainboard's Pico socket (RP2040 GPIO and Pico pin numbers
@@ -296,7 +282,7 @@ siggen flash tools/siggen/rp2350.py   # update the board's program over the UART
 
 The first time - over USB: on the RP2350 MicroPython first (hold BOOT, plug in - an RP2350 drive shows
 up, copy the UF2 from [micropython.org](https://micropython.org/download/RPI_PICO2/) onto it), then
-`python3 tools/siggen/mpy_put.py /dev/ttyACM0 tools/siggen/rp2350.py:main.py` (`esp32c6.py:main.py` for the ESP32-C6).
+`python3 tools/siggen/mpy_put.py /dev/ttyACM0 tools/siggen/rp2350.py:main.py`.
 
 ## 4. Wiring
 

@@ -1,5 +1,5 @@
-"""Signal generator board (tools/siggen: an RP2350 or an ESP32-C6 running rp2350.py / esp32c6.py
-as its main.py), driven over the UART (/dev/serial0) or USB (/dev/ttyACM*) - whichever answers.
+"""Signal generator board (tools/siggen: a Pimoroni Tiny 2350 running rp2350.py as its main.py),
+driven over the UART (/dev/serial0) or USB (/dev/ttyACM*) - whichever answers.
 
 Three modes (the first row): generator, voltmeter (the board's ADC inputs, GP26 = J703.7 in
 the PicoCalc; min / max and a 10 s graph) and oscilloscope (GP26: 256 points per sweep, time base
@@ -79,7 +79,7 @@ def parse(reply):
         return {"shape": shape, "freq": int(kv["freq"]), "duty": float(kv["duty"]),
                 "on": kv.get("out") == "on", "fmax": int(kv.get("fmax", FMAX)),
                 "fmin": int(kv.get("fmin", 2 if shape == "square" else 1)),
-                "board": kv.get("board", "esp32-c6").upper()}
+                "board": kv.get("board", "").upper()}
     except (KeyError, ValueError):
         return None
 
@@ -301,9 +301,12 @@ def measure_wave(data, rate):
     vpp = (hi - lo) * VMAX / 255
     if hi - lo < 20:
         return None, vpp
-    mid, hyst = (lo + hi) / 2, (hi - lo) / 10
+    # smoothed over 3 points, with a wide hysteresis: the PWM steps of the DDS shapes at fast
+    # sweeps must not count as extra crossings
+    smooth = [(data[max(i - 1, 0)] + data[i] + data[min(i + 1, len(data) - 1)]) / 3 for i in range(len(data))]
+    mid, hyst = (lo + hi) / 2, (hi - lo) / 4
     armed, rises = False, []
-    for i, v in enumerate(data):
+    for i, v in enumerate(smooth):
         if v < mid - hyst:
             armed = True
         elif armed and v > mid + hyst:

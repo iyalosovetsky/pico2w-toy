@@ -1,7 +1,7 @@
 # pico2w-toy: signal generator on a Pimoroni Tiny 2350 (RP2350), driven from the Zero 2 W.
 #
 # Commands come over UART0 (GP0 TX -> Zero GPIO 15, GP1 RX <- Zero GPIO 14, /dev/serial0,
-# 115200 8N1) or over USB (/dev/ttyACM0) - the same protocol as esp32c6.py.
+# 115200 8N1) or over USB (/dev/ttyACM0).
 # Output on GP6 (PWM slice 3 - the RGB LED uses slices 1 and 2):
 #   square              - hardware PWM, 10 Hz .. 10 MHz (duty steps get coarse above ~1 MHz);
 #                         below 10 Hz it comes from the DMA path below, 1 Hz up

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Control the signal generator board (tools/siggen: rp2350.py or esp32c6.py running as its
+# Control the signal generator board (a Tiny 2350 running tools/siggen/rp2350.py as its
 # main.py) over the UART (/dev/serial0) or over USB (/dev/ttyACM*) - whichever answers.
 #
 #   siggen shape sine freq 2k   shape: square sine triangle saw; frequency (Hz, k, M)
