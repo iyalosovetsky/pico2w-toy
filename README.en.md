@@ -232,14 +232,41 @@ comes after an RC low-pass on the output.
 - **Pimoroni Tiny 2350** ([`rp2350.py`](tools/siggen/rp2350.py)), output **GP6**: square - hardware PWM,
   10 Hz - 10 MHz (below that through DMA, from 1 Hz); sine, triangle and saw - 1 Hz - 20 kHz: a 586 kHz
   8-bit PWM whose duty a DMA channel takes from the wave table, paced by a DMA timer (150 MHz·X/Y) - the
-  frequency is exact and the CPU is free. Filter e.g. 1 kOhm + 4.7 nF. Pins: GP0 TX → Zero GPIO 15
-  (pin 10), GP1 RX ← Zero GPIO 14 (pin 8), GND; GP7 - second output, GP2-GP5 - SPI0, GP12/13 - I2C
-  (Qw/ST), GP26-29 - ADC. The RGB LED (GP18-20) shows the frequency as colour and the duty as
+  frequency is exact and the CPU is free. Filter e.g. 1 kOhm + 4.7 nF. Pins - see the table below.
+  The RGB LED (GP18-20) shows the frequency as colour and the duty as
   brightness. On the RP2350A GP16-31 share PWM slices with GP0-15 (the LED is on slices 1 and 2), so the
   output is on GP6 (slice 3).
 - **Waveshare ESP32-C6-Zero** ([`esp32c6.py`](tools/siggen/esp32c6.py)), output **GPIO19**: square
   2 Hz - 1 MHz; sine, triangle and saw 1 Hz - 10 kHz through a 150 kHz PWM (viper code writes the LEDC
   registers directly). Filter e.g. 1 kOhm + 10 nF.
+
+
+**Tiny 2350 wiring in the PicoCalc.** The UART goes to the Zero, the rest to the PicoCalc's external
+header **J703**. Its lines come from the mainboard's Pico socket (RP2040 GPIO and Pico pin numbers
+from the [PicoCalc V2.0 schematic](https://github.com/clockworkpi/PicoCalc/blob/master/clockwork_Mainboard_V2.0_Schematic.pdf));
+in the zero mod they are not wired to the Zero (check with a meter in your build).
+
+| Tiny 2350 | To | RP2040 (Pico) on the PicoCalc schematic | Use |
+|---|---|---|---|
+| GP0 (UART0 TX) | Zero GPIO 15 / RXD, pin 10 | — | UART to the Zero (`/dev/serial0`) |
+| GP1 (UART0 RX) | Zero GPIO 14 / TXD, pin 8 | — | UART to the Zero |
+| GND | Zero GND, pin 6 | — | common ground |
+| 5V (VBUS) | 5 V (Zero pin 2/4) or USB-C | — | power |
+| — | J703.1 | 3V3_OUT (AXP2101) | 3.3 V for external modules |
+| **GP6** | J703.2 | **GP2**, pin 4 (J302) · PSRAM SIO0 | generator output |
+| GP3 | J703.3 | **GP3**, pin 5 (J302) · PSRAM SIO1 | SPI0 TX (MOSI) |
+| GP4 | J703.4 | **GP4**, pin 6 (J302) · PSRAM SIO2 | SPI0 RX (MISO) / I2C0 SDA / UART1 TX |
+| GP5 | J703.5 | **GP5**, pin 7 (J302) · PSRAM SIO3 | SPI0 CS / I2C0 SCL / UART1 RX |
+| GP2 | J703.6 | **GP21**, pin 27 (J301) · PSRAM SCLK | SPI0 SCK |
+| GP26 | J703.7 | **GP28**, pin 34 (J301) | ADC, 0-3.3 V |
+| GND | J703.8 | GND | ground |
+
+The mainboard's PSRAM (U301) sits on GP2-GP5 and GP21; its chip enable is GP20 (pin 26) with a 10 kOhm
+pull-up to 3.3 V, so while GP20 is left unconnected the PSRAM is inactive and stays off the lines.
+3.3 V logic only; 100-220 Ohm series resistors on the J703 signal lines are a good idea. PIO can
+re-assign any of the lines (I2S, UART, 1-Wire…).
+
+![Wiring: Zero 2 W, Tiny 2350 and the PicoCalc's J703](docs/wiring-picocalc.svg)
 
 From the Zero: the GENERATOR menu item or the `siggen` command (installed by `install.sh`):
 

@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 590" width="980" height="590" font-family="Helvetica, Arial, sans-serif" font-size="13">
+  <rect width="980" height="590" fill="#ffffff"/>
+  <text x="20" y="30" font-size="17" font-weight="bold" fill="#222">PicoCalc: Zero 2 W + Pimoroni Tiny 2350 (signal generator, I/O on the external header J703)</text>
+
+  <!-- ===== Raspberry Pi Zero 2 W ===== -->
+  <rect x="20" y="60" width="240" height="190" rx="8" fill="#e6f4e6" stroke="#2e8b57"/>
+  <text x="140" y="84" text-anchor="middle" font-weight="bold" fill="#222">Raspberry Pi Zero 2 W</text>
+  <text x="140" y="101" text-anchor="middle" font-size="11" fill="#555">UART /dev/serial0 (ttyS0), 115200</text>
+  <g font-size="12" fill="#222">
+    <text x="250" y="124" text-anchor="end">pin 8 · GPIO 14 TXD</text>
+    <text x="250" y="154" text-anchor="end">pin 10 · GPIO 15 RXD</text>
+    <text x="250" y="184" text-anchor="end">pin 6 · GND</text>
+    <text x="250" y="214" text-anchor="end">pin 2 / 4 · 5 V</text>
+  </g>
+  <g fill="#2e8b57"><circle cx="260" cy="120" r="4"/><circle cx="260" cy="150" r="4"/><circle cx="260" cy="180" r="4"/><circle cx="260" cy="210" r="4"/></g>
+  <text x="30" y="240" font-size="11" fill="#555">USB (optional): Tiny USB-C → /dev/ttyACM0</text>
+
+  <!-- ===== Pimoroni Tiny 2350 ===== -->
+  <rect x="360" y="60" width="250" height="420" rx="8" fill="#e8f1fb" stroke="#2c6fbb"/>
+  <text x="485" y="84" text-anchor="middle" font-weight="bold" fill="#222">Pimoroni Tiny 2350</text>
+  <text x="485" y="101" text-anchor="middle" font-size="11" fill="#555">RP2350A · MicroPython · tools/siggen/rp2350.py</text>
+  <g font-size="12" fill="#222">
+    <text x="372" y="124">GP1 · UART0 RX</text>
+    <text x="372" y="154">GP0 · UART0 TX</text>
+    <text x="372" y="184">GND</text>
+    <text x="372" y="214">5V (VBUS)</text>
+  </g>
+  <g fill="#2c6fbb"><circle cx="360" cy="120" r="4"/><circle cx="360" cy="150" r="4"/><circle cx="360" cy="180" r="4"/><circle cx="360" cy="210" r="4"/></g>
+  <g font-size="12" fill="#222">
+    <text x="600" y="274" text-anchor="end">GP6 · generator out</text>
+    <text x="600" y="304" text-anchor="end">GP3 · SPI0 TX (MOSI)</text>
+    <text x="600" y="334" text-anchor="end">GP4 · SPI0 RX / I2C0 SDA</text>
+    <text x="600" y="364" text-anchor="end">GP5 · SPI0 CS / I2C0 SCL</text>
+    <text x="600" y="394" text-anchor="end">GP2 · SPI0 SCK</text>
+    <text x="600" y="424" text-anchor="end">GP26 · ADC0</text>
+    <text x="600" y="454" text-anchor="end">GND</text>
+  </g>
+  <g fill="#2c6fbb"><circle cx="610" cy="270" r="4"/><circle cx="610" cy="300" r="4"/><circle cx="610" cy="330" r="4"/><circle cx="610" cy="360" r="4"/><circle cx="610" cy="390" r="4"/><circle cx="610" cy="420" r="4"/><circle cx="610" cy="450" r="4"/></g>
+  <g font-size="11" fill="#555">
+    <text x="372" y="246">RGB LED GP18-20 (PWM slices 1, 2)</text>
+    <text x="372" y="261">GP12/13 I2C on the Qw/ST socket</text>
+  </g>
+
+  <!-- ===== PicoCalc mainboard ===== -->
+  <rect x="710" y="60" width="250" height="520" rx="8" fill="#fdf2d0" stroke="#b8860b"/>
+  <text x="835" y="84" text-anchor="middle" font-weight="bold" fill="#222">PicoCalc mainboard V2.0</text>
+  <text x="835" y="101" text-anchor="middle" font-size="11" fill="#555">Pico socket lines → external header J703</text>
+  <text x="742" y="226" font-size="11" fill="#555">J703 · RP2040 GPIO · Pico pin</text>
+  <g fill="#ffffff" stroke="#8a6d1d">
+    <rect x="718" y="232" width="16" height="16"/><rect x="718" y="262" width="16" height="16"/>
+    <rect x="718" y="292" width="16" height="16"/><rect x="718" y="322" width="16" height="16"/>
+    <rect x="718" y="352" width="16" height="16"/><rect x="718" y="382" width="16" height="16"/>
+    <rect x="718" y="412" width="16" height="16"/><rect x="718" y="442" width="16" height="16"/>
+  </g>
+  <g font-size="12" fill="#222">
+    <text x="742" y="244">1 · 3V3_OUT (AXP2101)</text>
+    <text x="742" y="274">2 · GP2 · pin 4 (J302)</text>
+    <text x="742" y="304">3 · GP3 · pin 5 (J302)</text>
+    <text x="742" y="334">4 · GP4 · pin 6 (J302)</text>
+    <text x="742" y="364">5 · GP5 · pin 7 (J302)</text>
+    <text x="742" y="394">6 · GP21 · pin 27 (J301)</text>
+    <text x="742" y="424">7 · GP28 · pin 34 (J301)</text>
+    <text x="742" y="454">8 · GND</text>
+  </g>
+
+  <!-- PSRAM on the same lines -->
+  <rect x="722" y="475" width="226" height="95" rx="6" fill="#ffffff" stroke="#c0392b" stroke-dasharray="4 3"/>
+  <text x="835" y="494" text-anchor="middle" font-size="12" font-weight="bold" fill="#c0392b">U301 PSRAM (ESP-PSRAM64H)</text>
+  <g font-size="11" fill="#444">
+    <text x="732" y="512">SIO0-3 = GP2-GP5, SCLK = GP21</text>
+    <text x="732" y="528">CE = GP20 (pin 26), R302 10 kΩ to 3V3:</text>
+    <text x="732" y="544">inactive (Hi-Z) while GP20 is left</text>
+    <text x="732" y="560">unconnected - so the lines are free</text>
+  </g>
+
+  <!-- ===== wires: Zero <-> Tiny ===== -->
+  <line x1="264" y1="120" x2="356" y2="120" stroke="#2c6fbb" stroke-width="2.5"/>
+  <line x1="264" y1="150" x2="356" y2="150" stroke="#2c6fbb" stroke-width="2.5"/>
+  <line x1="264" y1="180" x2="356" y2="180" stroke="#222" stroke-width="2.5"/>
+  <line x1="264" y1="210" x2="356" y2="210" stroke="#c0392b" stroke-width="2.5" stroke-dasharray="6 4"/>
+  <text x="310" y="226" text-anchor="middle" font-size="10" fill="#c0392b">or USB-C</text>
+  <g font-size="10" fill="#2c6fbb" text-anchor="middle">
+    <text x="310" y="114">TX → RX</text>
+    <text x="310" y="144">RX ← TX</text>
+  </g>
+
+  <!-- ===== wires: Tiny <-> J703 ===== -->
+  <g stroke-width="2.5">
+    <line x1="614" y1="270" x2="718" y2="270" stroke="#e67e22"/>
+    <line x1="614" y1="300" x2="718" y2="300" stroke="#8e44ad"/>
+    <line x1="614" y1="330" x2="718" y2="330" stroke="#8e44ad"/>
+    <line x1="614" y1="360" x2="718" y2="360" stroke="#8e44ad"/>
+    <line x1="614" y1="390" x2="718" y2="390" stroke="#8e44ad"/>
+    <line x1="614" y1="420" x2="718" y2="420" stroke="#16a085"/>
+    <line x1="614" y1="450" x2="718" y2="450" stroke="#222"/>
+  </g>
+  <text x="664" y="264" text-anchor="middle" font-size="10" fill="#e67e22">signal</text>
+  <text x="664" y="414" text-anchor="middle" font-size="10" fill="#16a085">0-3.3 V</text>
+
+  <!-- notes -->
+  <g font-size="11" fill="#444">
+    <text x="20" y="300" font-weight="bold" fill="#222">Notes</text>
+    <text x="20" y="318">• 3.3 V logic only: the RP2350 is not 5 V tolerant.</text>
+    <text x="20" y="334">• 100-220 Ω in series on the J703 signal lines</text>
+    <text x="28" y="348">protects against shorts.</text>
+    <text x="20" y="364">• No DAC: sine / triangle / saw come out as a</text>
+    <text x="28" y="378">586 kHz PWM - add an RC low-pass outside,</text>
+    <text x="28" y="392">e.g. 1 kΩ + 4.7 nF.</text>
+    <text x="20" y="408">• RP2350A rev. A2 (erratum E9): no internal</text>
+    <text x="28" y="422">pull-downs on inputs - pull up or external.</text>
+    <text x="20" y="438">• Check first that these Pico socket lines are not</text>
+    <text x="28" y="452">wired to the Zero (zero mod wiring).</text>
+    <text x="20" y="468">• Any line can be re-assigned by PIO (I2S, UART…).</text>
+  </g>
+</svg>
