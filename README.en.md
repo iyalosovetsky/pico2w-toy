@@ -293,8 +293,7 @@ traffic with its hardware UART / I2C / SPI on the same lines.
 border and coloured corners (shows window offset errors, which differ between ST7789 versions) and text.
 SPI: ST7789 240x240, 240x320, 240x280 (V2), 135x240, 170x320 and 172x320 (V3), ILI9341, ILI9488 (RGB666),
 Waveshare 7.5" e-Paper V2 (800x480); I2C: SSD1306 128x64 / 128x32, SH1106. Wiring: SCK - J703.6, MOSI - .3,
-CS - .5, DC - .4, RST - .7, e-Paper BUSY - .2; I2C SDA - .4, SCL - .5; power - J703.1 (3.3 V once the
-Pico socket's pin 36 is wired to the Zero's 3.3 V) and .8.
+CS - .5, DC - .4, RST - .7, e-Paper BUSY - .2; I2C SDA - .4, SCL - .5; power - J703.1 (3.3 V from the Zero) and .8.
 
 The generator keeps running, so its output can be fed into the input to see the wave.
 
