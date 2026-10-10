@@ -38,6 +38,8 @@ Doom, чат з локальною LLM, текстова консоль і ви�
 | ![chess](docs/gif-picocalc/chess.gif) | ![preferans](docs/gif-picocalc/preferans.gif) | ![doom](docs/gif-picocalc/doom.gif) | ![aichat](docs/gif-picocalc/aichat.gif) |
 | **Книжки** | **PDF** | **GENERATOR** | **Вольтметр** |
 | ![reader](docs/gif-picocalc/reader.gif) | ![pdf](docs/gif-picocalc/pdf.gif) | ![generator](docs/gif-picocalc/generator.gif) | ![voltmeter](docs/gif-picocalc/voltmeter.gif) |
+| **Осцилограф** | | | |
+| ![oscilloscope](docs/gif-picocalc/oscilloscope.gif) | | | |
 
 *(GIF записані з фреймбуфера PicoCalc 1:1, 320×320, скриптом `tools/record_gif.py`.)*
 
