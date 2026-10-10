@@ -250,7 +250,7 @@ Zero через UART (`/dev/serial0`) або USB (`/dev/ttyACM*`; команда
 | GP0 (UART0 TX) | Zero GPIO 15 / RXD, пін 10 | — | UART до Zero (`/dev/serial0`) |
 | GP1 (UART0 RX) | Zero GPIO 14 / TXD, пін 8 | — | UART до Zero |
 | GND | Zero GND, пін 6 | — | спільна земля |
-| 5V (VBUS) | 5 В (Zero пін 2/4) або USB-C | — | живлення |
+| USB-C | порт 3 USB-хаба FE1.1S | — | живлення і USB (`/dev/ttyACM0`) |
 | — | J703.1 | 3V3_OUT (AXP2101) | 3,3 В для зовнішніх модулів |
 | **GP6** | J703.2 | **GP2**, пін 4 (J302) · PSRAM SIO0 | вихід генератора |
 | GP3 | J703.3 | **GP3**, пін 5 (J302) · PSRAM SIO1 | SPI0 TX (MOSI) |
@@ -265,7 +265,10 @@ Zero через UART (`/dev/serial0`) або USB (`/dev/ttyACM*`; команда
 заважає. Логіка лише 3,3 В; на сигнальні лінії J703 варто поставити послідовні резистори 100-220 Ом.
 Через PIO будь-яку з ліній можна перепризначити (I2S, UART, 1-Wire…).
 
-![Схема: Zero 2 W, Tiny 2350 і J703 PicoCalc](docs/wiring-picocalc.svg)
+Живлення: VSYS гнізда Pico (пін 39) → підвищувальний Pololu U3V40F5 → 5 В на Zero (пін 2/4) і на
+USB-хаб FE1.1S; хаб сидить на USB Zero, на його порту 1 - приймач клавіатури, на порту 3 - Tiny 2350.
+
+![Схема: Zero 2 W, Tiny 2350, Pololu, USB-хаб і J703 PicoCalc](docs/wiring-picocalc.svg)
 
 Керування із Zero - пункт меню GENERATOR або команда `siggen` (її ставить `install.sh`):
 

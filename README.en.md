@@ -251,7 +251,7 @@ in the zero mod they are not wired to the Zero (check with a meter in your build
 | GP0 (UART0 TX) | Zero GPIO 15 / RXD, pin 10 | — | UART to the Zero (`/dev/serial0`) |
 | GP1 (UART0 RX) | Zero GPIO 14 / TXD, pin 8 | — | UART to the Zero |
 | GND | Zero GND, pin 6 | — | common ground |
-| 5V (VBUS) | 5 V (Zero pin 2/4) or USB-C | — | power |
+| USB-C | port 3 of the FE1.1S USB hub | — | power and USB (`/dev/ttyACM0`) |
 | — | J703.1 | 3V3_OUT (AXP2101) | 3.3 V for external modules |
 | **GP6** | J703.2 | **GP2**, pin 4 (J302) · PSRAM SIO0 | generator output |
 | GP3 | J703.3 | **GP3**, pin 5 (J302) · PSRAM SIO1 | SPI0 TX (MOSI) |
@@ -266,7 +266,10 @@ pull-up to 3.3 V, so while GP20 is left unconnected the PSRAM is inactive and st
 3.3 V logic only; 100-220 Ohm series resistors on the J703 signal lines are a good idea. PIO can
 re-assign any of the lines (I2S, UART, 1-Wire…).
 
-![Wiring: Zero 2 W, Tiny 2350 and the PicoCalc's J703](docs/wiring-picocalc.svg)
+Power: the Pico socket's VSYS (pin 39) → Pololu U3V40F5 step-up → 5 V to the Zero (pin 2/4) and to
+the FE1.1S USB hub; the hub is on the Zero's USB, port 1 has the keyboard receiver, port 3 the Tiny 2350.
+
+![Wiring: Zero 2 W, Tiny 2350, Pololu, USB hub and the PicoCalc's J703](docs/wiring-picocalc.svg)
 
 From the Zero: the GENERATOR menu item or the `siggen` command (installed by `install.sh`):
 
