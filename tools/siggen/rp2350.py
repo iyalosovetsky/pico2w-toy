@@ -226,20 +226,24 @@ _scope = bytearray(2 * SCOPE_N)
 
 @micropython.viper
 def _capture(buf: ptr8, n: int, k: int):
-    """n samples from the ADC FIFO (8 bit), each the mean of k conversions."""
+    """n samples from the ADC FIFO (8 bit), each the mean of k conversions. Takes everything
+    the FIFO holds at each look, so the loop keeps up with 500 k conversions/s."""
     fcs = ptr32(0x400a0008)
     fifo = ptr32(0x400a000c)
     i = 0
+    acc = 0
+    j = 0
     while i < n:
-        acc = 0
-        j = 0
-        while j < k:
-            while (fcs[0] >> 16) & 0xF == 0:
-                pass
+        lvl = (fcs[0] >> 16) & 0xF
+        while lvl > 0 and i < n:
             acc += fifo[0] & 0xFF
+            lvl -= 1
             j += 1
-        buf[i] = acc // k
-        i += 1
+            if j == k:
+                buf[i] = acc // k
+                i += 1
+                acc = 0
+                j = 0
 
 
 def scope(rate, level=1.65):
