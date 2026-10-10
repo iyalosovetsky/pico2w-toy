@@ -212,7 +212,11 @@ BAUDS = [9600, 19200, 38400, 57600, 115200, 230400, 300, 1200, 2400, 4800]
 # protocol lines: (name, J703 pin) - drawn in the colour of the pin's ribbon wire
 PROTO_PINS = {"uart": [("RX", 4)], "i2c": [("SDA", 4), ("SCL", 5)],
               "spi": [("SCK", 6), ("MOSI", 3), ("MISO", 4), ("CS", 5)]}
-LTIMEBASES = [5e-6, 10e-6, 20e-6, 50e-6, 100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3]
+LTIMEBASES = [0.5e-6, 1e-6, 2e-6, 5e-6, 10e-6, 20e-6, 50e-6, 100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3]
+LT_NORMAL_MIN = 2           # LTIMEBASES index: 2 us/div (25.6 M/s) is the fastest without the fast mode
+LAROWS = ["Режим", "Час/под", "Синхр.", "Швидкий"]
+R_TURBO = 3
+LA_ROW_H = 11
 LOGIC_N = 512
 LOGIC_CH = ["2", "3", "4", "5", "6", "7"]   # J703 pins: GP6 GP3 GP4 GP5 GP2 GP26
 HAT = lcd.DEVICE == "hat144"
@@ -491,15 +495,17 @@ def measure_bits(bits, rate):
 def draw_logic(st, row, la, note, note_color):
     screen.fill(BG)
     text("АНАЛІЗАТОР " + st["board"], (64, 2), ACCENT, f_title, center=True)
-    values = ["аналізатор", time_text(LTIMEBASES[la["tb"]]), "J703.%s ↑" % LOGIC_CH[la["ch"]]]
-    for i, (name, value) in enumerate(zip(SROWS, values)):
-        y = 13 + i * ROW_H
+    values = ["аналізатор", time_text(LTIMEBASES[la["tb"]]), "J703.%s ↑" % LOGIC_CH[la["ch"]],
+              "200 МГц" if la["turbo"] else "вимк"]
+    for i, (name, value) in enumerate(zip(LAROWS, values)):
+        y = 12 + i * LA_ROW_H
         sel = i == row
         if sel:
-            pygame.draw.rect(screen, ACCENT, (2, y - 1, 124, ROW_H - 1), border_radius=3)
-        text(name, (6, y + 2), BG if sel else DIM, f_label)
-        text(value, (122, y), BG if sel else FG, f_value, right=True)
-    gx0, gx1, gy0, gy1 = 10, 126, 55, 96
+            pygame.draw.rect(screen, ACCENT, (2, y - 1, 124, LA_ROW_H - 1), border_radius=2)
+        text(name, (6, y + 1), BG if sel else DIM, f_label)
+        color = BG if sel else (ACCENT if i == R_TURBO and la["turbo"] else FG)
+        text(value, (122, y + 1), color, f_lbold, right=True)
+    gx0, gx1, gy0, gy1 = 10, 126, 57, 96
     w = gx1 - gx0
     lane = (gy1 - gy0) / len(LOGIC_CH)
     pygame.draw.rect(screen, (60, 60, 60), (gx0, gy0, w, gy1 - gy0), 1)
@@ -715,7 +721,7 @@ def main():
     last_key = None
     vm = {"input": 0, "value": None, "min": None, "max": None, "history": [], "next": 0}
     sc = {"tb": 3, "level": 1.6, "data": None, "rate": 1, "trig": False, "paused": False}
-    la = {"tb": 4, "ch": 0, "data": None, "rate": 1, "trig": False, "paused": False}
+    la = {"tb": 7, "ch": 0, "data": None, "rate": 1, "trig": False, "paused": False, "turbo": False}
     dc = {"proto": 0, "baud": 0, "spi": 0, "test": True, "lines": None, "busy": False}
     lt = {"model": 0, "pattern": 0, "result": None, "busy": False, "w": 240, "h": 240, "x": 0, "y": 0, "rot": 0,
           "bl": 15, "pick": 0, "profiles": load_profiles(), "name": "", "top": 0}   # a dim backlight to start
@@ -800,8 +806,9 @@ def main():
 
     def capture_logic():
         nonlocal note, note_color, note_until
-        rate = LOGIC_N / SCOPE_DIVS / LTIMEBASES[la["tb"]]
-        reply = link.ask("logic %g %d" % (rate, la["ch"]), 2 * LOGIC_N / rate + 1.5) if link else None
+        rate = min(LOGIC_N / SCOPE_DIVS / LTIMEBASES[la["tb"]], 100e6 if la["turbo"] else 26e6)
+        reply = link.ask("logic %g %d%s" % (rate, la["ch"], " turbo" if la["turbo"] else ""),
+                         2 * LOGIC_N / rate + 2) if link else None
         got = parse_logic(reply)
         if got is None:
             la["data"] = None
@@ -896,9 +903,14 @@ def main():
             return
         if mode == "logic":
             if row == R_TIME:
-                la["tb"] = min(max(0, la["tb"] + sign), len(LTIMEBASES) - 1)
+                lo = 0 if la["turbo"] else LT_NORMAL_MIN
+                la["tb"] = min(max(lo, la["tb"] + sign), len(LTIMEBASES) - 1)
             elif row == R_TRIG:
                 la["ch"] = (la["ch"] + sign) % len(LOGIC_CH)
+            elif row == R_TURBO:
+                la["turbo"] = not la["turbo"]
+                if not la["turbo"]:
+                    la["tb"] = max(la["tb"], LT_NORMAL_MIN)
             la["paused"] = False
             return
         if mode == "scope":
@@ -955,7 +967,7 @@ def main():
                 return
             if st is None:
                 continue
-            rows = {"gen": ROWS, "volt": VROWS, "scope": SROWS, "logic": SROWS, "decode": DROWS,
+            rows = {"gen": ROWS, "volt": VROWS, "scope": SROWS, "logic": LAROWS, "decode": DROWS,
                     "lcd": LROWS}[mode]
             if mode == "lcd" and row == R_NAME and not hat and k in NAME_KEYS:
                 typing = ((typing if typing is not None else lt["name"]) + NAME_KEYS[k])[:16]
@@ -1049,7 +1061,7 @@ def main():
         key = (mode, row, typing, note, note_color, repr(st),
                vm["value"], id(vm["history"]), vm["input"],
                id(sc["data"]), sc["tb"], sc["level"], sc["paused"],
-               id(la["data"]), la["tb"], la["ch"], la["paused"],
+               id(la["data"]), la["tb"], la["ch"], la["paused"], la["turbo"],
                id(dc["lines"]), dc["proto"], dc["baud"], dc["spi"], dc["test"], dc["busy"],
                tuple(lt[k] for k in ("model", "pattern", "w", "h", "x", "y", "rot", "bl", "pick", "name", "busy",
                                      "result")), len(lt["profiles"]))
@@ -1062,7 +1074,7 @@ def main():
         elif mode == "scope" and st:
             draw_scope(st, min(row, len(SROWS) - 1), sc, note, note_color)
         elif mode == "logic" and st:
-            draw_logic(st, min(row, len(SROWS) - 1), la, note, note_color)
+            draw_logic(st, min(row, len(LAROWS) - 1), la, note, note_color)
         elif mode == "decode" and st:
             draw_decode(st, min(row, len(DROWS) - 1), dc, note, note_color)
         elif mode == "lcd" and st:

@@ -25,10 +25,12 @@
 #                interval), lined up on a rising edge through <level> volts (default 1.65)
 #                if there is one; answers
 #                "ok scope rate=.. n=256 trig=1|0 data=<hex>", 0..255 = 0..3.3 V
-#   logic <rate> [ch]   logic analyzer on the J703 lines (bit 0..5 = J703.2..7 = GP6 GP3 GP4 GP5
+#   logic <rate> [ch] [turbo]   logic analyzer on the J703 lines (bit 0..5 = J703.2..7 = GP6 GP3 GP4 GP5
 #                GP2 GP26): 512 samples at <rate> (2.5 k .. 25 M samples/s, a PIO state machine +
 #                DMA), lined up on a rising edge of channel <ch> (0..5, default 0) if there is
-#                one; answers "ok logic rate=.. n=512 trig=1|0 data=<hex, a byte per sample>"
+#                one; answers "ok logic rate=.. n=512 trig=1|0 turbo=0|1 data=<hex, a byte per sample>";
+#                "turbo": the fast mode - the clock goes to 200 MHz for the capture (the
+#                generator output is re-made for it), up to 100 M samples/s
 #   decode uart <baud> [pin] [test] | decode i2c [test] | decode spi <mode 0-3> [test]
 #                protocol decoder on the J703 lines: waits (2 s) for the first falling edge -
 #                UART start bit on <pin> (GPIO, default GP4 = J703.4), I2C SDA (GP4 = J703.4,
@@ -66,7 +68,8 @@ SQ_FMIN, SQ_FMAX = 1, 10000000
 DDS_FMIN, DDS_FMAX = 1, 20000
 SQ_PWM_MIN = 10                 # below this the square wave comes from the DMA path
 SHAPES = ("square", "sine", "triangle", "saw")
-CLK = 150000000
+CLK = 150000000                 # the normal system clock
+TURBO_HZ = 200000000            # the logic analyzer's fast mode (RP2350 is rated for 200 MHz)
 TOP = 255                       # DDS carrier: 8 bits, CLK / 256 = 586 kHz
 PWM_SLICE = 0x400a8000 + 0x14 * ((OUT_PIN >> 1) & 7)    # CSR, DIV, CTR, CC, TOP (RP2350A)
 PWM_CC = PWM_SLICE + 0x0C       # 16-bit DMA writes land in both A and B
@@ -141,14 +144,15 @@ def log2(n):
 def start_dds(level, freq):
     """DMA the wave table into the PWM duty, paced by the DMA timer."""
     stop_dma()
-    pwm.init(freq=CLK // (TOP + 1), duty_u16=0)
+    clk = machine.freq()                    # 150 MHz, or 200 in the logic analyzer's fast mode
+    pwm.init(freq=clk // (TOP + 1), duty_u16=0)
     mem32[PWM_SLICE + 0x04] = 1 << 4        # DIV 1.0
     mem32[PWM_SLICE + 0x10] = TOP
     # table length: a power of two, as long as the DMA timer (<= CLK) can play it
     n = NMAX
-    while n > 16 and n * freq > CLK / 2:
+    while n > 16 and n * freq > clk / 2:
         n //= 2
-    x, y = ratio(n * freq / CLK)
+    x, y = ratio(n * freq / clk)
     if x == 0:
         raise ValueError("frequency too low")
     buf = array.array("H", (min(TOP + 1, round((TOP + 1) * level(i / n))) for i in range(n)))
@@ -309,12 +313,31 @@ def _pack(src: ptr32, dst: ptr8, start: int, n: int):
         i += 1
 
 
-def logic(rate, ch=0):
+def set_clock(hz):
+    """Change the system clock and re-make the generator output for it (a short glitch)."""
+    if machine.freq() != hz:
+        machine.freq(hz)
+        if state["on"]:
+            apply()
+
+
+def logic(rate, ch=0, turbo=False):
     rate = float(rate)
-    if not 2500 <= rate <= 25000000:     # the PIO clock divider stops at 150 MHz / 65536
-        return "err logic rate 2500..25000000"
+    top = 100000000 if turbo else 26000000
+    if not 2500 <= rate <= top:          # the PIO clock divider stops at 150 MHz / 65536
+        return "err logic rate 2500..%d%s" % (top, "" if turbo else " (fast mode: up to 100 M)")
     if not 0 <= ch < len(LOGIC_PINS):
         return "err logic channel 0..5"
+    if turbo:
+        set_clock(TURBO_HZ)
+    try:
+        return _logic_capture(rate, ch, turbo)
+    finally:
+        if turbo:
+            set_clock(CLK)
+
+
+def _logic_capture(rate, ch, turbo):
     for p in LOGIC_PINS:            # inputs readable: our own output (GP6) keeps driving
         if p != OUT_PIN:
             Pin(p, Pin.IN)
@@ -342,7 +365,8 @@ def logic(rate, ch=0):
             start, trig = i - pre, 1
             break
     _pack(_logic, _logic_out, start, LOGIC_N)
-    return "ok logic rate=%g n=%d trig=%d data=%s" % (rate, LOGIC_N, trig, binascii.hexlify(_logic_out).decode())
+    return "ok logic rate=%g n=%d trig=%d turbo=%d data=%s" % (rate, LOGIC_N, trig, turbo,
+                                                              binascii.hexlify(_logic_out).decode())
 
 
 DEC_WORDS = 8192                 # x 4 samples (8 lines, GP0-7, a byte each)
@@ -1056,8 +1080,10 @@ def command(line):
             return "ok bl %d" % int(number(args[0]))
         if cmd == "decode":
             return decode(args)
-        if cmd == "logic" and 1 <= len(args) <= 2:
-            return logic(number(args[0]), int(args[1]) if len(args) > 1 else 0)
+        if cmd == "logic" and 1 <= len(args) <= 3:
+            turbo = "turbo" in args
+            rest = [a for a in args if a != "turbo"]
+            return logic(number(rest[0]), int(rest[1]) if len(rest) > 1 else 0, turbo)
         if cmd == "scope" and 1 <= len(args) <= 2:
             return scope(number(args[0]), float(args[1]) if len(args) > 1 else 1.65)
         if cmd == "shape" and len(args) == 1 and args[0].lower() in SHAPES:

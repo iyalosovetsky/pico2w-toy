@@ -282,7 +282,8 @@ oscilloscope are on the board's ADC input (J703.7):
 
 and the **logic analyzer** - the six J703 lines (2-7 = GP6 GP3 GP4 GP5 GP2 GP26, J703.2 being the
 generator's own output): an RP2350 PIO state machine samples all GPIO every tick and DMA stores them
-(up to 25 M samples/s), 512 samples per sweep, 5 us to 20 ms per division, rising-edge trigger on a
+(up to 26 M samples/s; in the **fast mode** the board runs at 200 MHz for the capture - up to 100 M
+samples/s), 512 samples per sweep, 0.5 us to 20 ms per division, rising-edge trigger on a
 chosen line, its frequency and duty, pause; and the **I2C / SPI / UART decoder** - the board waits for
 the protocol's first edge, captures 32768 samples with the same PIO + DMA and decodes them itself:
 UART 8N1 (RX - J703.4), I2C (SDA - J703.4, SCL - J703.5: START, address R/W, bytes, ACK/NACK, STOP),
@@ -314,6 +315,7 @@ siggen probe                 # the board reads its output back: mean level in te
 siggen adc                   # voltages on the ADC inputs (RP2350: GP26 = J703.7, GP27-29)
 siggen scope 25.6k 1.6       # one oscilloscope capture: sample rate, trigger level (V)
 siggen logic 1M 0            # one logic analyzer capture: sample rate, trigger channel
+siggen logic 100M 0 turbo    # the fast mode: 200 MHz for the capture, up to 100 M samples/s
 siggen decode uart 9600 test # UART / I2C / SPI decoder (test - the board sends its own traffic)
 siggen lcd st7789-240x240 grid   # display test: model, picture (all colors bars grid text)
 siggen power                 # is the board dozing: 48 MHz after 30 s without commands, output off
