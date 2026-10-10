@@ -165,7 +165,7 @@ def _dejavu(name, px):
 # the PicoCalc's J703 (left side of the case, the upper row of 8; pin 1 at the top - from the
 # mainboard V2.0 Gerbers) as wired for the signal generator board
 # the colours are those of a standard ribbon cable: 1 red ... 8 white
-J703_PINS = [("3,3 В", "черв.", (220, 40, 40)), ("ген. GP6", "оранж.", (255, 140, 0)),
+J703_PINS = [("3,3 В", "черв.", (220, 40, 40)), ("ген. · BL GP6", "оранж.", (255, 140, 0)),
              ("MOSI GP3", "жовт.", (240, 220, 0)), ("MISO SDA GP4", "зел.", (40, 180, 60)),
              ("CS SCL GP5", "син.", (40, 110, 255)), ("SCK GP2", "фіол.", (160, 70, 230)),
              ("АЦП GP26", "сірий", (150, 150, 150)), ("GND", "білий", (240, 240, 240))]
@@ -190,7 +190,7 @@ def j703_image(f, fb):
         else:
             pygame.draw.circle(img, color, (12.5, cy), 2.5)
         img.blit(fb.render(str(i + 1), True, color), (20, y))
-        img.blit(f.render(gp, True, FG), (30, y))
+        img.blit(f.render(gp, True, color), (30, y))   # the function in its wire's colour
         name = f.render(use, True, color)
         img.blit(name, (118 - name.get_width(), y))
     return img

@@ -38,7 +38,9 @@
 #                per byte, | between CS frames) or "ok decode <proto> none"
 #   lcd <model> [all|colors|bars|grid|text] [w=.. h=.. x=.. y=.. r=0|90|180|270]   display
 #                tester on J703 (w / h: the panel size, x / y: the window offset - in the
-#                controller's portrait frame, instead of the model's; r: rotation): SPI SCK .6 MOSI .3 CS .5
+#                controller's portrait frame, instead of the model's; r: rotation; b: TFT
+#                backlight 0..100 % on J703.2)
+#   bl <0..100>  TFT backlight brightness on J703.2 (PWM; the generator output goes off): SPI SCK .6 MOSI .3 CS .5
 #                DC .4 RST .7 (e-Paper BUSY .2), I2C SDA .4 SCL .5; models: st7789-240x240,
 #                -240x320, -135x240, -170x320, -172x320, -240x280, ili9341, ili9488, epd7in5v2,
 #                ssd1306-128x64, ssd1306-128x32, sh1106
@@ -553,8 +555,18 @@ def decode(args):
 
 # ---------------------------------------------------------------- display tester
 # Wiring on J703: SPI SCK GP2 (.6), MOSI GP3 (.3), CS GP5 (.5), DC GP4 (.4), RST GP26 (.7),
-# e-Paper BUSY GP6 (.2 - the generator output, switched off for it); I2C SDA GP4 (.4), SCL GP5 (.5).
-D_SCK, D_MOSI, D_CS, D_DC, D_RST, D_BUSY, D_SDA, D_SCL = 2, 3, 5, 4, 26, 6, 4, 5
+# TFT backlight BL GP6 (.2, PWM) / e-Paper BUSY GP6 - the generator output, switched off for them;
+# I2C SDA GP4 (.4), SCL GP5 (.5).
+D_SCK, D_MOSI, D_CS, D_DC, D_RST, D_BUSY, D_SDA, D_SCL, D_BL = 2, 3, 5, 4, 26, 6, 4, 5, 6
+
+
+def backlight(percent):
+    """TFT backlight on J703.2: a 1 kHz PWM on the generator's pin (the generator goes off)."""
+    if state["on"]:
+        state["on"] = False
+        apply()
+    pwm.init(freq=1000, duty_u16=round(65535 * min(100, max(0, percent)) / 100))
+    show()
 
 # model -> (driver, width, height, x offset, y offset)
 DISPLAYS = {
@@ -970,9 +982,15 @@ def lcd_test(args):
         return "err lcd size: %s" % ("h - a multiple of 8" if kind != "epd" else "w - a multiple of 8")
     t = time.ticks_ms()
     _adc_pins_taken[0] = True
+    try:
+        bl = int(opts.get("b", 100))
+    except ValueError:
+        return "err lcd: b= takes 0..100"
     if kind == "epd" and state["on"]:   # BUSY is on the generator's pin
         state["on"] = False
         apply()
+    if kind in ("st7789", "ili9341", "ili9488"):
+        backlight(bl)
     if kind in ("st7789", "ili9341", "ili9488"):
         d = Tft(kind, w, h, xo, yo, rot)
     elif kind == "epd":
@@ -1019,6 +1037,9 @@ def command(line):
             return adc()
         if cmd == "lcd":
             return lcd_test(args)
+        if cmd == "bl" and len(args) == 1:
+            backlight(int(number(args[0])))
+            return "ok bl %d" % int(number(args[0]))
         if cmd == "decode":
             return decode(args)
         if cmd == "logic" and 1 <= len(args) <= 2:

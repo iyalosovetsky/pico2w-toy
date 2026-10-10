@@ -162,9 +162,9 @@ R_TIME, R_TRIG = 1, 2
 TIMEBASES = [100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3]  # s per division
 SCOPE_N, SCOPE_DIVS = 256, 10
 MODES = ["gen", "volt", "scope", "logic", "decode", "lcd"]
-LROWS = ["Режим", "Дисплей", "Картинка", "Поворот", "Ширина", "Висота", "Зсув X", "Зсув Y"]
-R_MODEL, R_PATTERN, R_ROT, R_W, R_H, R_X, R_Y = 1, 2, 3, 4, 5, 6, 7
-LROW_H = 10
+LROWS = ["Режим", "Дисплей", "Картинка", "Поворот", "Підсвітка", "Ширина", "Висота", "Зсув X", "Зсув Y"]
+R_MODEL, R_PATTERN, R_ROT, R_BL, R_W, R_H, R_X, R_Y = 1, 2, 3, 4, 5, 6, 7, 8
+LROW_H = 9
 ROTATIONS = [0, 90, 180, 270]
 # model, name, default width, height, x offset, y offset (as in tools/siggen/rp2350.py)
 LCD_MODELS = [("st7789-240x240", "ST7789", 240, 240, 0, 0), ("st7789-240x320", "ST7789", 240, 320, 0, 0),
@@ -175,13 +175,14 @@ LCD_MODELS = [("st7789-240x240", "ST7789", 240, 240, 0, 0), ("st7789-240x320", "
               ("ssd1306-128x32", "SSD1306", 128, 32, 0, 0), ("sh1106", "SH1106", 128, 64, 2, 0)]
 LCD_PATTERNS = [("all", "усе по черзі"), ("colors", "кольори"), ("bars", "смуги"), ("grid", "сітка, рамка"),
                 ("text", "текст")]
-LCD_SPI_PINS = {6: "out", 3: "out", 5: "out", 4: "out", 7: "out"}
+LCD_SPI_PINS = {6: "out", 3: "out", 5: "out", 4: "out", 7: "out", 2: "out"}   # 2 = BL (TFT)
 DROWS = ["Режим", "Протокол", "Параметр", "Джерело"]
 R_PROTO, R_PARAM, R_SOURCE = 1, 2, 3
 PROTOS = ["uart", "i2c", "spi"]
 BAUDS = [9600, 19200, 38400, 57600, 115200, 230400, 300, 1200, 2400, 4800]
-PROTO_PINS = {"uart": "RX - J703.4", "i2c": "SDA - J703.4, SCL - J703.5",
-              "spi": "SCK .6  MOSI .3  MISO .4  CS .5"}
+# protocol lines: (name, J703 pin) - drawn in the colour of the pin's ribbon wire
+PROTO_PINS = {"uart": [("RX", 4)], "i2c": [("SDA", 4), ("SCL", 5)],
+              "spi": [("SCK", 6), ("MOSI", 3), ("MISO", 4), ("CS", 5)]}
 LTIMEBASES = [5e-6, 10e-6, 20e-6, 50e-6, 100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3]
 LOGIC_N = 512
 LOGIC_CH = ["2", "3", "4", "5", "6", "7"]   # J703 pins: GP6 GP3 GP4 GP5 GP2 GP26
@@ -236,6 +237,17 @@ def draw_j703(uses, gen_on, strong_gen=False, y=104):
             pygame.draw.polygon(screen, arrow, [(cx - 2.5, y), (cx + 2.5, y), (cx, y + 3)])
         elif use == "io":
             pygame.draw.polygon(screen, arrow, [(cx, y), (cx + 2, y + 1.5), (cx, y + 3), (cx - 2, y + 1.5)])
+
+
+def pin_labels(items, y):
+    """A centred row of "NAME pin" labels, each in the colour of its ribbon wire."""
+    parts = ["%s %d" % (name, pin) for name, pin in items]
+    gap = f_small.size("  ")[0]
+    total = sum(f_small.size(p)[0] for p in parts) + gap * (len(parts) - 1)
+    x = 64 - total / 2
+    for (name, pin), part in zip(items, parts):
+        text(part, (x, y), WIRE[pin], f_small)
+        x += f_small.size(part)[0] + gap
 
 
 def hint_line(s):
@@ -548,7 +560,7 @@ def draw_decode(st, row, dc, note, note_color):
         text(name, (6, y + 2), BG if sel else DIM, f_label)
         text(value, (122, y), BG if sel else FG, f_value, right=True)
     y = 70
-    text(PROTO_PINS[proto], (64, y), DIM, f_small, center=True)
+    pin_labels(PROTO_PINS[proto], y)
     y += f_small.get_linesize()
     if dc["busy"]:
         text("чекаю на трафік…", (64, y + 4), ACCENT, f_small, center=True)
@@ -564,15 +576,17 @@ def draw_decode(st, row, dc, note, note_color):
 
 
 def lcd_wiring(model):
+    """(J703 uses, rows of (name, pin) labels) for a display model."""
     if model.startswith(("ssd1306", "sh1106")):
-        return {4: "io", 5: "io"}, ["SDA - J703.4, SCL - J703.5", "VCC - .1 (3,3 В), GND - .8"]
+        return {4: "io", 5: "io"}, [[("SDA", 4), ("SCL", 5), ("VCC", 1), ("GND", 8)]]
     pins = dict(LCD_SPI_PINS)
-    lines = ["SCK .6  MOSI .3  CS .5  DC .4  RST .7"]
+    rows = [[("SCK·SCL", 6), ("MOSI·SDA", 3), ("CS", 5)]]
     if model == "epd7in5v2":
         pins[2] = "in"
-        lines.append("BUSY .2 (генератор вимкнеться)")
-    lines.append("VCC .1 (3,3 В), GND .8, BL - на 3,3 В")
-    return pins, lines
+        rows.append([("DC", 4), ("RST", 7), ("BUSY", 2), ("VCC", 1), ("GND", 8)])
+    else:
+        rows.append([("DC", 4), ("RST·RES", 7), ("BL", 2), ("VCC", 1), ("GND", 8)])
+    return pins, rows
 
 
 def draw_lcd(st, row, lt, note, note_color, typing=None):
@@ -581,9 +595,10 @@ def draw_lcd(st, row, lt, note, note_color, typing=None):
     model, name, dw, dh, dx, dy = LCD_MODELS[lt["model"]]
     size = (lt["w"], lt["h"], lt["x"], lt["y"])
     default = size == (dw, dh, dx, dy)
-    values = (["дисплей", name if default else name + " *", LCD_PATTERNS[lt["pattern"]][1], "%d°" % lt["rot"]]
-              + [str(v) for v in size])
-    names = ["Режим", "LCD", "Тест", "Поворот", "Ширина", "Висота", "Зсув X", "Зсув Y"] if HAT else LROWS
+    tft = not model.startswith(("ssd1306", "sh1106", "epd"))
+    values = (["дисплей", name if default else name + " *", LCD_PATTERNS[lt["pattern"]][1], "%d°" % lt["rot"],
+               "%d %%" % lt["bl"] if tft else "—"] + [str(v) for v in size])
+    names = ["Режим", "LCD", "Тест", "Поворот", "BL", "Ширина", "Висота", "Зсув X", "Зсув Y"] if HAT else LROWS
     for i, (rname, value) in enumerate(zip(names, values)):
         y = 12 + i * LROW_H
         sel = i == row
@@ -594,21 +609,31 @@ def draw_lcd(st, row, lt, note, note_color, typing=None):
             value = typing + "_"
         changed = i >= R_W and size[i - R_W] != (dw, dh, dx, dy)[i - R_W]
         text(value, (122, y + 1), BG if sel else (ACCENT if changed else FG), f_lbold, right=True)
-    pins, lines = lcd_wiring(model)
-    y = 92
-    for line in lines[:-1]:   # the power line is in the help
-        text(line, (64, y), DIM, f_small, center=True)
+    pins, rows = lcd_wiring(model)
+    y = 93
+    for items in rows:
+        pin_labels(items, y)
         y += f_small.get_linesize()
-    if lt["busy"]:
-        text("малюю…" if model != "epd7in5v2" else "оновлюю e-Paper (~5 с)…", (64, y), ACCENT, f_small, center=True)
-    elif lt["result"]:
-        text(lt["result"], (64, y), GREEN, f_small, center=True)
-    elif note:
-        for i, part in enumerate(wrap_words(note.split(), f_small, 120)[:3]):
-            text(part, (64, y + i * f_small.get_linesize()), note_color, f_small, center=True)
     draw_j703(pins, st["on"] and model != "epd7in5v2")
-    hint_line("←/→, натиск - показати, KEY3" if HAT else "←/→ змінити, Enter - показати, Esc - назад")
+    # the result / error takes the hint line
+    if lt["busy"]:
+        text("малюю…" if model != "epd7in5v2" else "оновлюю e-Paper (~5 с)…", (64, 118), ACCENT, f_small, center=True)
+    elif lt["result"]:
+        text(lt["result"], (64, 118), GREEN, f_small, center=True)
+    elif note:
+        text(fit_text(note, 124), (64, 118), note_color, f_small, center=True)
+    else:
+        hint_line("←/→, натиск - показати, KEY3" if HAT else "←/→ змінити, Enter - показати, Esc - назад")
     lcd.flip()
+
+
+def fit_text(s, width):
+    """Shorten s with an ellipsis to fit width."""
+    if f_small.size(s)[0] <= width:
+        return s
+    while s and f_small.size(s + "…")[0] > width:
+        s = s[:-1]
+    return s + "…"
 
 
 def parse_adc(reply):
@@ -649,7 +674,8 @@ def main():
     sc = {"tb": 3, "level": 1.6, "data": None, "rate": 1, "trig": False, "paused": False}
     la = {"tb": 4, "ch": 0, "data": None, "rate": 1, "trig": False, "paused": False}
     dc = {"proto": 0, "baud": 0, "spi": 0, "test": True, "lines": None, "busy": False}
-    lt = {"model": 0, "pattern": 0, "result": None, "busy": False, "w": 240, "h": 240, "x": 0, "y": 0, "rot": 0}
+    lt = {"model": 0, "pattern": 0, "result": None, "busy": False, "w": 240, "h": 240, "x": 0, "y": 0, "rot": 0,
+          "bl": 100}
 
     def lcd_defaults():
         _, _, lt["w"], lt["h"], lt["x"], lt["y"] = LCD_MODELS[lt["model"]]
@@ -659,8 +685,9 @@ def main():
         model = LCD_MODELS[lt["model"]][0]
         lt["busy"], lt["result"] = True, None
         draw_lcd(st, min(row, len(LROWS) - 1), lt, note, note_color)
-        reply = link.ask("lcd %s %s w=%d h=%d x=%d y=%d r=%d" % (model, LCD_PATTERNS[lt["pattern"]][0], lt["w"],
-                                                                  lt["h"], lt["x"], lt["y"], lt["rot"]), 40) if link else None
+        reply = link.ask("lcd %s %s w=%d h=%d x=%d y=%d r=%d b=%d" % (model, LCD_PATTERNS[lt["pattern"]][0], lt["w"],
+                                                                       lt["h"], lt["x"], lt["y"], lt["rot"], lt["bl"]),
+                         40) if link else None
         lt["busy"] = False
         if reply and reply.startswith("ok lcd"):
             w = reply.split()
@@ -763,6 +790,12 @@ def main():
                 lt["pattern"] = (lt["pattern"] + sign) % len(LCD_PATTERNS)
             elif row == R_ROT:
                 lt["rot"] = ROTATIONS[(ROTATIONS.index(lt["rot"]) + sign) % len(ROTATIONS)]
+            elif row == R_BL:
+                if not LCD_MODELS[lt["model"]][0].startswith(("ssd1306", "sh1106", "epd")):
+                    lt["bl"] = min(100, max(0, lt["bl"] + sign * (1 if fine else 10)))
+                    if link:
+                        link.ask("bl %d" % lt["bl"])   # at once, without redrawing
+                    send("get")                         # the generator went off
             elif row >= R_W:
                 key = "whxy"[row - R_W]
                 lo = 0 if key in "xy" else 8
