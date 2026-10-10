@@ -316,6 +316,7 @@ siggen scope 25.6k 1.6       # one oscilloscope capture: sample rate, trigger le
 siggen logic 1M 0            # one logic analyzer capture: sample rate, trigger channel
 siggen decode uart 9600 test # UART / I2C / SPI decoder (test - the board sends its own traffic)
 siggen lcd st7789-240x240 grid   # display test: model, picture (all colors bars grid text)
+siggen power                 # is the board dozing: 48 MHz after 30 s without commands, output off
 siggen flash tools/siggen/rp2350.py   # update the board's program over the UART or USB
 ```
 

@@ -1030,6 +1030,10 @@ def command(line):
             return "pong"
         if cmd == "power":
             return power_status()
+        if cmd == "clocks":              # diagnostics: clk_peri / clk_usb / clk_adc CTRL and DIV
+            c = 0x40010000
+            return "ok clocks sys=%d %s" % (machine.freq(), " ".join(
+                "%s=%08x/%08x" % (n, mem32[c + o], mem32[c + o + 4]) for n, o in (("peri", 0x48), ("usb", 0x60), ("adc", 0x6C))))
         if cmd == "doze":                # for testing: doze now
             doze()
             return power_status()

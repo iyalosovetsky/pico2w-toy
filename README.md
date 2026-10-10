@@ -313,6 +313,7 @@ siggen scope 25.6k 1.6       # одне захоплення осцилогра�
 siggen logic 1M 0            # одне захоплення логічного аналізатора: частота вибірок, канал синхронізації
 siggen decode uart 9600 test # декодер UART / I2C / SPI (test - плата сама шле трафік)
 siggen lcd st7789-240x240 grid   # тест дисплея: модель, картинка (all colors bars grid text)
+siggen power                 # чи плата «дрімає»: 48 МГц через 30 с без команд, коли сигнал вимкнено
 siggen flash tools/siggen/rp2350.py   # оновити програму на платі через UART або USB
 ```
 
