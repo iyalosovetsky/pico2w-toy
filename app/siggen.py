@@ -162,9 +162,38 @@ R_TIME, R_TRIG = 1, 2
 TIMEBASES = [100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3]  # s per division
 SCOPE_N, SCOPE_DIVS = 256, 10
 MODES = ["gen", "volt", "scope", "logic", "decode", "lcd"]
-LROWS = ["Режим", "Дисплей", "Картинка", "Поворот", "Підсвітка", "Ширина", "Висота", "Зсув X", "Зсув Y"]
-R_MODEL, R_PATTERN, R_ROT, R_BL, R_W, R_H, R_X, R_Y = 1, 2, 3, 4, 5, 6, 7, 8
-LROW_H = 9
+LROWS = ["Режим", "Назва", "Дисплей", "Картинка", "Поворот", "Підсвітка", "Ширина", "Висота", "Зсув X", "Зсув Y"]
+R_NAME, R_MODEL, R_PATTERN, R_ROT, R_BL, R_W, R_H, R_X, R_Y = 1, 2, 3, 4, 5, 6, 7, 8, 9
+LROW_H, LROWS_SHOWN = 10, 8      # the rows scroll
+PROFILES_FILE = os.path.expanduser("~/.config/lcdtoy/displays.json")
+NAME_KEYS = {getattr(pygame, "K_" + c): c.upper() for c in "abcdefghijklmnopqrstuvwxyz"}
+NAME_KEYS.update({getattr(pygame, "K_%d" % d): str(d) for d in range(10)})
+NAME_KEYS.update({pygame.K_MINUS: "-", pygame.K_PERIOD: ".", pygame.K_SPACE: " "})
+
+
+def load_profiles():
+    """The saved display profiles: [{name, model, w, h, x, y, rot, bl, pattern}, ...]."""
+    import json
+    try:
+        with open(PROFILES_FILE) as f:
+            data = json.load(f)
+        models = [m[0] for m in LCD_MODELS]
+        return [p for p in data if p.get("model") in models and p.get("name")]
+    except (OSError, ValueError):
+        return []
+
+
+def save_profiles(profiles):
+    import json
+    try:
+        os.makedirs(os.path.dirname(PROFILES_FILE), exist_ok=True)
+        tmp = PROFILES_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(profiles, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, PROFILES_FILE)
+        return True
+    except OSError:
+        return False
 ROTATIONS = [0, 90, 180, 270]
 # model, name, default width, height, x offset, y offset (as in tools/siggen/rp2350.py)
 LCD_MODELS = [("st7789-240x240", "ST7789", 240, 240, 0, 0), ("st7789-240x320", "ST7789", 240, 320, 0, 0),
@@ -596,19 +625,28 @@ def draw_lcd(st, row, lt, note, note_color, typing=None):
     size = (lt["w"], lt["h"], lt["x"], lt["y"])
     default = size == (dw, dh, dx, dy)
     tft = not model.startswith(("ssd1306", "sh1106", "epd"))
-    values = (["дисплей", name if default else name + " *", LCD_PATTERNS[lt["pattern"]][1], "%d°" % lt["rot"],
+    prof = lt["profiles"][lt["pick"] - len(LCD_MODELS)] if lt["pick"] >= len(LCD_MODELS) else None
+    shown = ("★ " + prof["name"]) if prof else (name if default else name + " *")
+    values = (["дисплей", lt["name"] or "—", shown, LCD_PATTERNS[lt["pattern"]][1], "%d°" % lt["rot"],
                "%d %%" % lt["bl"] if tft else "—"] + [str(v) for v in size])
-    names = ["Режим", "LCD", "Тест", "Поворот", "BL", "Ширина", "Висота", "Зсув X", "Зсув Y"] if HAT else LROWS
-    for i, (rname, value) in enumerate(zip(names, values)):
-        y = 12 + i * LROW_H
+    names = ["Режим", "Назва", "LCD", "Тест", "Поворот", "BL", "Ширина", "Висота", "Зсув X", "Зсув Y"] if HAT else LROWS
+    lt["top"] = min(max(lt["top"], row - LROWS_SHOWN + 1), row)   # keep the selection in view
+    for i in range(lt["top"], min(lt["top"] + LROWS_SHOWN, len(names))):
+        rname, value = names[i], values[i]
+        y = 12 + (i - lt["top"]) * LROW_H
         sel = i == row
         if sel:
             pygame.draw.rect(screen, ACCENT, (2, y - 1, 124, LROW_H - 1), border_radius=2)
         text(rname, (6, y + 1), BG if sel else DIM, f_small if HAT else f_label)
-        if sel and typing is not None and i >= R_W:
+        if sel and typing is not None and (i >= R_W or i == R_NAME):
             value = typing + "_"
         changed = i >= R_W and size[i - R_W] != (dw, dh, dx, dy)[i - R_W]
-        text(value, (122, y + 1), BG if sel else (ACCENT if changed else FG), f_lbold, right=True)
+        color = BG if sel else (ACCENT if changed else (C_IN if i == R_NAME and lt["name"] else FG))
+        text(fit_text(value, 70) if i != R_MODEL else value, (122, y + 1), color, f_lbold, right=True)
+    if lt["top"] > 0:   # scroll marks
+        pygame.draw.polygon(screen, DIM, [(64, 9), (61, 11.5), (67, 11.5)])
+    if lt["top"] + LROWS_SHOWN < len(names):
+        pygame.draw.polygon(screen, DIM, [(61, 90), (67, 90), (64, 92.5)])
     pins, rows = lcd_wiring(model)
     y = 93
     for items in rows:
@@ -622,6 +660,10 @@ def draw_lcd(st, row, lt, note, note_color, typing=None):
         text(lt["result"], (64, 118), GREEN, f_small, center=True)
     elif note:
         text(fit_text(note, 124), (64, 118), note_color, f_small, center=True)
+    elif row == R_NAME:
+        hint_line("назва + Enter - зберегти профіль")
+    elif row == R_MODEL and prof:
+        hint_line("Del - видалити профіль, Enter - показати")
     else:
         hint_line("←/→, натиск - показати, KEY3" if HAT else "←/→ змінити, Enter - показати, Esc - назад")
     lcd.flip()
@@ -675,10 +717,48 @@ def main():
     la = {"tb": 4, "ch": 0, "data": None, "rate": 1, "trig": False, "paused": False}
     dc = {"proto": 0, "baud": 0, "spi": 0, "test": True, "lines": None, "busy": False}
     lt = {"model": 0, "pattern": 0, "result": None, "busy": False, "w": 240, "h": 240, "x": 0, "y": 0, "rot": 0,
-          "bl": 100}
+          "bl": 100, "pick": 0, "profiles": load_profiles(), "name": "", "top": 0}
+    model_index = {m[0]: i for i, m in enumerate(LCD_MODELS)}
 
     def lcd_defaults():
         _, _, lt["w"], lt["h"], lt["x"], lt["y"] = LCD_MODELS[lt["model"]]
+
+    def lcd_pick(i):
+        """Choose a built-in model (its defaults) or a saved profile (its settings)."""
+        n = len(LCD_MODELS) + len(lt["profiles"])
+        lt["pick"] = i % n
+        if lt["pick"] < len(LCD_MODELS):
+            lt["model"], lt["name"] = lt["pick"], ""
+            lcd_defaults()
+        else:
+            p = lt["profiles"][lt["pick"] - len(LCD_MODELS)]
+            lt["model"] = model_index[p["model"]]
+            for k in ("w", "h", "x", "y", "rot", "bl", "pattern"):
+                lt[k] = p.get(k, lt[k])
+            lt["name"] = p["name"]
+
+    def lcd_save(name):
+        nonlocal note, note_color, note_until
+        prof = {"name": name, "model": LCD_MODELS[lt["model"]][0]}
+        prof.update({k: lt[k] for k in ("w", "h", "x", "y", "rot", "bl", "pattern")})
+        profiles = [p for p in lt["profiles"] if p["name"] != name] + [prof]
+        if save_profiles(profiles):
+            lt["profiles"], lt["name"] = profiles, name
+            lt["pick"] = len(LCD_MODELS) + len(profiles) - 1
+            note, note_color, note_until = "профіль «%s» збережено" % name, GREEN, time.monotonic() + 3
+        else:
+            note, note_color, note_until = "не вдалося записати " + PROFILES_FILE, RED, time.monotonic() + 4
+
+    def lcd_delete():
+        nonlocal note, note_color, note_until
+        if lt["pick"] < len(LCD_MODELS):
+            return
+        p = lt["profiles"][lt["pick"] - len(LCD_MODELS)]
+        profiles = [q for q in lt["profiles"] if q is not p]
+        if save_profiles(profiles):
+            lt["profiles"] = profiles
+            lcd_pick(model_index[p["model"]])
+            note, note_color, note_until = "профіль «%s» видалено" % p["name"], DIM, time.monotonic() + 3
 
     def run_lcd():
         nonlocal note, note_color, note_until, st
@@ -784,8 +864,7 @@ def main():
             return
         if mode == "lcd":
             if row == R_MODEL:
-                lt["model"] = (lt["model"] + sign) % len(LCD_MODELS)
-                lcd_defaults()
+                lcd_pick(lt["pick"] + sign)
             elif row == R_PATTERN:
                 lt["pattern"] = (lt["pattern"] + sign) % len(LCD_PATTERNS)
             elif row == R_ROT:
@@ -877,10 +956,25 @@ def main():
                 continue
             rows = {"gen": ROWS, "volt": VROWS, "scope": SROWS, "logic": SROWS, "decode": DROWS,
                     "lcd": LROWS}[mode]
+            if mode == "lcd" and row == R_NAME and not hat and k in NAME_KEYS:
+                typing = ((typing if typing is not None else lt["name"]) + NAME_KEYS[k])[:16]
+                continue
+            if mode == "lcd" and row == R_NAME and k == pygame.K_BACKSPACE:
+                typing = (typing if typing is not None else lt["name"])[:-1]
+                continue
+            if mode == "lcd" and row == R_MODEL and k == pygame.K_DELETE:
+                lcd_delete()
+                continue
             if mode == "lcd" and k in DIGITS and not hat and row >= R_W and DIGITS[k].isdigit():
                 typing = (typing or "") + DIGITS[k]
                 continue
             if mode == "lcd" and k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                if row == R_NAME:
+                    name = (typing if typing is not None else lt["name"]).strip()
+                    typing = None
+                    if name:
+                        lcd_save(name)
+                    continue
                 if typing is not None and row >= R_W:
                     key = "whxy"[row - R_W]
                     lt[key] = min(max(0 if key in "xy" else 8, int(typing)), 800 if key in "wh" else 319)

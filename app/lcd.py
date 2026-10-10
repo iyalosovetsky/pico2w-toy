@@ -85,6 +85,11 @@ KEYMAP = {
     # digits 4-0, "." and k / m (number entry, e.g. 2.5k in the generator)
     5: pygame.K_4, 6: pygame.K_5, 7: pygame.K_6, 8: pygame.K_7, 9: pygame.K_8, 10: pygame.K_9,
     11: pygame.K_0, 52: pygame.K_PERIOD, 37: pygame.K_k, 50: pygame.K_m,
+    # the other latin letters and Del (names typed in the generator's display tester)
+    **{code: getattr(pygame, "K_" + ch) for code, ch in zip(
+        (16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 30, 31, 32, 33, 34, 35, 36, 38, 44, 45, 46, 47, 48, 49),
+        "qwertyuiopasdfghjlzxcvbn")},
+    111: pygame.K_DELETE,
 }
 
 _fb = None
