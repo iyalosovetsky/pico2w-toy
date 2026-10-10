@@ -164,7 +164,7 @@ def _dejavu(name, px):
 
 # the PicoCalc's J703 (left side of the case, the upper row of 8; pin 1 at the top - from the
 # mainboard V2.0 Gerbers) as wired for the signal generator board
-J703_PINS = [("3V3", "вихід 3,3 В", (230, 60, 50)), ("GP6", "генератор", ACCENT),
+J703_PINS = [("3V3", "Pico (~2,4 В!)", (230, 60, 50)), ("GP6", "генератор", ACCENT),
              ("GP3", "MOSI", (120, 180, 255)), ("GP4", "MISO · SDA · RX", (120, 180, 255)),
              ("GP5", "CS · SCL", (120, 180, 255)), ("GP2", "SCK", (120, 180, 255)),
              ("GP26", "АЦП 0-3,3 В", (90, 200, 90)), ("GND", "земля", (150, 150, 150))]
