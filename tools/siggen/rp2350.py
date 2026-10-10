@@ -36,7 +36,8 @@
 #                UART / I2C / SPI traffic on those pins meanwhile. Answers "ok decode <proto>
 #                <tokens>" (UART: hex bytes; I2C: S, addr:W/R, bytes, A/N, P; SPI: mosi/miso
 #                per byte, | between CS frames) or "ok decode <proto> none"
-#   lcd <model> [all|colors|bars|grid|text]   display tester on J703: SPI SCK .6 MOSI .3 CS .5
+#   lcd <model> [all|colors|bars|grid|text] [w=.. h=.. x=.. y=..]   display tester on J703
+#                (w / h: the panel size, x / y: the window offset - instead of the model's): SPI SCK .6 MOSI .3 CS .5
 #                DC .4 RST .7 (e-Paper BUSY .2), I2C SDA .4 SCL .5; models: st7789-240x240,
 #                -240x320, -135x240, -170x320, -172x320, -240x280, ili9341, ili9488, epd7in5v2,
 #                ssd1306-128x64, ssd1306-128x32, sh1106
@@ -832,9 +833,9 @@ class Oled:
             for p in range(pages):
                 for c in (0xB0 + p, self.xo & 0x0F, 0x10 | self.xo >> 4):
                     self.i2c.writeto(self.addr, bytes((0x00, c)))
-                self.i2c.writeto(self.addr, b"\x40" + buf[p * 128:(p + 1) * 128])
+                self.i2c.writeto(self.addr, b"\x40" + buf[p * self.w:(p + 1) * self.w])
         else:
-            for c in (0x21, 0, 127, 0x22, 0, pages - 1):
+            for c in (0x21, self.xo, self.xo + self.w - 1, 0x22, 0, pages - 1):
                 self.i2c.writeto(self.addr, bytes((0x00, c)))
             for i in range(0, len(buf), 64):
                 self.i2c.writeto(self.addr, b"\x40" + buf[i:i + 64])
@@ -880,10 +881,23 @@ def lcd_test(args):
     if not args or args[0] not in DISPLAYS:
         return "err lcd <model>: " + " ".join(sorted(DISPLAYS))
     model = args[0]
-    pattern = args[1] if len(args) > 1 else "all"
+    opts = dict(a.split("=", 1) for a in args[1:] if "=" in a)
+    rest = [a for a in args[1:] if "=" not in a]
+    pattern = rest[0] if rest else "all"
     if pattern not in PATTERNS:
         return "err lcd pattern: " + " ".join(PATTERNS)
     kind, w, h, xo, yo = DISPLAYS[model]
+    try:   # w= h= x= y=: a panel size / window offset other than the model's default
+        w, h = int(opts.get("w", w)), int(opts.get("h", h))
+        xo, yo = int(opts.get("x", xo)), int(opts.get("y", yo))
+    except ValueError:
+        return "err lcd: w= h= x= y= take numbers"
+    limit = {"st7789": (320, 320), "ili9341": (320, 320), "ili9488": (480, 480), "epd": (800, 800),
+             "ssd1306": (128, 64), "sh1106": (132, 64)}[kind]
+    if not (8 <= w <= limit[0] and 8 <= h <= max(limit) and 0 <= xo < 320 and 0 <= yo < 320):
+        return "err lcd size: w 8..%d, h 8..%d, x / y 0..319" % (limit[0], max(limit))
+    if kind in ("ssd1306", "sh1106") and h % 8 or kind == "epd" and w % 8:
+        return "err lcd size: %s" % ("h - a multiple of 8" if kind != "epd" else "w - a multiple of 8")
     t = time.ticks_ms()
     _adc_pins_taken[0] = True
     if kind == "epd" and state["on"]:   # BUSY is on the generator's pin

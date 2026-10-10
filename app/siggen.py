@@ -162,14 +162,16 @@ R_TIME, R_TRIG = 1, 2
 TIMEBASES = [100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3]  # s per division
 SCOPE_N, SCOPE_DIVS = 256, 10
 MODES = ["gen", "volt", "scope", "logic", "decode", "lcd"]
-LROWS = ["Режим", "Дисплей", "Картинка"]
-R_MODEL, R_PATTERN = 1, 2
-LCD_MODELS = [("st7789-240x240", "ST7789 240×240"), ("st7789-240x320", "ST7789 240×320"),
-              ("st7789-240x280", "ST7789V2 240×280"), ("st7789-135x240", "ST7789 135×240"),
-              ("st7789-170x320", "ST7789V3 170×320"), ("st7789-172x320", "ST7789V3 172×320"),
-              ("ili9341", "ILI9341 240×320"), ("ili9488", "ILI9488 320×480"),
-              ("epd7in5v2", "e-Paper 7,5\" V2"), ("ssd1306-128x64", "SSD1306 128×64"),
-              ("ssd1306-128x32", "SSD1306 128×32"), ("sh1106", "SH1106 128×64")]
+LROWS = ["Режим", "Дисплей", "Картинка", "Ширина", "Висота", "Зсув X", "Зсув Y"]
+R_MODEL, R_PATTERN, R_W, R_H, R_X, R_Y = 1, 2, 3, 4, 5, 6
+LROW_H = 11
+# model, name, default width, height, x offset, y offset (as in tools/siggen/rp2350.py)
+LCD_MODELS = [("st7789-240x240", "ST7789", 240, 240, 0, 0), ("st7789-240x320", "ST7789", 240, 320, 0, 0),
+              ("st7789-240x280", "ST7789V2", 240, 280, 0, 20), ("st7789-135x240", "ST7789", 135, 240, 52, 40),
+              ("st7789-170x320", "ST7789V3", 170, 320, 35, 0), ("st7789-172x320", "ST7789V3", 172, 320, 34, 0),
+              ("ili9341", "ILI9341", 240, 320, 0, 0), ("ili9488", "ILI9488", 320, 480, 0, 0),
+              ("epd7in5v2", "e-Paper 7,5\" V2", 800, 480, 0, 0), ("ssd1306-128x64", "SSD1306", 128, 64, 0, 0),
+              ("ssd1306-128x32", "SSD1306", 128, 32, 0, 0), ("sh1106", "SH1106", 128, 64, 2, 0)]
 LCD_PATTERNS = [("all", "усе по черзі"), ("colors", "кольори"), ("bars", "смуги"), ("grid", "сітка, рамка"),
                 ("text", "текст")]
 LCD_SPI_PINS = {6: "out", 3: "out", 5: "out", 4: "out", 7: "out"}
@@ -573,25 +575,29 @@ def lcd_wiring(model):
     return pins, lines
 
 
-def draw_lcd(st, row, lt, note, note_color):
+def draw_lcd(st, row, lt, note, note_color, typing=None):
     screen.fill(BG)
     text("ДИСПЛЕЙ " + st["board"], (64, 2), ACCENT, f_title, center=True)
-    model, name = LCD_MODELS[lt["model"]]
-    values = ["дисплей", name, LCD_PATTERNS[lt["pattern"]][1]]
-    for i, (rname, value) in enumerate(zip(["Режим", "LCD", "Тест"] if HAT else LROWS, values)):
-        y = 13 + i * ROW_H
+    model, name, dw, dh, dx, dy = LCD_MODELS[lt["model"]]
+    size = (lt["w"], lt["h"], lt["x"], lt["y"])
+    default = size == (dw, dh, dx, dy)
+    values = ["дисплей", name if default else name + " *", LCD_PATTERNS[lt["pattern"]][1]] + [str(v) for v in size]
+    names = ["Режим", "LCD", "Тест", "Ширина", "Висота", "Зсув X", "Зсув Y"] if HAT else LROWS
+    for i, (rname, value) in enumerate(zip(names, values)):
+        y = 12 + i * LROW_H
         sel = i == row
         if sel:
-            pygame.draw.rect(screen, ACCENT, (2, y - 1, 124, ROW_H - 1), border_radius=3)
-        text(rname, (6, y + 2), BG if sel else DIM, f_label)
-        f = f_value if i == 0 else f_lbold   # model names are long
-        text(value, (122, y + (0 if i == 0 else 2)), BG if sel else FG, f, right=True)
+            pygame.draw.rect(screen, ACCENT, (2, y - 1, 124, LROW_H - 1), border_radius=2)
+        text(rname, (6, y + 1), BG if sel else DIM, f_small if HAT else f_label)
+        if sel and typing is not None and i >= R_W:
+            value = typing + "_"
+        changed = i >= R_W and size[i - R_W] != (dw, dh, dx, dy)[i - R_W]
+        text(value, (122, y + 1), BG if sel else (ACCENT if changed else FG), f_lbold, right=True)
     pins, lines = lcd_wiring(model)
-    y = 57
-    for line in lines:
+    y = 89
+    for line in lines[:-1]:   # the power line is in the help
         text(line, (64, y), DIM, f_small, center=True)
         y += f_small.get_linesize()
-    y += 2
     if lt["busy"]:
         text("малюю…" if model != "epd7in5v2" else "оновлюю e-Paper (~5 с)…", (64, y), ACCENT, f_small, center=True)
     elif lt["result"]:
@@ -642,14 +648,18 @@ def main():
     sc = {"tb": 3, "level": 1.6, "data": None, "rate": 1, "trig": False, "paused": False}
     la = {"tb": 4, "ch": 0, "data": None, "rate": 1, "trig": False, "paused": False}
     dc = {"proto": 0, "baud": 0, "spi": 0, "test": True, "lines": None, "busy": False}
-    lt = {"model": 0, "pattern": 0, "result": None, "busy": False}
+    lt = {"model": 0, "pattern": 0, "result": None, "busy": False, "w": 240, "h": 240, "x": 0, "y": 0}
+
+    def lcd_defaults():
+        _, _, lt["w"], lt["h"], lt["x"], lt["y"] = LCD_MODELS[lt["model"]]
 
     def run_lcd():
         nonlocal note, note_color, note_until, st
         model = LCD_MODELS[lt["model"]][0]
         lt["busy"], lt["result"] = True, None
         draw_lcd(st, min(row, len(LROWS) - 1), lt, note, note_color)
-        reply = link.ask("lcd %s %s" % (model, LCD_PATTERNS[lt["pattern"]][0]), 40) if link else None
+        reply = link.ask("lcd %s %s w=%d h=%d x=%d y=%d" % (model, LCD_PATTERNS[lt["pattern"]][0], lt["w"], lt["h"],
+                                                             lt["x"], lt["y"]), 40) if link else None
         lt["busy"] = False
         if reply and reply.startswith("ok lcd"):
             w = reply.split()
@@ -746,8 +756,13 @@ def main():
         if mode == "lcd":
             if row == R_MODEL:
                 lt["model"] = (lt["model"] + sign) % len(LCD_MODELS)
+                lcd_defaults()
             elif row == R_PATTERN:
                 lt["pattern"] = (lt["pattern"] + sign) % len(LCD_PATTERNS)
+            elif row >= R_W:
+                key = "whxy"[row - R_W]
+                lo = 0 if key in "xy" else 8
+                lt[key] = min(max(lo, lt[key] + sign * (10 if fine else 1)), 800 if key in "wh" else 319)
             lt["result"] = None
             return
         if mode == "decode":
@@ -825,7 +840,15 @@ def main():
                 continue
             rows = {"gen": ROWS, "volt": VROWS, "scope": SROWS, "logic": SROWS, "decode": DROWS,
                     "lcd": LROWS}[mode]
+            if mode == "lcd" and k in DIGITS and not hat and row >= R_W and DIGITS[k].isdigit():
+                typing = (typing or "") + DIGITS[k]
+                continue
             if mode == "lcd" and k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                if typing is not None and row >= R_W:
+                    key = "whxy"[row - R_W]
+                    lt[key] = min(max(0 if key in "xy" else 8, int(typing)), 800 if key in "wh" else 319)
+                    typing, lt["result"] = None, None
+                    continue
                 lcd.play("select")
                 run_lcd()
                 continue
@@ -898,7 +921,7 @@ def main():
         elif mode == "decode" and st:
             draw_decode(st, min(row, len(DROWS) - 1), dc, note, note_color)
         elif mode == "lcd" and st:
-            draw_lcd(st, min(row, len(LROWS) - 1), lt, note, note_color)
+            draw_lcd(st, min(row, len(LROWS) - 1), lt, note, note_color, typing)
         else:
             draw(st, row, typing, note, note_color)
         clock.tick(20)
