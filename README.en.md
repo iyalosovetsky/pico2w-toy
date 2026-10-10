@@ -119,7 +119,7 @@ A 172×103×20 mm PicoCalc back cover for the zero mod (a Zero 2 W instead of th
 | **PREFERANS** | Preferans (Russian whist) against two computer players: Sochi (default) or Leningrad rules, chosen when a new pulka starts, pulka to 20, auto-saved. Engine and AI: [Python Pref](https://python-pref.sourceforge.io/index_ru.html) (the same one that ran on Nokia/Symbian), ported to Python 3 |
 | **BOOKS** | EPUB / FB2 / TXT (also zipped) and PDF reader for the `~/books` folder: images, contents, font size, light/dark theme; PDF as zoomed page fragments with smooth scrolling; the position in every book is saved |
 | **DOOM** | Doom (shareware episode 1) via [doomgeneric](https://github.com/ozkl/doomgeneric), downscaled to 128×80 |
-| **GENERATOR** | Signal generator on a separate board (PicoCalc, over the UART or USB): shape (square, sine, triangle, saw), frequency, duty cycle, on/off; the board's LED shows the duty and the frequency - see [generator](#picocalc-components) |
+| **GENERATOR** | Signal generator on a separate board (PicoCalc, over the UART or USB): shape (square, sine, triangle, saw), frequency, duty cycle, on/off, and a voltmeter on the ADC; the board's LED shows the duty and the frequency - see [generator](#picocalc-components) |
 | **AI CHAT** | Chat with a local LLM (llama.cpp / any OpenAI-compatible server) on the text console, US/UA keyboard |
 | **CONSOLE** | Leaves the menu and opens a text console with login on the LCD (tty7); `lcdmenu` brings the menu back |
 | **HDMI** | Lends the USB keyboard to the console on the monitor (tty1); the HAT buttons stay with the menu, KEY3 takes the keyboard back |
@@ -251,7 +251,8 @@ in the zero mod they are not wired to the Zero (check with a meter in your build
 | GP0 (UART0 TX) | Zero GPIO 15 / RXD, pin 10 | — | UART to the Zero (`/dev/serial0`) |
 | GP1 (UART0 RX) | Zero GPIO 14 / TXD, pin 8 | — | UART to the Zero |
 | GND | Zero GND, pin 6 | — | common ground |
-| USB-C | port 3 of the FE1.1S USB hub | — | power and USB (`/dev/ttyACM0`) |
+| 5V (VBUS) | 5 V from the Pololu U3V40F5 | — | power |
+| USB-C | port 3 of the FE1.1S USB hub | — | USB (`/dev/ttyACM0`): program uploads, a spare link |
 | — | J703.1 | 3V3_OUT (AXP2101) | 3.3 V for external modules |
 | **GP6** | J703.2 | **GP2**, pin 4 (J302) · PSRAM SIO0 | generator output |
 | GP3 | J703.3 | **GP3**, pin 5 (J302) · PSRAM SIO1 | SPI0 TX (MOSI) |
@@ -266,10 +267,14 @@ pull-up to 3.3 V, so while GP20 is left unconnected the PSRAM is inactive and st
 3.3 V logic only; 100-220 Ohm series resistors on the J703 signal lines are a good idea. PIO can
 re-assign any of the lines (I2S, UART, 1-Wire…).
 
-Power: the Pico socket's VSYS (pin 39) → Pololu U3V40F5 step-up → 5 V to the Zero (pin 2/4) and to
-the FE1.1S USB hub; the hub is on the Zero's USB, port 1 has the keyboard receiver, port 3 the Tiny 2350.
+Power: the Pico socket's VSYS (pin 39) → Pololu U3V40F5 step-up → 5 V to the Zero (pin 2/4), the
+FE1.1S USB hub and the Tiny 2350's 5V pin; the hub is on the Zero's USB, port 1 has the keyboard receiver, port 3 the Tiny 2350.
 
 ![Wiring: Zero 2 W, Tiny 2350, Pololu, USB hub and the PicoCalc's J703](docs/wiring-picocalc.svg)
+
+The GENERATOR menu item also has a **voltmeter mode** (the first row, "Mode"): the voltage on the
+board's ADC input (J703.7), min / max and a 10 s graph; the generator keeps running, so its output can
+be fed into the input to see the wave.
 
 From the Zero: the GENERATOR menu item or the `siggen` command (installed by `install.sh`):
 
@@ -279,6 +284,7 @@ siggen shape square duty 25  # square wave, duty cycle (%)
 siggen off                   # stop the output; on - start it
 siggen get                   # ok board=rp2350 shape=square freq=2500 duty=25 out=on fmin=1 fmax=10000000
 siggen probe                 # the board reads its output back: mean level in ten 0.1 s slices
+siggen adc                   # voltages on the ADC inputs (RP2350: GP26 = J703.7, GP27-29)
 siggen flash tools/siggen/rp2350.py   # update the board's program over the UART or USB
 ```
 
