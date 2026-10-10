@@ -243,7 +243,7 @@ in the zero mod they are not wired to the Zero (check with a meter in your build
 | GND | Zero GND, pin 6 | — | — | common ground |
 | 5V (VBUS) | 5 V from the Pololu U3V40F5 | — | — | power |
 | USB-C | port 3 of the FE1.1S USB hub | — | — | USB (`/dev/ttyACM0`): program uploads, a spare link |
-| — | J703.1 | red | 3V3_OUT - the Pico board's 3.3 V output (pin 36) | not powered by itself in the zero mod - see below |
+| — | J703.1 | red | 3V3_OUT - the Pico board's 3.3 V output (pin 36) | 3.3 V - here the Pico socket's pin 36 is wired to the Zero's 3.3 V (see below) |
 | **GP6** | J703.2 | orange | **GP2**, pin 4 (J302) · PSRAM SIO0 | generator output |
 | GP3 | J703.3 | yellow | **GP3**, pin 5 (J302) · PSRAM SIO1 | SPI0 TX (MOSI) |
 | GP4 | J703.4 | green | **GP4**, pin 6 (J302) · PSRAM SIO2 | SPI0 RX (MISO) / I2C0 SDA / UART1 TX |
@@ -265,7 +265,7 @@ re-assign any of the lines (I2S, UART, 1-Wire…).
 without a Pico nothing powers it. Only pull-ups hang on it - R303/R304 4.7 kOhm on the keyboard I2C and
 R302 10 kOhm on the PSRAM CE - so through the keyboard I2C (the Zero has its own 1.8 kOhm pull-ups to
 3.3 V there) the line is fed backwards and reads ~2.4 V. It is no supply, and the PSRAM CE is then at the
-edge of a logic "1". For 3.3 V on J703.1, wire the Pico socket's pin 36 to the Zero's 3.3 V (pin 1 or 17).
+edge of a logic "1". For 3.3 V on J703.1, wire the Pico socket's pin 36 to the Zero's 3.3 V (pin 1 or 17) - done in this build.
 
 Power: the Pico socket's VSYS (pin 39) → Pololu U3V40F5 step-up → 5 V to the Zero (pin 2/4), the
 FE1.1S USB hub and the Tiny 2350's 5V pin; the hub is on the Zero's USB, port 1 has the keyboard receiver, port 3 the Tiny 2350.

@@ -96,7 +96,7 @@
     <rect x="718" y="412" width="16" height="16" fill="#969696"/><rect x="718" y="442" width="16" height="16" fill="#f0f0f0"/>
   </g>
   <g font-size="12" fill="#222">
-    <text x="742" y="244">1 · 3V3_OUT (Pico pin 36, see below)</text>
+    <text x="742" y="244">1 · 3.3 V (Pico pin 36 ← Zero 3.3 V)</text>
     <text x="742" y="274">2 · GP2 · pin 4 (J302)</text>
     <text x="742" y="304">3 · GP3 · pin 5 (J302)</text>
     <text x="742" y="334">4 · GP4 · pin 6 (J302)</text>
@@ -115,9 +115,9 @@
     <text x="732" y="544">inactive (Hi-Z) while GP20 is left</text>
     <text x="732" y="560">unconnected - so the lines are free</text>
   </g>
-  <text x="722" y="590" font-size="11" fill="#c0392b">J703.1 = the Pico's 3V3 output: unpowered in the</text>
-  <text x="722" y="604" font-size="11" fill="#c0392b">zero mod (~2.4 V back-fed) - wire socket pin 36</text>
-  <text x="722" y="618" font-size="11" fill="#c0392b">to the Zero's 3.3 V (pin 1/17) to use it</text>
+  <text x="722" y="590" font-size="11" fill="#c0392b">J703.1 = the Pico's 3V3 output, unpowered in the</text>
+  <text x="722" y="604" font-size="11" fill="#c0392b">zero mod (~2.4 V back-fed): here socket pin 36</text>
+  <text x="722" y="618" font-size="11" fill="#c0392b">is wired to the Zero's 3.3 V (pin 1/17)</text>
 
   <!-- ===== wires: Zero <-> Tiny ===== -->
   <line x1="264" y1="120" x2="356" y2="120" stroke="#2c6fbb" stroke-width="2.5"/>
@@ -130,16 +130,17 @@
 
   <!-- ===== wires: Tiny <-> J703 ===== -->
   <g stroke-width="2.5">
-    <line x1="614" y1="270" x2="718" y2="270" stroke="#e67e22"/>
-    <line x1="614" y1="300" x2="718" y2="300" stroke="#8e44ad"/>
-    <line x1="614" y1="330" x2="718" y2="330" stroke="#8e44ad"/>
-    <line x1="614" y1="360" x2="718" y2="360" stroke="#8e44ad"/>
-    <line x1="614" y1="390" x2="718" y2="390" stroke="#8e44ad"/>
-    <line x1="614" y1="420" x2="718" y2="420" stroke="#16a085"/>
-    <line x1="614" y1="450" x2="718" y2="450" stroke="#222"/>
+    <!-- the ribbon wires in their colours: 2 orange, 3 yellow, 4 green, 5 blue, 6 violet, 7 grey, 8 white -->
+    <line x1="614" y1="270" x2="718" y2="270" stroke="#ff8c00"/>
+    <line x1="614" y1="300" x2="718" y2="300" stroke="#e0c400"/>
+    <line x1="614" y1="330" x2="718" y2="330" stroke="#28b43c"/>
+    <line x1="614" y1="360" x2="718" y2="360" stroke="#286eff"/>
+    <line x1="614" y1="390" x2="718" y2="390" stroke="#a046e6"/>
+    <line x1="614" y1="420" x2="718" y2="420" stroke="#969696"/>
+    <line x1="614" y1="450" x2="718" y2="450" stroke="#cfcfcf"/>
   </g>
-  <text x="664" y="264" text-anchor="middle" font-size="10" fill="#e67e22">signal</text>
-  <text x="664" y="414" text-anchor="middle" font-size="10" fill="#16a085">0-3.3 V</text>
+  <text x="664" y="264" text-anchor="middle" font-size="10" fill="#c86e00">signal</text>
+  <text x="664" y="414" text-anchor="middle" font-size="10" fill="#707070">0-3.3 V</text>
 
   <!-- notes -->
   <g font-size="11" fill="#444">
@@ -155,6 +156,8 @@
     <text x="20" y="438">• Check first that these Pico socket lines are not</text>
     <text x="28" y="452">wired to the Zero (zero mod wiring).</text>
     <text x="20" y="468">• Any line can be re-assigned by PIO (I2S, UART…).</text>
+    <text x="20" y="484">• Ribbon cable colours: 1 red, 2 orange, 3 yellow,</text>
+    <text x="28" y="498">4 green, 5 blue, 6 violet, 7 grey, 8 white.</text>
   </g>
   </g>
 </svg>
