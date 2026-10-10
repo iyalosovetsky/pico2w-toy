@@ -261,11 +261,11 @@ pull-up to 3.3 V, so while GP20 is left unconnected the PSRAM is inactive and st
 3.3 V logic only; 100-220 Ohm series resistors on the J703 signal lines are a good idea. PIO can
 re-assign any of the lines (I2S, UART, 1-Wire…).
 
-**J703.1 (3V3_OUT) in the zero mod.** It is the Pico board's own regulator output (socket pin 36);
-without a Pico nothing powers it. Only pull-ups hang on it - R303/R304 4.7 kOhm on the keyboard I2C and
-R302 10 kOhm on the PSRAM CE - so through the keyboard I2C (the Zero has its own 1.8 kOhm pull-ups to
-3.3 V there) the line is fed backwards and reads ~2.4 V. It is no supply, and the PSRAM CE is then at the
-edge of a logic "1". For 3.3 V on J703.1, wire the Pico socket's pin 36 to the Zero's 3.3 V (pin 1 or 17) - done in this build.
+**J703.1 - 3.3 V from the Zero.** On the PicoCalc schematic it is the Pico board's 3V3_OUT (socket
+pin 36), so in the zero mod it has to be wired to the Zero's 3.3 V (pin 1 or 17) - done in this build,
+and J703.1 gives 3.3 V from the Zero (go easy on the load - it is the Zero's own 3.3 V rail). Without
+that wire nothing powers the line: only pull-ups hang on it (R303/R304 4.7 kOhm on the keyboard I2C,
+R302 10 kOhm on the PSRAM CE), and through the keyboard I2C it is back-fed to ~2.4 V.
 
 Power: the Pico socket's VSYS (pin 39) → Pololu U3V40F5 step-up → 5 V to the Zero (pin 2/4), the
 FE1.1S USB hub and the Tiny 2350's 5V pin; the hub is on the Zero's USB, port 1 has the keyboard receiver, port 3 the Tiny 2350.

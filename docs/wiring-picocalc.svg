@@ -115,9 +115,9 @@
     <text x="732" y="544">inactive (Hi-Z) while GP20 is left</text>
     <text x="732" y="560">unconnected - so the lines are free</text>
   </g>
-  <text x="722" y="590" font-size="11" fill="#c0392b">J703.1 = the Pico's 3V3 output, unpowered in the</text>
-  <text x="722" y="604" font-size="11" fill="#c0392b">zero mod (~2.4 V back-fed): here socket pin 36</text>
-  <text x="722" y="618" font-size="11" fill="#c0392b">is wired to the Zero's 3.3 V (pin 1/17)</text>
+  <text x="722" y="590" font-size="11" fill="#c0392b">J703.1 = 3.3 V from the Zero: the Pico socket's</text>
+  <text x="722" y="604" font-size="11" fill="#c0392b">3V3_OUT (pin 36) is wired to the Zero's 3.3 V</text>
+  <text x="722" y="618" font-size="11" fill="#c0392b">(pin 1/17); without it ~2.4 V back-fed</text>
 
   <!-- ===== wires: Zero <-> Tiny ===== -->
   <line x1="264" y1="120" x2="356" y2="120" stroke="#2c6fbb" stroke-width="2.5"/>
