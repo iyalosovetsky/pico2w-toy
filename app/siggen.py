@@ -1,13 +1,14 @@
 """Signal generator board (tools/siggen: a Pimoroni Tiny 2350 running rp2350.py as its main.py),
 driven over the UART (/dev/serial0) or USB (/dev/ttyACM*) - whichever answers.
 
-Five modes (the first row): generator, voltmeter (the board's ADC inputs, GP26 = J703.7 in
+Six modes (the first row): generator, voltmeter (the board's ADC inputs, GP26 = J703.7 in
 the PicoCalc; min / max and a 10 s graph) and oscilloscope (GP26: 256 points per sweep, time base
 100 us .. 50 ms per division, rising-edge trigger, frequency and peak-to-peak measured; Enter
 pauses) and logic analyzer (the six J703 lines, 512 samples per sweep, 5 us .. 20 ms per
 division, rising-edge trigger on a chosen line, its frequency and duty; Enter pauses) and
 protocol decoder (UART / I2C / SPI on the J703 lines, decoded by the board; Enter captures once,
-"test" makes the board send its own traffic).
+"test" makes the board send its own traffic) and display tester (ST7789 of several sizes,
+ILI9341, ILI9488, Waveshare 7.5" e-Paper V2 over SPI, SSD1306 / SH1106 over I2C; test pictures).
 The generator keeps running in all of them, so its output can go to the inputs.
 UP / DOWN - row (mode, shape, frequency, duty, signal / mode, input), LEFT / RIGHT - change (held: repeats),
 + / - (KEY1 / KEY2 on the HAT) - fine step, PRESS / Enter - signal on / off,
@@ -159,7 +160,18 @@ SROWS = ["Режим", "Час/под", "Синхр."]
 R_TIME, R_TRIG = 1, 2
 TIMEBASES = [100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3]  # s per division
 SCOPE_N, SCOPE_DIVS = 256, 10
-MODES = ["gen", "volt", "scope", "logic", "decode"]
+MODES = ["gen", "volt", "scope", "logic", "decode", "lcd"]
+LROWS = ["Режим", "Дисплей", "Картинка"]
+R_MODEL, R_PATTERN = 1, 2
+LCD_MODELS = [("st7789-240x240", "ST7789 240×240"), ("st7789-240x320", "ST7789 240×320"),
+              ("st7789-240x280", "ST7789V2 240×280"), ("st7789-135x240", "ST7789 135×240"),
+              ("st7789-170x320", "ST7789V3 170×320"), ("st7789-172x320", "ST7789V3 172×320"),
+              ("ili9341", "ILI9341 240×320"), ("ili9488", "ILI9488 320×480"),
+              ("epd7in5v2", "e-Paper 7,5\" V2"), ("ssd1306-128x64", "SSD1306 128×64"),
+              ("ssd1306-128x32", "SSD1306 128×32"), ("sh1106", "SH1106 128×64")]
+LCD_PATTERNS = [("all", "усе по черзі"), ("colors", "кольори"), ("bars", "смуги"), ("grid", "сітка, рамка"),
+                ("text", "текст")]
+LCD_SPI_PINS = {6: "out", 3: "out", 5: "out", 4: "out", 7: "out"}
 DROWS = ["Режим", "Протокол", "Параметр", "Джерело"]
 R_PROTO, R_PARAM, R_SOURCE = 1, 2, 3
 PROTOS = ["uart", "i2c", "spi"]
@@ -548,6 +560,48 @@ def draw_decode(st, row, dc, note, note_color):
     lcd.flip()
 
 
+def lcd_wiring(model):
+    if model.startswith(("ssd1306", "sh1106")):
+        return {4: "io", 5: "io"}, ["SDA - J703.4, SCL - J703.5", "VCC - .1 (3,3 В), GND - .8"]
+    pins = dict(LCD_SPI_PINS)
+    lines = ["SCK .6  MOSI .3  CS .5  DC .4  RST .7"]
+    if model == "epd7in5v2":
+        pins[2] = "in"
+        lines.append("BUSY .2 (генератор вимкнеться)")
+    lines.append("VCC .1 (3,3 В), GND .8, BL - на 3,3 В")
+    return pins, lines
+
+
+def draw_lcd(st, row, lt, note, note_color):
+    screen.fill(BG)
+    text("ДИСПЛЕЙ " + st["board"], (64, 2), ACCENT, f_title, center=True)
+    model, name = LCD_MODELS[lt["model"]]
+    values = ["тест дисплея", name, LCD_PATTERNS[lt["pattern"]][1]]
+    for i, (rname, value) in enumerate(zip(LROWS, values)):
+        y = 13 + i * ROW_H
+        sel = i == row
+        if sel:
+            pygame.draw.rect(screen, ACCENT, (2, y - 1, 124, ROW_H - 1), border_radius=3)
+        text(rname, (6, y + 2), BG if sel else DIM, f_label)
+        text(value, (122, y), BG if sel else FG, f_value, right=True)
+    pins, lines = lcd_wiring(model)
+    y = 57
+    for line in lines:
+        text(line, (64, y), DIM, f_small, center=True)
+        y += f_small.get_linesize()
+    y += 2
+    if lt["busy"]:
+        text("малюю…" if model != "epd7in5v2" else "оновлюю e-Paper (~5 с)…", (64, y), ACCENT, f_small, center=True)
+    elif lt["result"]:
+        text(lt["result"], (64, y), GREEN, f_small, center=True)
+    elif note:
+        for i, part in enumerate(wrap_words(note.split(), f_small, 120)[:3]):
+            text(part, (64, y + i * f_small.get_linesize()), note_color, f_small, center=True)
+    draw_j703(pins, st["on"] and model != "epd7in5v2")
+    hint_line("←/→ змінити, натиск - показати, KEY3" if HAT else "←/→ змінити, Enter - показати, Esc - назад")
+    lcd.flip()
+
+
 def parse_adc(reply):
     """'ok adc gp26=0.531 gp27=0.713 ...' -> {'gp26': 0.531, ...} or None."""
     if not reply or not reply.startswith("ok adc"):
@@ -586,6 +640,23 @@ def main():
     sc = {"tb": 3, "level": 1.6, "data": None, "rate": 1, "trig": False, "paused": False}
     la = {"tb": 4, "ch": 0, "data": None, "rate": 1, "trig": False, "paused": False}
     dc = {"proto": 0, "baud": 0, "spi": 0, "test": True, "lines": None, "busy": False}
+    lt = {"model": 0, "pattern": 0, "result": None, "busy": False}
+
+    def run_lcd():
+        nonlocal note, note_color, note_until, st
+        model = LCD_MODELS[lt["model"]][0]
+        lt["busy"], lt["result"] = True, None
+        draw_lcd(st, min(row, len(LROWS) - 1), lt, note, note_color)
+        reply = link.ask("lcd %s %s" % (model, LCD_PATTERNS[lt["pattern"]][0]), 40) if link else None
+        lt["busy"] = False
+        if reply and reply.startswith("ok lcd"):
+            w = reply.split()
+            lt["result"] = "готово: %s, %s %s" % (w[3], w[5], w[6]) + ("   I2C %s" % w[7][5:] if len(w) > 7 else "")
+            note = ""
+            send("get")   # an e-Paper test switches the generator off
+        else:
+            note, note_color, note_until = (reply[4:] if reply and reply.startswith("err") else
+                                            "немає відповіді"), RED, time.monotonic() + 8
 
     def run_decode():
         nonlocal note, note_color, note_until
@@ -667,6 +738,13 @@ def main():
             sc["data"], sc["paused"] = None, False
             la["data"], la["paused"] = None, False
             return
+        if mode == "lcd":
+            if row == R_MODEL:
+                lt["model"] = (lt["model"] + sign) % len(LCD_MODELS)
+            elif row == R_PATTERN:
+                lt["pattern"] = (lt["pattern"] + sign) % len(LCD_PATTERNS)
+            lt["result"] = None
+            return
         if mode == "decode":
             if row == R_PROTO:
                 dc["proto"] = (dc["proto"] + sign) % len(PROTOS)
@@ -740,7 +818,12 @@ def main():
                 return
             if st is None:
                 continue
-            rows = {"gen": ROWS, "volt": VROWS, "scope": SROWS, "logic": SROWS, "decode": DROWS}[mode]
+            rows = {"gen": ROWS, "volt": VROWS, "scope": SROWS, "logic": SROWS, "decode": DROWS,
+                    "lcd": LROWS}[mode]
+            if mode == "lcd" and k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                lcd.play("select")
+                run_lcd()
+                continue
             if mode == "decode" and k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
                 lcd.play("select")
                 run_decode()
@@ -809,6 +892,8 @@ def main():
             draw_logic(st, min(row, len(SROWS) - 1), la, note, note_color)
         elif mode == "decode" and st:
             draw_decode(st, min(row, len(DROWS) - 1), dc, note, note_color)
+        elif mode == "lcd" and st:
+            draw_lcd(st, min(row, len(LROWS) - 1), lt, note, note_color)
         else:
             draw(st, row, typing, note, note_color)
         clock.tick(20)

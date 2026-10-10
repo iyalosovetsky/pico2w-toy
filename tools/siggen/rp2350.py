@@ -36,6 +36,10 @@
 #                UART / I2C / SPI traffic on those pins meanwhile. Answers "ok decode <proto>
 #                <tokens>" (UART: hex bytes; I2C: S, addr:W/R, bytes, A/N, P; SPI: mosi/miso
 #                per byte, | between CS frames) or "ok decode <proto> none"
+#   lcd <model> [all|colors|bars|grid|text]   display tester on J703: SPI SCK .6 MOSI .3 CS .5
+#                DC .4 RST .7 (e-Paper BUSY .2), I2C SDA .4 SCL .5; models: st7789-240x240,
+#                -240x320, -135x240, -170x320, -172x320, -240x280, ili9341, ili9488, epd7in5v2,
+#                ssd1306-128x64, ssd1306-128x32, sh1106
 #   put <file> <bytes>   answers "ok send", then takes that many raw bytes: replaces a file
 #                        (program updates over the UART: siggen flash)
 import array
@@ -189,8 +193,18 @@ def probe():
 ADCS = [machine.ADC(Pin(p)) for p in (26, 27, 28, 29)]
 
 
+_adc_pins_taken = [False]   # the display tester drives GP26 (RST): back to analog before measuring
+
+
+def adc_ready():
+    if _adc_pins_taken[0]:
+        ADCS[0] = machine.ADC(Pin(26))
+        _adc_pins_taken[0] = False
+
+
 def adc():
     """Mean of 64 readings per ADC input, in volts (3.3 V reference)."""
+    adc_ready()
     out = []
     for p, a in zip((26, 27, 28, 29), ADCS):
         total = 0
@@ -230,6 +244,7 @@ def scope(rate, level=1.65):
     # "high-res": the ADC runs near its 500 k/s and every point is the mean of the conversions
     # in its interval - an anti-alias filter that also smooths the DDS shapes' 586 kHz PWM
     k = max(1, int(500000 / rate))
+    adc_ready()
     ADCS[0].read_u16()                         # GP26 set up as an analog input
     mem32[ADC_BASE] = 1                        # EN, AINSEL 0 = GP26
     while not mem32[ADC_BASE] & 0x100:
@@ -534,6 +549,360 @@ def decode(args):
     return "ok decode %s %s" % (proto, " ".join(out) if out else "none")
 
 
+# ---------------------------------------------------------------- display tester
+# Wiring on J703: SPI SCK GP2 (.6), MOSI GP3 (.3), CS GP5 (.5), DC GP4 (.4), RST GP26 (.7),
+# e-Paper BUSY GP6 (.2 - the generator output, switched off for it); I2C SDA GP4 (.4), SCL GP5 (.5).
+D_SCK, D_MOSI, D_CS, D_DC, D_RST, D_BUSY, D_SDA, D_SCL = 2, 3, 5, 4, 26, 6, 4, 5
+
+# model -> (driver, width, height, x offset, y offset)
+DISPLAYS = {
+    "st7789-240x240": ("st7789", 240, 240, 0, 0),
+    "st7789-240x320": ("st7789", 240, 320, 0, 0),
+    "st7789-135x240": ("st7789", 135, 240, 52, 40),
+    "st7789-170x320": ("st7789", 170, 320, 35, 0),
+    "st7789-172x320": ("st7789", 172, 320, 34, 0),
+    "st7789-240x280": ("st7789", 240, 280, 0, 20),
+    "ili9341": ("ili9341", 240, 320, 0, 0),
+    "ili9488": ("ili9488", 320, 480, 0, 0),
+    "epd7in5v2": ("epd", 800, 480, 0, 0),
+    "ssd1306-128x64": ("ssd1306", 128, 64, 0, 0),
+    "ssd1306-128x32": ("ssd1306", 128, 32, 0, 0),
+    "sh1106": ("sh1106", 128, 64, 2, 0),
+}
+PATTERNS = ("all", "colors", "bars", "grid", "text")
+RGB = {"black": (0, 0, 0), "white": (255, 255, 255), "red": (255, 0, 0), "green": (0, 255, 0),
+       "blue": (0, 0, 255), "yellow": (255, 255, 0), "cyan": (0, 255, 255), "magenta": (255, 0, 255)}
+BARS = ("white", "yellow", "cyan", "green", "magenta", "red", "blue", "black")
+
+ILI9341_INIT = (
+    (0xEF, b"\x03\x80\x02"), (0xCF, b"\x00\xC1\x30"), (0xED, b"\x64\x03\x12\x81"),
+    (0xE8, b"\x85\x00\x78"), (0xCB, b"\x39\x2C\x00\x34\x02"), (0xF7, b"\x20"), (0xEA, b"\x00\x00"),
+    (0xC0, b"\x23"), (0xC1, b"\x10"), (0xC5, b"\x3E\x28"), (0xC7, b"\x86"), (0x36, b"\x48"),
+    (0x37, b"\x00"), (0x3A, b"\x55"), (0xB1, b"\x00\x18"), (0xB6, b"\x08\x82\x27"), (0xF2, b"\x00"),
+    (0x26, b"\x01"),
+    (0xE0, b"\x0F\x31\x2B\x0C\x0E\x08\x4E\xF1\x37\x07\x10\x03\x0E\x09\x00"),
+    (0xE1, b"\x00\x0E\x14\x03\x11\x07\x31\xC1\x48\x08\x0F\x0C\x31\x36\x0F"))
+ILI9488_INIT = (
+    (0xE0, b"\x00\x03\x09\x08\x16\x0A\x3F\x78\x4C\x09\x0A\x08\x16\x1A\x0F"),
+    (0xE1, b"\x00\x16\x19\x03\x0F\x05\x32\x45\x46\x04\x0E\x0D\x35\x37\x0F"),
+    (0xC0, b"\x17\x15"), (0xC1, b"\x41"), (0xC5, b"\x00\x12\x80"), (0x36, b"\x48"), (0x3A, b"\x66"),
+    (0xB0, b"\x00"), (0xB1, b"\xA0"), (0xB4, b"\x02"), (0xB6, b"\x02\x02"), (0xE9, b"\x00"),
+    (0xF7, b"\xA9\x51\x2C\x82"))
+SSD1306_INIT = (0xAE, 0xD5, 0x80, 0xA8, None, 0xD3, 0x00, 0x40, 0x8D, 0x14, 0x20, 0x00, 0xA1, 0xC8,
+                0xDA, None, 0x81, 0xCF, 0xD9, 0xF1, 0xDB, 0x40, 0xA4, 0xA6, 0xAF)
+SH1106_INIT = (0xAE, 0xD5, 0x80, 0xA8, 0x3F, 0xD3, 0x00, 0x40, 0xAD, 0x8B, 0xA1, 0xC8, 0xDA, 0x12,
+               0x81, 0x80, 0xD9, 0x22, 0xDB, 0x35, 0xA4, 0xA6, 0xAF)
+
+
+class Tft:
+    """ST7789 / ILI9341 (RGB565) and ILI9488 (RGB666 over SPI) - just enough for test pictures."""
+
+    def __init__(self, kind, w, h, xo, yo):
+        from machine import SPI
+        self.kind, self.w, self.h, self.xo, self.yo = kind, w, h, xo, yo
+        self.bpp = 3 if kind == "ili9488" else 2
+        mode = 3 if kind == "st7789" else 0       # CS-less ST7789 modules need mode 3
+        self.spi = SPI(0, baudrate=20000000, polarity=mode >> 1, phase=mode & 1,
+                       sck=Pin(D_SCK), mosi=Pin(D_MOSI))
+        self.cs, self.dc, self.rst = Pin(D_CS, Pin.OUT, value=1), Pin(D_DC, Pin.OUT), Pin(D_RST, Pin.OUT, value=1)
+        self.rst(0)
+        time.sleep_ms(20)
+        self.rst(1)
+        time.sleep_ms(150)
+        self.cmd(0x01)
+        time.sleep_ms(150)
+        if kind == "ili9341":
+            for c, d in ILI9341_INIT:
+                self.cmd(c, d)
+        elif kind == "ili9488":
+            for c, d in ILI9488_INIT:
+                self.cmd(c, d)
+        else:
+            self.cmd(0x3A, b"\x55")
+            self.cmd(0x36, b"\x00")
+            self.cmd(0x21)                       # ST7789 panels are inverted
+            self.cmd(0x13)
+        self.cmd(0x11)
+        time.sleep_ms(120)
+        self.cmd(0x29)
+        time.sleep_ms(20)
+
+    def cmd(self, c, data=None):
+        self.cs(0)
+        self.dc(0)
+        self.spi.write(bytes((c,)))
+        if data:
+            self.dc(1)
+            self.spi.write(data)
+        self.cs(1)
+
+    def color(self, name):
+        r, g, b = RGB[name]
+        if self.bpp == 3:
+            return bytes((r & 0xFC, g & 0xFC, b & 0xFC))
+        v = (r & 0xF8) << 8 | (g & 0xFC) << 3 | b >> 3
+        return bytes((v >> 8, v & 0xFF))
+
+    def window(self, x, y, w, h):
+        x0, y0 = x + self.xo, y + self.yo
+        self.cmd(0x2A, bytes((x0 >> 8, x0 & 0xFF, (x0 + w - 1) >> 8, (x0 + w - 1) & 0xFF)))
+        self.cmd(0x2B, bytes((y0 >> 8, y0 & 0xFF, (y0 + h - 1) >> 8, (y0 + h - 1) & 0xFF)))
+
+    def fill_rect(self, x, y, w, h, name):
+        if w <= 0 or h <= 0:
+            return
+        self.window(x, y, w, h)
+        px = self.color(name)
+        line = px * w
+        self.cs(0)
+        self.dc(0)
+        self.spi.write(b"\x2C")
+        self.dc(1)
+        for _ in range(h):
+            self.spi.write(line)
+        self.cs(1)
+
+    def text(self, s, x, y, scale, fg, bg):
+        import framebuf
+        w, h = 8 * len(s), 8
+        fb = framebuf.FrameBuffer(bytearray(w * h // 8 + 8), w, h, framebuf.MONO_HLSB)
+        fb.fill(0)
+        fb.text(s, 0, 0, 1)
+        fgc, bgc = self.color(fg), self.color(bg)
+        self.window(x, y, w * scale, h * scale)
+        self.cs(0)
+        self.dc(0)
+        self.spi.write(b"\x2C")
+        self.dc(1)
+        for row in range(h):
+            line = b"".join((fgc if fb.pixel(col, row) else bgc) * scale for col in range(w))
+            for _ in range(scale):
+                self.spi.write(line)
+        self.cs(1)
+
+    def show(self, pattern, label):
+        w, h = self.w, self.h
+        if pattern in ("all", "colors"):
+            for c in ("red", "green", "blue", "white", "black"):
+                self.fill_rect(0, 0, w, h, c)
+                time.sleep_ms(350)
+        if pattern in ("all", "bars"):
+            bw = w // len(BARS)
+            for i, c in enumerate(BARS):
+                self.fill_rect(i * bw, 0, w - i * bw if i == len(BARS) - 1 else bw, h, c)
+            if pattern == "all":
+                time.sleep_ms(700)
+        if pattern in ("all", "grid"):
+            self.fill_rect(0, 0, w, h, "black")
+            for x in range(0, w, 20):
+                self.fill_rect(x, 0, 1, h, "blue")
+            for y in range(0, h, 20):
+                self.fill_rect(0, y, w, 1, "blue")
+            for x, y, ww, hh in ((0, 0, w, 1), (0, h - 1, w, 1), (0, 0, 1, h), (w - 1, 0, 1, h)):
+                self.fill_rect(x, y, ww, hh, "white")      # the border: shows offset errors
+            for x, y, c in ((0, 0, "red"), (w - 10, 0, "green"), (0, h - 10, "blue"), (w - 10, h - 10, "yellow")):
+                self.fill_rect(x, y, 10, 10, c)            # corners: red TL, green TR, blue BL, yellow BR
+        if pattern in ("all", "text"):
+            if pattern == "text":
+                self.fill_rect(0, 0, w, h, "black")
+            sc = max(1, min(3, w // 80))
+            for i, (s, c) in enumerate((("PicoCalc", "yellow"), (label, "white"), ("%dx%d" % (w, h), "cyan"))):
+                tw = 8 * len(s) * sc
+                self.text(s, max(1, (w - tw) // 2), h // 2 - 20 * sc + i * 12 * sc, sc, c, "black")
+
+    def close(self):
+        self.spi.deinit()
+
+
+class Epd:
+    """Waveshare 7.5" e-Paper V2 (800 x 480, UC8179): one full refresh with the test picture."""
+
+    def __init__(self, w, h):
+        from machine import SPI
+        self.w, self.h = w, h
+        self.spi = SPI(0, baudrate=4000000, polarity=0, phase=0, sck=Pin(D_SCK), mosi=Pin(D_MOSI))
+        self.cs, self.dc, self.rst = Pin(D_CS, Pin.OUT, value=1), Pin(D_DC, Pin.OUT), Pin(D_RST, Pin.OUT, value=1)
+        self.busy = Pin(D_BUSY, Pin.IN)
+        for v, ms in ((1, 20), (0, 2), (1, 20)):
+            self.rst(v)
+            time.sleep_ms(ms)
+        self.cmd(0x01, b"\x07\x07\x3F\x3F")    # power setting
+        self.cmd(0x06, b"\x17\x17\x28\x17")    # booster soft start
+        self.cmd(0x04)                          # power on
+        time.sleep_ms(100)
+        self.wait()
+        self.cmd(0x00, b"\x1F")                 # panel setting: KW, OTP LUT
+        self.cmd(0x61, bytes((w >> 8, w & 0xFF, h >> 8, h & 0xFF)))
+        self.cmd(0x15, b"\x00")
+        self.cmd(0x50, b"\x10\x07")
+        self.cmd(0x60, b"\x22")
+
+    def cmd(self, c, data=None):
+        self.cs(0)
+        self.dc(0)
+        self.spi.write(bytes((c,)))
+        if data:
+            self.dc(1)
+            self.spi.write(data)
+        self.cs(1)
+
+    def data(self, buf):
+        self.cs(0)
+        self.dc(1)
+        self.spi.write(buf)
+        self.cs(1)
+
+    def wait(self, timeout=30000):
+        """BUSY is low while the panel works."""
+        end = time.ticks_add(time.ticks_ms(), timeout)
+        self.cmd(0x71)
+        while not self.busy() and time.ticks_diff(end, time.ticks_ms()) > 0:
+            time.sleep_ms(20)
+            self.cmd(0x71)
+        if not self.busy():
+            raise OSError("e-Paper BUSY stuck low")
+
+    def show(self, pattern, label):
+        import framebuf
+        w, h = self.w, self.h
+        buf = bytearray(w * h // 8)
+        fb = framebuf.FrameBuffer(buf, w, h, framebuf.MONO_HLSB)   # 1 = white
+        fb.fill(1)
+        if pattern in ("all", "bars", "colors"):
+            for i in range(8):
+                if i % 2:
+                    fb.fill_rect(i * w // 8, 0, w // 8, h // 2 if pattern == "all" else h, 0)
+        if pattern in ("all", "grid"):
+            for x in range(0, w, 40):
+                fb.vline(x, 0, h, 0)
+            for y in range(0, h, 40):
+                fb.hline(0, y, w, 0)
+            fb.rect(0, 0, w, h, 0)
+            fb.rect(2, 2, w - 4, h - 4, 0)
+        if pattern in ("all", "text"):
+            for i, s in enumerate(("PicoCalc display tester", label, "%dx%d" % (w, h))):
+                fb.fill_rect(w // 2 - 4 * len(s) - 4, h // 2 - 20 + 16 * i - 3, 8 * len(s) + 8, 14, 1)
+                fb.text(s, w // 2 - 4 * len(s), h // 2 - 20 + 16 * i, 0)
+        self.cmd(0x10)
+        self.data(buf)
+        for i in range(len(buf)):
+            buf[i] ^= 0xFF
+        self.cmd(0x13)
+        self.data(buf)
+        self.cmd(0x12)                          # refresh
+        time.sleep_ms(100)
+        self.wait()
+
+    def close(self):
+        self.cmd(0x50, b"\xF7")
+        self.cmd(0x02)                          # power off
+        try:
+            self.wait(5000)
+        except OSError:
+            pass
+        self.cmd(0x07, b"\xA5")                 # deep sleep: the picture stays
+        self.spi.deinit()
+
+
+class Oled:
+    """SSD1306 (128x64 / 128x32) and SH1106 (128x64, column offset 2) over I2C."""
+
+    def __init__(self, kind, w, h, xo):
+        from machine import I2C
+        self.kind, self.w, self.h, self.xo = kind, w, h, xo
+        self.i2c = I2C(0, sda=Pin(D_SDA), scl=Pin(D_SCL), freq=400000)
+        for p in (D_SDA, D_SCL):   # internal pull-ups help when the module has none
+            mem32[0x40038000 + 4 + 4 * p] = (mem32[0x40038000 + 4 + 4 * p] | 1 << 3) & ~(1 << 2)
+        found = [a for a in self.i2c.scan() if a in (0x3C, 0x3D)]
+        if not found:
+            raise OSError("no display at I2C 0x3C / 0x3D (found: %s)" %
+                          (" ".join("%02X" % a for a in self.i2c.scan()) or "nothing"))
+        self.addr = found[0]
+        if kind == "sh1106":
+            init = SH1106_INIT
+        else:
+            init = tuple((0x3F if h == 64 else 0x1F) if i == 4 else (0x12 if h == 64 else 0x02) if i == 15 else c
+                         for i, c in enumerate(SSD1306_INIT))
+        for c in init:
+            self.i2c.writeto(self.addr, bytes((0x00, c)))
+
+    def flush(self, buf):
+        pages = self.h // 8
+        if self.kind == "sh1106":
+            for p in range(pages):
+                for c in (0xB0 + p, self.xo & 0x0F, 0x10 | self.xo >> 4):
+                    self.i2c.writeto(self.addr, bytes((0x00, c)))
+                self.i2c.writeto(self.addr, b"\x40" + buf[p * 128:(p + 1) * 128])
+        else:
+            for c in (0x21, 0, 127, 0x22, 0, pages - 1):
+                self.i2c.writeto(self.addr, bytes((0x00, c)))
+            for i in range(0, len(buf), 64):
+                self.i2c.writeto(self.addr, b"\x40" + buf[i:i + 64])
+
+    def show(self, pattern, label):
+        import framebuf
+        w, h = self.w, self.h
+        buf = bytearray(w * h // 8)
+        fb = framebuf.FrameBuffer(buf, w, h, framebuf.MONO_VLSB)
+        if pattern in ("all", "colors"):
+            for v in (1, 0, 1, 0):
+                fb.fill(v)
+                self.flush(buf)
+                time.sleep_ms(300)
+        if pattern in ("all", "bars"):
+            fb.fill(0)
+            for i in range(0, 8, 2):
+                fb.fill_rect(i * w // 8, 0, w // 8, h, 1)
+            self.flush(buf)
+            if pattern == "all":
+                time.sleep_ms(600)
+        if pattern in ("all", "grid", "text"):
+            fb.fill(0)
+        if pattern in ("all", "grid"):
+            for x in range(0, w, 16):
+                fb.vline(x, 0, h, 1)
+            for y in range(0, h, 16):
+                fb.hline(0, y, w, 1)
+            fb.rect(0, 0, w, h, 1)
+        if pattern in ("all", "text"):
+            for i, s in enumerate(("PicoCalc", label[:16], "%dx%d %02X" % (w, h, self.addr))):
+                y = h // 2 - 12 + 10 * i if h == 64 else 1 + 10 * i
+                fb.fill_rect(w // 2 - 4 * len(s) - 1, y - 1, 8 * len(s) + 2, 10, 0)
+                fb.text(s, w // 2 - 4 * len(s), y, 1)
+        if pattern != "colors":
+            self.flush(buf)
+
+    def close(self):
+        pass
+
+
+def lcd_test(args):
+    if not args or args[0] not in DISPLAYS:
+        return "err lcd <model>: " + " ".join(sorted(DISPLAYS))
+    model = args[0]
+    pattern = args[1] if len(args) > 1 else "all"
+    if pattern not in PATTERNS:
+        return "err lcd pattern: " + " ".join(PATTERNS)
+    kind, w, h, xo, yo = DISPLAYS[model]
+    t = time.ticks_ms()
+    _adc_pins_taken[0] = True
+    if kind == "epd" and state["on"]:   # BUSY is on the generator's pin
+        state["on"] = False
+        apply()
+    if kind in ("st7789", "ili9341", "ili9488"):
+        d = Tft(kind, w, h, xo, yo)
+    elif kind == "epd":
+        d = Epd(w, h)
+    else:
+        d = Oled(kind, w, h, xo)
+    try:
+        d.show(pattern, model)
+    finally:
+        d.close()
+    extra = (" addr=%02X" % d.addr) if kind in ("ssd1306", "sh1106") else ""
+    return "ok lcd %s %dx%d %s %d ms%s" % (model, w, h, pattern, time.ticks_diff(time.ticks_ms(), t), extra)
+
+
 def number(s):
     s = s.strip().lower()
     mult = {"k": 1000, "m": 1000000}.get(s[-1:], 1)
@@ -563,6 +932,8 @@ def command(line):
             return probe()
         if cmd == "adc":
             return adc()
+        if cmd == "lcd":
+            return lcd_test(args)
         if cmd == "decode":
             return decode(args)
         if cmd == "logic" and 1 <= len(args) <= 2:

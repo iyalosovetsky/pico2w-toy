@@ -10,13 +10,14 @@
 #   siggen scope 100k [1.65]    oscilloscope capture on GP26: rate (samples/s), trigger level (V)
 #   siggen logic 1M [0]         logic analyzer capture on J703.2..7: rate, trigger channel 0..5
 #   siggen decode uart 9600 [test] | decode i2c [test] | decode spi 0 [test]   protocol decoder
+#   siggen lcd st7789-240x240 [all|colors|bars|grid|text]   display tester (siggen lcd - the models)
 #   siggen flash tools/siggen/rp2350.py   upload a program as the board's main.py, restart it
 #
 # Every command prints the board's answer ("ok board=... shape=... freq=..." or "err ...").
 # SIGGEN_PORT sets the port instead of looking for one (115200 baud).
 
 usage() {
-    sed -n '2,16s/^# \{0,1\}//p' "$0"
+    sed -n '2,17s/^# \{0,1\}//p' "$0"
     exit "${1:-0}"
 }
 [ $# -eq 0 ] && set -- get
@@ -92,6 +93,10 @@ find_port
 status=0
 while [ $# -gt 0 ]; do
     case "$1" in
+        lcd)  # lcd <model> [pattern]: display tester (an e-Paper refresh takes seconds)
+            shift
+            send "lcd $*" "" 40
+            break ;;
         decode)  # decode uart|i2c|spi [args...] [test]: the rest of the line goes to the board
             shift
             send "decode $*" "" 8
