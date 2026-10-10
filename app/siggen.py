@@ -1,11 +1,13 @@
 """Signal generator board (tools/siggen: a Pimoroni Tiny 2350 running rp2350.py as its main.py),
 driven over the UART (/dev/serial0) or USB (/dev/ttyACM*) - whichever answers.
 
-Four modes (the first row): generator, voltmeter (the board's ADC inputs, GP26 = J703.7 in
+Five modes (the first row): generator, voltmeter (the board's ADC inputs, GP26 = J703.7 in
 the PicoCalc; min / max and a 10 s graph) and oscilloscope (GP26: 256 points per sweep, time base
 100 us .. 50 ms per division, rising-edge trigger, frequency and peak-to-peak measured; Enter
 pauses) and logic analyzer (the six J703 lines, 512 samples per sweep, 5 us .. 20 ms per
-division, rising-edge trigger on a chosen line, its frequency and duty; Enter pauses).
+division, rising-edge trigger on a chosen line, its frequency and duty; Enter pauses) and
+protocol decoder (UART / I2C / SPI on the J703 lines, decoded by the board; Enter captures once,
+"test" makes the board send its own traffic).
 The generator keeps running in all of them, so its output can go to the inputs.
 UP / DOWN - row (mode, shape, frequency, duty, signal / mode, input), LEFT / RIGHT - change (held: repeats),
 + / - (KEY1 / KEY2 on the HAT) - fine step, PRESS / Enter - signal on / off,
@@ -157,7 +159,13 @@ SROWS = ["Режим", "Час/под", "Синхр."]
 R_TIME, R_TRIG = 1, 2
 TIMEBASES = [100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3]  # s per division
 SCOPE_N, SCOPE_DIVS = 256, 10
-MODES = ["gen", "volt", "scope", "logic"]
+MODES = ["gen", "volt", "scope", "logic", "decode"]
+DROWS = ["Режим", "Протокол", "Параметр", "Джерело"]
+R_PROTO, R_PARAM, R_SOURCE = 1, 2, 3
+PROTOS = ["uart", "i2c", "spi"]
+BAUDS = [9600, 19200, 38400, 57600, 115200, 230400, 300, 1200, 2400, 4800]
+PROTO_PINS = {"uart": "RX - J703.4", "i2c": "SDA - J703.4, SCL - J703.5",
+              "spi": "SCK .6  MOSI .3  MISO .4  CS .5"}
 LTIMEBASES = [5e-6, 10e-6, 20e-6, 50e-6, 100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3]
 LOGIC_N = 512
 LOGIC_CH = ["2", "3", "4", "5", "6", "7"]   # J703 pins: GP6 GP3 GP4 GP5 GP2 GP26
@@ -439,6 +447,70 @@ def draw_logic(st, row, la, note, note_color):
     lcd.flip()
 
 
+def wrap_words(words, f, width):
+    lines, cur = [], ""
+    for w in words:
+        t = (cur + " " + w).strip()
+        if f.size(t)[0] > width and cur:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = t
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def decode_lines(proto, tokens):
+    """The board's tokens as screen lines."""
+    if tokens == ["none"]:
+        return ["нічого: за 2 с не було трафіку"]
+    if proto == "uart":
+        text_ = "".join(chr(int(t[:2], 16)) if 32 <= int(t[:2], 16) < 127 else "." for t in tokens)
+        return wrap_words(tokens, f_small, 120) + ["«%s»" % text_]
+    if proto == "spi":
+        mosi, miso = ["MOSI"], ["MISO"]
+        for t in tokens:
+            if t == "|":
+                mosi.append("|")
+                miso.append("|")
+            else:
+                a, b = t.split("/")
+                mosi.append(a)
+                miso.append(b)
+        return wrap_words(mosi, f_small, 120) + wrap_words(miso, f_small, 120)
+    return wrap_words(tokens, f_small, 120)
+
+
+def draw_decode(st, row, dc, note, note_color):
+    screen.fill(BG)
+    text("ДЕКОДЕР " + st["board"], (64, 2), ACCENT, f_title, center=True)
+    proto = PROTOS[dc["proto"]]
+    param = {"uart": "%d бод" % BAUDS[dc["baud"]], "i2c": "—", "spi": "режим %d" % dc["spi"]}[proto]
+    values = ["декодер", proto.upper(), param, "тест" if dc["test"] else "зовнішнє"]
+    for i, (name, value) in enumerate(zip(DROWS, values)):
+        y = 13 + i * ROW_H
+        sel = i == row
+        if sel:
+            pygame.draw.rect(screen, ACCENT, (2, y - 1, 124, ROW_H - 1), border_radius=3)
+        text(name, (6, y + 2), BG if sel else DIM, f_label)
+        text(value, (122, y), BG if sel else FG, f_value, right=True)
+    y = 70
+    text(PROTO_PINS[proto], (64, y), DIM, f_small, center=True)
+    y += f_small.get_linesize()
+    if dc["busy"]:
+        text("чекаю на трафік…", (64, y + 4), ACCENT, f_small, center=True)
+    elif dc["lines"]:
+        for line in dc["lines"][:4]:
+            text(line, (64, y), GREEN, f_small, center=True)
+            y += f_small.get_linesize()
+    elif note:
+        text(note, (64, y + 4), note_color, f_small, center=True)
+    hint = "←/→ змінити, натиск - захопити, KEY3" if HAT else "←/→ змінити, Enter - захопити, Esc - назад"
+    text(hint, (64, 116), DIM, f_small, center=True)
+    lcd.flip()
+
+
 def parse_adc(reply):
     """'ok adc gp26=0.531 gp27=0.713 ...' -> {'gp26': 0.531, ...} or None."""
     if not reply or not reply.startswith("ok adc"):
@@ -476,6 +548,22 @@ def main():
     vm = {"input": 0, "value": None, "min": None, "max": None, "history": [], "next": 0}
     sc = {"tb": 3, "level": 1.6, "data": None, "rate": 1, "trig": False, "paused": False}
     la = {"tb": 4, "ch": 0, "data": None, "rate": 1, "trig": False, "paused": False}
+    dc = {"proto": 0, "baud": 0, "spi": 0, "test": True, "lines": None, "busy": False}
+
+    def run_decode():
+        nonlocal note, note_color, note_until
+        proto = PROTOS[dc["proto"]]
+        cmd = {"uart": "decode uart %d 4" % BAUDS[dc["baud"]], "i2c": "decode i2c",
+               "spi": "decode spi %d" % dc["spi"]}[proto] + (" test" if dc["test"] else "")
+        dc["busy"], dc["lines"] = True, None
+        draw_decode(st, min(row, len(DROWS) - 1), dc, note, note_color)
+        reply = link.ask(cmd, 6) if link else None
+        dc["busy"] = False
+        if reply and reply.startswith("ok decode"):
+            dc["lines"] = decode_lines(proto, reply.split()[3:] or ["none"])
+        else:
+            note, note_color, note_until = (reply[4:] if reply and reply.startswith("err") else
+                                            "немає відповіді"), RED, time.monotonic() + 4
 
     def capture_logic():
         nonlocal note, note_color, note_until
@@ -542,6 +630,18 @@ def main():
             sc["data"], sc["paused"] = None, False
             la["data"], la["paused"] = None, False
             return
+        if mode == "decode":
+            if row == R_PROTO:
+                dc["proto"] = (dc["proto"] + sign) % len(PROTOS)
+            elif row == R_PARAM:
+                if PROTOS[dc["proto"]] == "uart":
+                    dc["baud"] = (dc["baud"] + sign) % len(BAUDS)
+                elif PROTOS[dc["proto"]] == "spi":
+                    dc["spi"] = (dc["spi"] + sign) % 4
+            elif row == R_SOURCE:
+                dc["test"] = not dc["test"]
+            dc["lines"] = None
+            return
         if mode == "logic":
             if row == R_TIME:
                 la["tb"] = min(max(0, la["tb"] + sign), len(LTIMEBASES) - 1)
@@ -603,7 +703,11 @@ def main():
                 return
             if st is None:
                 continue
-            rows = {"gen": ROWS, "volt": VROWS, "scope": SROWS, "logic": SROWS}[mode]
+            rows = {"gen": ROWS, "volt": VROWS, "scope": SROWS, "logic": SROWS, "decode": DROWS}[mode]
+            if mode == "decode" and k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                lcd.play("select")
+                run_decode()
+                continue
             if mode == "volt" and k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
                 reset_volt()
                 lcd.play("select")
@@ -666,6 +770,8 @@ def main():
             draw_scope(st, min(row, len(SROWS) - 1), sc, note, note_color)
         elif mode == "logic" and st:
             draw_logic(st, min(row, len(SROWS) - 1), la, note, note_color)
+        elif mode == "decode" and st:
+            draw_decode(st, min(row, len(DROWS) - 1), dc, note, note_color)
         else:
             draw(st, row, typing, note, note_color)
         clock.tick(20)

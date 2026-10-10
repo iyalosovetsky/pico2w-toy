@@ -28,6 +28,14 @@
 #                GP2 GP26): 512 samples at <rate> (2.5 k .. 25 M samples/s, a PIO state machine +
 #                DMA), lined up on a rising edge of channel <ch> (0..5, default 0) if there is
 #                one; answers "ok logic rate=.. n=512 trig=1|0 data=<hex, a byte per sample>"
+#   decode uart <baud> [pin] [test] | decode i2c [test] | decode spi <mode 0-3> [test]
+#                protocol decoder on the J703 lines: waits (2 s) for the first falling edge -
+#                UART start bit on <pin> (GPIO, default GP4 = J703.4), I2C SDA (GP4 = J703.4,
+#                SCL GP5 = J703.5), SPI CS (GP5; SCK GP2, MOSI GP3, MISO GP4) - captures 32768
+#                samples with PIO + DMA and decodes them; "test" makes the board send its own
+#                UART / I2C / SPI traffic on those pins meanwhile. Answers "ok decode <proto>
+#                <tokens>" (UART: hex bytes; I2C: S, addr:W/R, bytes, A/N, P; SPI: mosi/miso
+#                per byte, | between CS frames) or "ok decode <proto> none"
 #   put <file> <bytes>   answers "ok send", then takes that many raw bytes: replaces a file
 #                        (program updates over the UART: siggen flash)
 import array
@@ -313,6 +321,219 @@ def logic(rate, ch=0):
     return "ok logic rate=%g n=%d trig=%d data=%s" % (rate, LOGIC_N, trig, binascii.hexlify(_logic_out).decode())
 
 
+DEC_WORDS = 8192                 # x 4 samples (8 lines, GP0-7, a byte each)
+_dec = array.array("I", [0] * DEC_WORDS)
+_dec_b = uctypes.bytearray_at(uctypes.addressof(_dec), 4 * DEC_WORDS)
+_dec_progs = {}
+_edges = array.array("I", [0] * 4096)
+
+
+def _dec_prog(pin):
+    """Wait for <pin> to go low, then sample GP0-7 every cycle (1 byte per sample)."""
+    if pin not in _dec_progs:
+        @rp2.asm_pio(in_shiftdir=rp2.PIO.SHIFT_RIGHT, autopush=True, push_thresh=32,
+                     fifo_join=rp2.PIO.JOIN_RX)
+        def prog():
+            wait(0, gpio, pin)
+            wrap_target()
+            in_(pins, 8)
+            wrap()
+        _dec_progs[pin] = prog
+    return _dec_progs[pin]
+
+
+@micropython.viper
+def _find_edges(buf: ptr8, n: int, mask: int, out: ptr32, cap: int) -> int:
+    """Indexes where (sample & mask) changes; returns how many (at most cap)."""
+    k = 0
+    prev = buf[0] & mask
+    i = 1
+    while i < n and k < cap:
+        v = buf[i] & mask
+        if v != prev:
+            out[k] = i
+            k += 1
+            prev = v
+        i += 1
+    return k
+
+
+def _capture_decode(trig_pin, rate, traffic):
+    for p in (2, 3, 4, 5):
+        Pin(p, Pin.IN)
+        mem32[0x40038000 + 4 + 4 * p] = (mem32[0x40038000 + 4 + 4 * p] | 1 << 6) & ~(1 << 8)
+    sm = rp2.StateMachine(4, _dec_prog(trig_pin), freq=int(rate), in_base=Pin(0))
+    dma2 = rp2.DMA()
+    try:
+        ctrl = dma2.pack_ctrl(size=2, inc_read=False, inc_write=True, treq_sel=DREQ_PIO1_RX0)
+        dma2.config(read=PIO1_RXF0, write=_dec, count=DEC_WORDS, ctrl=ctrl, trigger=True)
+        sm.active(1)
+        if traffic:
+            traffic()
+        end = time.ticks_add(time.ticks_ms(), 2000 + int(4 * DEC_WORDS / rate * 1000))
+        while dma2.active() and time.ticks_diff(end, time.ticks_ms()) > 0:
+            pass
+        words = DEC_WORDS - (dma2.count if dma2.active() else 0)
+    finally:
+        sm.active(0)
+        dma2.active(0)
+        dma2.close()
+        for p in (2, 3, 4, 5):
+            Pin(p, Pin.IN)
+    return 4 * words
+
+
+def _uart_traffic(baud, pin):
+    def go():
+        time.sleep_ms(2)
+        u = UART(1, baudrate=baud, tx=Pin(pin))
+        u.write(b"Hi PicoCalc!")
+        u.flush()
+        time.sleep_ms(2)
+        u.deinit()
+    return go
+
+
+def _i2c_traffic():
+    from machine import I2C
+    i2c = I2C(0, sda=Pin(4), scl=Pin(5), freq=100000)
+    for p in (4, 5):  # no pull-ups on the J703 lines: use the internal ones
+        mem32[0x40038000 + 4 + 4 * p] = (mem32[0x40038000 + 4 + 4 * p] | 1 << 3) & ~(1 << 2)
+    try:
+        i2c.writeto(0x3C, b"\x00\xAF")
+    except OSError:
+        pass
+    try:
+        i2c.readfrom(0x50, 2)
+    except OSError:
+        pass
+
+
+def _spi_traffic(mode):
+    from machine import SPI
+    cs = Pin(5, Pin.OUT, value=1)
+    spi = SPI(0, baudrate=500000, polarity=mode >> 1, phase=mode & 1, sck=Pin(2), mosi=Pin(3), miso=Pin(4))
+    rx = bytearray(4)
+    for frame in (b"\xA5\x5A\x01\x02", b"\x9F\x00\x00\x00"):
+        cs(0)
+        spi.write_readinto(frame, rx)
+        cs(1)
+        time.sleep_us(20)
+    spi.deinit()
+
+
+def _bit(n, t, b):
+    return _dec_b[t] >> b & 1 if t < n else 1
+
+
+def _dec_uart(n, baud, pin, rate):
+    period = rate / baud
+    out, t = [], 0
+    nedge = _find_edges(_dec_b, n, 1 << pin, _edges, len(_edges))
+    e = 0
+    # the capture starts on the start bit itself
+    starts = [0]
+    while starts and len(out) < 200:
+        t0 = starts.pop()
+        if t0 + 10 * period >= n:
+            break
+        v = 0
+        for i in range(8):
+            v |= _bit(n, int(t0 + (1.5 + i) * period), pin) << i
+        out.append("%02X" % v if _bit(n, int(t0 + 9.5 * period), pin) else "%02X!" % v)
+        # next start bit: the first falling edge after the stop bit
+        after = t0 + 9.5 * period
+        while e < nedge and (_edges[e] < after or _dec_b[_edges[e]] >> pin & 1):
+            e += 1
+        if e < nedge:
+            starts.append(_edges[e])
+    return out
+
+
+def _dec_i2c(n):
+    SDA, SCL = 4, 5
+    nedge = _find_edges(_dec_b, n, 1 << SDA | 1 << SCL, _edges, len(_edges))
+    out, bits, pv = ["S"], [], _dec_b[0]
+    for k in range(nedge):
+        t = _edges[k]
+        v = _dec_b[t]
+        sda, scl = v >> SDA & 1, v >> SCL & 1
+        psda, pscl = pv >> SDA & 1, pv >> SCL & 1
+        if scl and pscl and sda != psda:          # SDA changed while SCL high: START / STOP
+            out.append("P" if sda else ("S" if out and out[-1] == "P" else "Sr"))
+            bits = []
+        elif scl and not pscl:                    # SCL rising: a data bit
+            bits.append(sda)
+            if len(bits) == 9:
+                b = 0
+                for x in bits[:8]:
+                    b = b << 1 | x
+                first = len(out) and out[-1] in ("S", "Sr")
+                out.append(("%02X:%s" % (b >> 1, "R" if b & 1 else "W")) if first else "%02X" % b)
+                out.append("N" if bits[8] else "A")
+                bits = []
+        pv = v
+        if len(out) > 200:
+            break
+    return out
+
+
+def _dec_spi(n, mode):
+    SCK, MOSI, MISO, CS = 2, 3, 4, 5
+    nedge = _find_edges(_dec_b, n, 1 << SCK | 1 << CS, _edges, len(_edges))
+    sample_rising = mode in (0, 3)
+    out, mo, mi, cnt, pv = [], 0, 0, 0, _dec_b[0]
+    for k in range(nedge):
+        t = _edges[k]
+        v = _dec_b[t]
+        if v >> CS & 1 and not pv >> CS & 1:      # CS released: end of a frame
+            out.append("|")
+            cnt = mo = mi = 0
+        elif not v >> CS & 1:
+            sck, psck = v >> SCK & 1, pv >> SCK & 1
+            if sck != psck and (sck == 1) == sample_rising:
+                mo = mo << 1 | (v >> MOSI & 1)
+                mi = mi << 1 | (v >> MISO & 1)
+                cnt += 1
+                if cnt == 8:
+                    out.append("%02X/%02X" % (mo, mi))
+                    cnt = mo = mi = 0
+        pv = v
+        if len(out) > 200:
+            break
+    return out
+
+
+def decode(args):
+    proto = args[0].lower() if args else ""
+    test = "test" in args
+    args = [a for a in args[1:] if a != "test"]
+    if proto == "uart":
+        baud = int(number(args[0])) if args else 9600
+        pin = int(args[1]) if len(args) > 1 else 4
+        if not 300 <= baud <= 1000000 or pin not in (2, 3, 4, 5):
+            return "err decode uart <baud 300..1M> [pin 2-5]"
+        if test and pin != 4:
+            return "err decode uart test: the board sends on GP4 only (UART1 TX)"
+        rate = min(16 * baud, 25000000)
+        n = _capture_decode(pin, rate, _uart_traffic(baud, pin) if test else None)
+        out = _dec_uart(n, baud, pin, rate) if n else []
+    elif proto == "i2c":
+        rate = 4000000
+        n = _capture_decode(4, rate, _i2c_traffic if test else None)
+        out = _dec_i2c(n) if n else []
+    elif proto == "spi":
+        mode = int(args[0]) if args else 0
+        if mode not in (0, 1, 2, 3):
+            return "err decode spi <mode 0-3>"
+        rate = 10000000
+        n = _capture_decode(5, rate, (lambda: _spi_traffic(mode)) if test else None)
+        out = _dec_spi(n, mode) if n else []
+    else:
+        return "err decode uart|i2c|spi"
+    return "ok decode %s %s" % (proto, " ".join(out) if out else "none")
+
+
 def number(s):
     s = s.strip().lower()
     mult = {"k": 1000, "m": 1000000}.get(s[-1:], 1)
@@ -342,6 +563,8 @@ def command(line):
             return probe()
         if cmd == "adc":
             return adc()
+        if cmd == "decode":
+            return decode(args)
         if cmd == "logic" and 1 <= len(args) <= 2:
             return logic(number(args[0]), int(args[1]) if len(args) > 1 else 0)
         if cmd == "scope" and 1 <= len(args) <= 2:
