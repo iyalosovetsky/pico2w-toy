@@ -712,6 +712,7 @@ def main():
     held, held_hat, next_repeat = None, False, 0
     last_try = 0
     mode = "gen"
+    last_key = None
     vm = {"input": 0, "value": None, "min": None, "max": None, "history": [], "next": 0}
     sc = {"tb": 3, "level": 1.6, "data": None, "rate": 1, "trig": False, "paused": False}
     la = {"tb": 4, "ch": 0, "data": None, "rate": 1, "trig": False, "paused": False}
@@ -1043,6 +1044,19 @@ def main():
             sweep()
         if mode == "logic" and st and link and not la["paused"]:
             capture_logic()
+        # redraw only when something on the screen changed: a full 320x320 frame costs the Zero
+        # a lot (it was 75 % of a core at 20 fps on a still screen)
+        key = (mode, row, typing, note, note_color, repr(st),
+               vm["value"], id(vm["history"]), vm["input"],
+               id(sc["data"]), sc["tb"], sc["level"], sc["paused"],
+               id(la["data"]), la["tb"], la["ch"], la["paused"],
+               id(dc["lines"]), dc["proto"], dc["baud"], dc["spi"], dc["test"], dc["busy"],
+               tuple(lt[k] for k in ("model", "pattern", "w", "h", "x", "y", "rot", "bl", "pick", "name", "busy",
+                                     "result")), len(lt["profiles"]))
+        if key == last_key:
+            clock.tick(20)
+            continue
+        last_key = key
         if mode == "volt" and st:
             draw_volt(st, min(row, len(VROWS) - 1), vm, note, note_color)
         elif mode == "scope" and st:
