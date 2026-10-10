@@ -6,6 +6,7 @@ Games return here when they exit; CONSOLE ends the menu and opens the LCD
 console (tty7); HDMI lends the USB keyboard to the HDMI console (tty1) until KEY3.
 """
 import glob
+import math
 import os
 import socket
 import subprocess
@@ -161,6 +162,37 @@ def _dejavu(name, px):
         return pygame.font.Font(None, size)
 
 
+# the PicoCalc's J703 (left side of the case, the upper row of 8; pin 1 at the top - from the
+# mainboard V2.0 Gerbers) as wired for the signal generator board
+J703_PINS = [("3V3", "вихід 3,3 В", (230, 60, 50)), ("GP6", "генератор", ACCENT),
+             ("GP3", "MOSI", (120, 180, 255)), ("GP4", "MISO · SDA · RX", (120, 180, 255)),
+             ("GP5", "CS · SCL", (120, 180, 255)), ("GP2", "SCK", (120, 180, 255)),
+             ("GP26", "АЦП 0-3,3 В", (90, 200, 90)), ("GND", "земля", (150, 150, 150))]
+
+
+def j703_image(f, fb):
+    """A drawing of J703 for the help: the left edge of the case, pins top to bottom."""
+    pitch = max(f.get_linesize(), 9) + 1
+    head = fb.get_linesize() + 2
+    h = head + pitch * len(J703_PINS) + 4
+    img = lcd.Surface((120, h)) if lcd.S != 1 else pygame.Surface((120, h))
+    img.fill(BG)
+    img.blit(fb.render("↑ екран", True, DIM), (16, 0))
+    # the case edge and the header strip
+    pygame.draw.line(img, DIM, (6, head - 1), (6, h - 1), 2)
+    pygame.draw.rect(img, (70, 70, 70), (8, head, 9, pitch * len(J703_PINS)), border_radius=2)
+    for i, (gp, use, color) in enumerate(J703_PINS):
+        y = head + i * pitch
+        cy = y + pitch / 2
+        if i == 0:  # pin 1: square
+            pygame.draw.rect(img, color, (10, cy - 2.5, 5, 5))
+        else:
+            pygame.draw.circle(img, color, (12.5, cy), 2.5)
+        img.blit(fb.render(str(i + 1), True, color), (20, y))
+        img.blit(f.render("%s  %s" % (gp, use), True, FG), (30, y))
+    return img
+
+
 def show_help(item):
     """Help for a menu item: UP/DOWN scroll, any other key closes."""
     f = _dejavu("DejaVuSans.ttf", 13 if lcd.S > 1 else 8)
@@ -168,7 +200,14 @@ def show_help(item):
     ft = _dejavu("DejaVuSans-Bold.ttf", 17 if lcd.S > 1 else 10)
     width = 120
     rows = []  # (text, font, color)
+    line_h = f.get_linesize()
     for line in helptext.lines(item, lcd.DEVICE):
+        if line == "@j703":  # a drawing, taking as many rows as its height
+            img = j703_image(f, fb)
+            n = int(math.ceil(img.get_height() / line_h))
+            rows.append((img, None, None))
+            rows += [("", f, FG)] * (n - 1)
+            continue
         bold = line.startswith("# ")
         text = line[2:] if bold else line
         style = (fb, ACCENT) if bold else (f, FG)
@@ -181,18 +220,23 @@ def show_help(item):
             else:
                 cur = cand
         rows.append((cur, *style))
-    line_h = f.get_linesize()
     top_y = ft.get_linesize() + 4
     visible = int((128 - top_y - 2) // line_h)
     top = 0
     lcd.play("select")
     while True:
         screen.fill(BG)
+        for i, (text, font, color) in enumerate(rows):
+            y = top_y + (i - top) * line_h
+            if font is None:  # a drawing: may start above the window and show partly
+                if y + text.get_height() > top_y and y < 128:
+                    screen.blit(text, (4, y))
+            elif top <= i < top + visible:
+                screen.blit(font.render(text, True, color), (4, y))
+        screen.fill(BG, (0, 0, 128, top_y - 1))  # the title over anything scrolled up
         t = ft.render(item, True, ACCENT)
         screen.blit(t, ((128 - t.get_width()) / 2, 1))
         pygame.draw.line(screen, DIM, (4, top_y - 2), (124, top_y - 2))
-        for i, (text, font, color) in enumerate(rows[top:top + visible]):
-            screen.blit(font.render(text, True, color), (4, top_y + i * line_h))
         if top > 0:
             pygame.draw.polygon(screen, DIM, [(122, top_y + 1), (126, top_y + 5), (118, top_y + 5)])
         if top + visible < len(rows):

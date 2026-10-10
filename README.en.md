@@ -121,7 +121,7 @@ A 172×103×20 mm PicoCalc back cover for the zero mod (a Zero 2 W instead of th
 | **PREFERANS** | Preferans (Russian whist) against two computer players: Sochi (default) or Leningrad rules, chosen when a new pulka starts, pulka to 20, auto-saved. Engine and AI: [Python Pref](https://python-pref.sourceforge.io/index_ru.html) (the same one that ran on Nokia/Symbian), ported to Python 3 |
 | **BOOKS** | EPUB / FB2 / TXT (also zipped) and PDF reader for the `~/books` folder: images, contents, font size, light/dark theme; PDF as zoomed page fragments with smooth scrolling; the position in every book is saved |
 | **DOOM** | Doom (shareware episode 1) via [doomgeneric](https://github.com/ozkl/doomgeneric), downscaled to 128×80 |
-| **GENERATOR** | Signal generator on a separate board (PicoCalc, over the UART or USB): shape (square, sine, triangle, saw), frequency, duty cycle, on/off, and a voltmeter and an oscilloscope on the ADC and a logic analyzer on J703; the board's LED shows the duty and the frequency - see [generator](#picocalc-components) |
+| **GENERATOR** | Signal generator on a separate board (PicoCalc, over the UART or USB): shape (square, sine, triangle, saw), frequency, duty cycle, on/off, and a voltmeter and an oscilloscope on the ADC, a logic analyzer and an I2C / SPI / UART decoder on J703; the board's LED shows the duty and the frequency - see [generator](#picocalc-components) |
 | **AI CHAT** | Chat with a local LLM (llama.cpp / any OpenAI-compatible server) on the text console, US/UA keyboard |
 | **CONSOLE** | Leaves the menu and opens a text console with login on the LCD (tty7); `lcdmenu` brings the menu back |
 | **HDMI** | Lends the USB keyboard to the console on the monitor (tty1); the HAT buttons stay with the menu, KEY3 takes the keyboard back |
@@ -230,7 +230,9 @@ brightness. On the RP2350A GP16-31 share PWM slices with GP0-15 (the LED is on s
 the output is on GP6 (slice 3).
 
 **Tiny 2350 wiring in the PicoCalc.** The UART goes to the Zero, the rest to the PicoCalc's external
-header **J703**. Its lines come from the mainboard's Pico socket (RP2040 GPIO and Pico pin numbers
+header **J703**. The header is on the **left** side of the case (looking at the screen), level with the screen: the
+upper of two rows of 8 (the lower one is J702: the mainboard's UART0/UART1/USB); pin 1 (3V3_OUT) is the
+top one, pin 8 (GND) the bottom one (from the silkscreen of the mainboard V2.0 Gerbers). Its lines come from the mainboard's Pico socket (RP2040 GPIO and Pico pin numbers
 from the [PicoCalc V2.0 schematic](https://github.com/clockworkpi/PicoCalc/blob/master/clockwork_Mainboard_V2.0_Schematic.pdf));
 in the zero mod they are not wired to the Zero (check with a meter in your build).
 
@@ -271,7 +273,11 @@ oscilloscope are on the board's ADC input (J703.7):
 and the **logic analyzer** - the six J703 lines (2-7 = GP6 GP3 GP4 GP5 GP2 GP26, J703.2 being the
 generator's own output): an RP2350 PIO state machine samples all GPIO every tick and DMA stores them
 (up to 25 M samples/s), 512 samples per sweep, 5 us to 20 ms per division, rising-edge trigger on a
-chosen line, its frequency and duty, pause.
+chosen line, its frequency and duty, pause; and the **I2C / SPI / UART decoder** - the board waits for
+the protocol's first edge, captures 32768 samples with the same PIO + DMA and decodes them itself:
+UART 8N1 (RX - J703.4), I2C (SDA - J703.4, SCL - J703.5: START, address R/W, bytes, ACK/NACK, STOP),
+SPI modes 0-3 (SCK .6, MOSI .3, MISO .4, CS .5). The "test" source makes the board send its own
+traffic with its hardware UART / I2C / SPI on the same lines.
 
 The generator keeps running, so its output can be fed into the input to see the wave.
 
@@ -286,6 +292,7 @@ siggen probe                 # the board reads its output back: mean level in te
 siggen adc                   # voltages on the ADC inputs (RP2350: GP26 = J703.7, GP27-29)
 siggen scope 25.6k 1.6       # one oscilloscope capture: sample rate, trigger level (V)
 siggen logic 1M 0            # one logic analyzer capture: sample rate, trigger channel
+siggen decode uart 9600 test # UART / I2C / SPI decoder (test - the board sends its own traffic)
 siggen flash tools/siggen/rp2350.py   # update the board's program over the UART or USB
 ```
 
