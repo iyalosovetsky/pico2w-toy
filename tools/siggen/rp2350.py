@@ -983,7 +983,7 @@ def lcd_test(args):
     t = time.ticks_ms()
     _adc_pins_taken[0] = True
     try:
-        bl = int(opts.get("b", 100))
+        bl = int(opts.get("b", 15))     # a dim backlight unless asked for more
     except ValueError:
         return "err lcd: b= takes 0..100"
     if kind == "epd" and state["on"]:   # BUSY is on the generator's pin

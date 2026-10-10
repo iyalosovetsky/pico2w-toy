@@ -718,7 +718,7 @@ def main():
     la = {"tb": 4, "ch": 0, "data": None, "rate": 1, "trig": False, "paused": False}
     dc = {"proto": 0, "baud": 0, "spi": 0, "test": True, "lines": None, "busy": False}
     lt = {"model": 0, "pattern": 0, "result": None, "busy": False, "w": 240, "h": 240, "x": 0, "y": 0, "rot": 0,
-          "bl": 100, "pick": 0, "profiles": load_profiles(), "name": "", "top": 0}
+          "bl": 15, "pick": 0, "profiles": load_profiles(), "name": "", "top": 0}   # a dim backlight to start
     model_index = {m[0]: i for i, m in enumerate(LCD_MODELS)}
 
     def lcd_defaults():
