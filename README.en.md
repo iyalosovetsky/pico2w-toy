@@ -236,21 +236,25 @@ top one, pin 8 (GND) the bottom one (from the silkscreen of the mainboard V2.0 G
 from the [PicoCalc V2.0 schematic](https://github.com/clockworkpi/PicoCalc/blob/master/clockwork_Mainboard_V2.0_Schematic.pdf));
 in the zero mod they are not wired to the Zero (check with a meter in your build).
 
-| Tiny 2350 | To | RP2040 (Pico) on the PicoCalc schematic | Use |
-|---|---|---|---|
-| GP0 (UART0 TX) | Zero GPIO 15 / RXD, pin 10 | — | UART to the Zero (`/dev/serial0`) |
-| GP1 (UART0 RX) | Zero GPIO 14 / TXD, pin 8 | — | UART to the Zero |
-| GND | Zero GND, pin 6 | — | common ground |
-| 5V (VBUS) | 5 V from the Pololu U3V40F5 | — | power |
-| USB-C | port 3 of the FE1.1S USB hub | — | USB (`/dev/ttyACM0`): program uploads, a spare link |
-| — | J703.1 | 3V3_OUT - the Pico board's 3.3 V output (pin 36) | not powered by itself in the zero mod - see below |
-| **GP6** | J703.2 | **GP2**, pin 4 (J302) · PSRAM SIO0 | generator output |
-| GP3 | J703.3 | **GP3**, pin 5 (J302) · PSRAM SIO1 | SPI0 TX (MOSI) |
-| GP4 | J703.4 | **GP4**, pin 6 (J302) · PSRAM SIO2 | SPI0 RX (MISO) / I2C0 SDA / UART1 TX |
-| GP5 | J703.5 | **GP5**, pin 7 (J302) · PSRAM SIO3 | SPI0 CS / I2C0 SCL / UART1 RX |
-| GP2 | J703.6 | **GP21**, pin 27 (J301) · PSRAM SCLK | SPI0 SCK |
-| GP26 | J703.7 | **GP28**, pin 34 (J301) | ADC, 0-3.3 V |
-| GND | J703.8 | GND | ground |
+| Tiny 2350 | To | Ribbon wire | RP2040 (Pico) on the PicoCalc schematic | Use |
+|---|---|---|---|---|
+| GP0 (UART0 TX) | Zero GPIO 15 / RXD, pin 10 | — | — | UART to the Zero (`/dev/serial0`) |
+| GP1 (UART0 RX) | Zero GPIO 14 / TXD, pin 8 | — | — | UART to the Zero |
+| GND | Zero GND, pin 6 | — | — | common ground |
+| 5V (VBUS) | 5 V from the Pololu U3V40F5 | — | — | power |
+| USB-C | port 3 of the FE1.1S USB hub | — | — | USB (`/dev/ttyACM0`): program uploads, a spare link |
+| — | J703.1 | red | 3V3_OUT - the Pico board's 3.3 V output (pin 36) | not powered by itself in the zero mod - see below |
+| **GP6** | J703.2 | orange | **GP2**, pin 4 (J302) · PSRAM SIO0 | generator output |
+| GP3 | J703.3 | yellow | **GP3**, pin 5 (J302) · PSRAM SIO1 | SPI0 TX (MOSI) |
+| GP4 | J703.4 | green | **GP4**, pin 6 (J302) · PSRAM SIO2 | SPI0 RX (MISO) / I2C0 SDA / UART1 TX |
+| GP5 | J703.5 | blue | **GP5**, pin 7 (J302) · PSRAM SIO3 | SPI0 CS / I2C0 SCL / UART1 RX |
+| GP2 | J703.6 | violet | **GP21**, pin 27 (J301) · PSRAM SCLK | SPI0 SCK |
+| GP26 | J703.7 | grey | **GP28**, pin 34 (J301) | ADC, 0-3.3 V |
+| GND | J703.8 | white | GND | ground |
+
+The colours are a standard ribbon cable's: 1 red, 2 orange, 3 yellow, 4 green, 5 blue, 6 violet, 7 grey,
+8 white; the pins of the J703 strip at the bottom of the GENERATOR screens are drawn the same way.
+
 
 The mainboard's PSRAM (U301) sits on GP2-GP5 and GP21; its chip enable is GP20 (pin 26) with a 10 kOhm
 pull-up to 3.3 V, so while GP20 is left unconnected the PSRAM is inactive and stays off the lines.

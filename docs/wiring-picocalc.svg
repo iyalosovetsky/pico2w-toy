@@ -88,12 +88,12 @@
   <rect x="710" y="60" width="250" height="566" rx="8" fill="#fdf2d0" stroke="#b8860b"/>
   <text x="835" y="84" text-anchor="middle" font-weight="bold" fill="#222">PicoCalc mainboard V2.0</text>
   <text x="835" y="101" text-anchor="middle" font-size="11" fill="#555">Pico socket lines → external header J703</text>
-  <text x="742" y="226" font-size="11" fill="#555">J703 · RP2040 GPIO · Pico pin</text>
+  <text x="742" y="226" font-size="11" fill="#555">J703 (wire colour) · RP2040 GPIO · Pico pin</text>
   <g fill="#ffffff" stroke="#8a6d1d">
-    <rect x="718" y="232" width="16" height="16"/><rect x="718" y="262" width="16" height="16"/>
-    <rect x="718" y="292" width="16" height="16"/><rect x="718" y="322" width="16" height="16"/>
-    <rect x="718" y="352" width="16" height="16"/><rect x="718" y="382" width="16" height="16"/>
-    <rect x="718" y="412" width="16" height="16"/><rect x="718" y="442" width="16" height="16"/>
+    <rect x="718" y="232" width="16" height="16" fill="#dc2828"/><rect x="718" y="262" width="16" height="16" fill="#ff8c00"/>
+    <rect x="718" y="292" width="16" height="16" fill="#f0dc00"/><rect x="718" y="322" width="16" height="16" fill="#28b43c"/>
+    <rect x="718" y="352" width="16" height="16" fill="#286eff"/><rect x="718" y="382" width="16" height="16" fill="#a046e6"/>
+    <rect x="718" y="412" width="16" height="16" fill="#969696"/><rect x="718" y="442" width="16" height="16" fill="#f0f0f0"/>
   </g>
   <g font-size="12" fill="#222">
     <text x="742" y="244">1 · 3V3_OUT (Pico pin 36, see below)</text>

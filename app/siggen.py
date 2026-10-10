@@ -201,6 +201,10 @@ def text(s, pos, color, f, right=False, center=False):
 # J703 on the PicoCalc (left side of the case, pin 1 at the top): the strip at the bottom of every
 # screen shows which pins the mode uses and which way - out of the board or into it
 C_OUT, C_IN, C_IO = (255, 170, 0), (110, 170, 255), (200, 120, 255)
+# the ribbon cable's standard colours: 1 red, 2 orange, 3 yellow, 4 green, 5 blue, 6 violet,
+# 7 grey, 8 white - each pin is drawn in its wire's colour
+WIRE = {1: (220, 40, 40), 2: (255, 140, 0), 3: (240, 220, 0), 4: (40, 180, 60), 5: (40, 110, 255),
+        6: (160, 70, 230), 7: (150, 150, 150), 8: (240, 240, 240)}
 J703_USE = {"uart": {4: "in"}, "i2c": {4: "in", 5: "in"}, "spi": {6: "in", 3: "in", 4: "in", 5: "in"}}
 J703_TEST = {"uart": {4: "out"}, "i2c": {4: "io", 5: "io"}, "spi": {6: "out", 3: "out", 4: "in", 5: "out"}}
 LOGIC_PIN = [2, 3, 4, 5, 6, 7]   # logic channel -> J703 pin
@@ -215,28 +219,23 @@ def draw_j703(uses, gen_on, strong_gen=False, y=104):
     for pin in range(1, 9):
         x = 24 + (pin - 1) * 12.6
         use = uses.get(pin)
-        if pin == 1:
-            color = (230, 60, 50)
-        elif pin == 8:
-            color = (150, 150, 150)
-        else:
-            color = {"out": C_OUT, "in": C_IN, "io": C_IO,
-                     "gen": C_OUT if strong_gen else (150, 105, 0)}.get(use, (120, 120, 120))
-        filled = use is not None or pin in (1, 8)
+        wire = WIRE[pin]
+        lit = use is not None and (use != "gen" or strong_gen) or pin in (1, 8)
+        fill = wire if lit else tuple(c * 3 // 10 for c in wire)     # unused pins: the colour dimmed
         box = (x, y + 4, 10.5, 9)
-        if filled:
-            pygame.draw.rect(screen, color, box, border_radius=2)
-        else:
-            pygame.draw.rect(screen, color, box, 1, border_radius=2)
+        pygame.draw.rect(screen, fill, box, border_radius=2)
+        pygame.draw.rect(screen, wire, box, 1, border_radius=2)
+        light = sum(fill) > 380                                      # dark digits on light colours
         label = {1: "+", 8: "⊥"}.get(pin, str(pin))
-        text(label, (x + 5.25, y + 4), BG if filled else (200, 200, 200), f_lbold, center=True)
+        text(label, (x + 5.25, y + 4), BG if light else FG, f_lbold, center=True)
         cx = x + 5.25
+        arrow = {"out": C_OUT, "in": C_IN, "io": C_IO, "gen": C_OUT if strong_gen else (150, 105, 0)}.get(use)
         if use in ("out", "gen"):      # out of the board: up
-            pygame.draw.polygon(screen, color, [(cx, y), (cx - 2.5, y + 3), (cx + 2.5, y + 3)])
+            pygame.draw.polygon(screen, arrow, [(cx, y), (cx - 2.5, y + 3), (cx + 2.5, y + 3)])
         elif use == "in":              # into the board: down
-            pygame.draw.polygon(screen, color, [(cx - 2.5, y), (cx + 2.5, y), (cx, y + 3)])
+            pygame.draw.polygon(screen, arrow, [(cx - 2.5, y), (cx + 2.5, y), (cx, y + 3)])
         elif use == "io":
-            pygame.draw.polygon(screen, color, [(cx, y), (cx + 2, y + 1.5), (cx, y + 3), (cx - 2, y + 1.5)])
+            pygame.draw.polygon(screen, arrow, [(cx, y), (cx + 2, y + 1.5), (cx, y + 3), (cx - 2, y + 1.5)])
 
 
 def hint_line(s):

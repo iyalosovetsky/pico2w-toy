@@ -235,21 +235,25 @@ DMA (150 МГц·X/Y) - частота точна, процесор вільни
 [схемою PicoCalc V2.0](https://github.com/clockworkpi/PicoCalc/blob/master/clockwork_Mainboard_V2.0_Schematic.pdf));
 у zero mod вони не з'єднані із Zero (перевірте тестером у своїй розводці).
 
-| Tiny 2350 | Куди | RP2040 (Pico) за схемою PicoCalc | Призначення |
-|---|---|---|---|
-| GP0 (UART0 TX) | Zero GPIO 15 / RXD, пін 10 | — | UART до Zero (`/dev/serial0`) |
-| GP1 (UART0 RX) | Zero GPIO 14 / TXD, пін 8 | — | UART до Zero |
-| GND | Zero GND, пін 6 | — | спільна земля |
-| 5V (VBUS) | 5 В від Pololu U3V40F5 | — | живлення |
-| USB-C | порт 3 USB-хаба FE1.1S | — | USB (`/dev/ttyACM0`): заливка програми, запасний канал |
-| — | J703.1 | 3V3_OUT - вихід 3,3 В плати Pico (пін 36) | у zero mod сам не живиться - див. нижче |
-| **GP6** | J703.2 | **GP2**, пін 4 (J302) · PSRAM SIO0 | вихід генератора |
-| GP3 | J703.3 | **GP3**, пін 5 (J302) · PSRAM SIO1 | SPI0 TX (MOSI) |
-| GP4 | J703.4 | **GP4**, пін 6 (J302) · PSRAM SIO2 | SPI0 RX (MISO) / I2C0 SDA / UART1 TX |
-| GP5 | J703.5 | **GP5**, пін 7 (J302) · PSRAM SIO3 | SPI0 CS / I2C0 SCL / UART1 RX |
-| GP2 | J703.6 | **GP21**, пін 27 (J301) · PSRAM SCLK | SPI0 SCK |
-| GP26 | J703.7 | **GP28**, пін 34 (J301) | АЦП, 0-3,3 В |
-| GND | J703.8 | GND | земля |
+| Tiny 2350 | Куди | Провід шлейфу | RP2040 (Pico) за схемою PicoCalc | Призначення |
+|---|---|---|---|---|
+| GP0 (UART0 TX) | Zero GPIO 15 / RXD, пін 10 | — | — | UART до Zero (`/dev/serial0`) |
+| GP1 (UART0 RX) | Zero GPIO 14 / TXD, пін 8 | — | — | UART до Zero |
+| GND | Zero GND, пін 6 | — | — | спільна земля |
+| 5V (VBUS) | 5 В від Pololu U3V40F5 | — | — | живлення |
+| USB-C | порт 3 USB-хаба FE1.1S | — | — | USB (`/dev/ttyACM0`): заливка програми, запасний канал |
+| — | J703.1 | червоний | 3V3_OUT - вихід 3,3 В плати Pico (пін 36) | у zero mod сам не живиться - див. нижче |
+| **GP6** | J703.2 | оранжевий | **GP2**, пін 4 (J302) · PSRAM SIO0 | вихід генератора |
+| GP3 | J703.3 | жовтий | **GP3**, пін 5 (J302) · PSRAM SIO1 | SPI0 TX (MOSI) |
+| GP4 | J703.4 | зелений | **GP4**, пін 6 (J302) · PSRAM SIO2 | SPI0 RX (MISO) / I2C0 SDA / UART1 TX |
+| GP5 | J703.5 | синій | **GP5**, пін 7 (J302) · PSRAM SIO3 | SPI0 CS / I2C0 SCL / UART1 RX |
+| GP2 | J703.6 | фіолетовий | **GP21**, пін 27 (J301) · PSRAM SCLK | SPI0 SCK |
+| GP26 | J703.7 | сірий | **GP28**, пін 34 (J301) | АЦП, 0-3,3 В |
+| GND | J703.8 | білий | GND | земля |
+
+Кольори - стандартна розкраска шлейфу: 1 червоний, 2 оранжевий, 3 жовтий, 4 зелений, 5 синій, 6 фіолетовий,
+7 сірий, 8 білий; так само пофарбовано контакти на смужці J703 внизу екранів GENERATOR.
+
 
 На лініях GP2-GP5 і GP21 сидить PSRAM головної плати (U301); її вибір CE - GP20 (пін 26) з
 підтяжкою 10 кОм до 3,3 В, тож поки GP20 ні до чого не під'єднаний, PSRAM неактивна і лініям не
