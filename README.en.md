@@ -121,7 +121,7 @@ A 172×103×20 mm PicoCalc back cover for the zero mod (a Zero 2 W instead of th
 | **PREFERANS** | Preferans (Russian whist) against two computer players: Sochi (default) or Leningrad rules, chosen when a new pulka starts, pulka to 20, auto-saved. Engine and AI: [Python Pref](https://python-pref.sourceforge.io/index_ru.html) (the same one that ran on Nokia/Symbian), ported to Python 3 |
 | **BOOKS** | EPUB / FB2 / TXT (also zipped) and PDF reader for the `~/books` folder: images, contents, font size, light/dark theme; PDF as zoomed page fragments with smooth scrolling; the position in every book is saved |
 | **DOOM** | Doom (shareware episode 1) via [doomgeneric](https://github.com/ozkl/doomgeneric), downscaled to 128×80 |
-| **GENERATOR** | Signal generator on a separate board (PicoCalc, over the UART or USB): shape (square, sine, triangle, saw), frequency, duty cycle, on/off, and a voltmeter and an oscilloscope on the ADC; the board's LED shows the duty and the frequency - see [generator](#picocalc-components) |
+| **GENERATOR** | Signal generator on a separate board (PicoCalc, over the UART or USB): shape (square, sine, triangle, saw), frequency, duty cycle, on/off, and a voltmeter and an oscilloscope on the ADC and a logic analyzer on J703; the board's LED shows the duty and the frequency - see [generator](#picocalc-components) |
 | **AI CHAT** | Chat with a local LLM (llama.cpp / any OpenAI-compatible server) on the text console, US/UA keyboard |
 | **CONSOLE** | Leaves the menu and opens a text console with login on the LCD (tty7); `lcdmenu` brings the menu back |
 | **HDMI** | Lends the USB keyboard to the console on the monitor (tty1); the HAT buttons stay with the menu, KEY3 takes the keyboard back |
@@ -260,12 +260,18 @@ FE1.1S USB hub and the Tiny 2350's 5V pin; the hub is on the Zero's USB, port 1 
 
 ![Wiring: Zero 2 W, Tiny 2350, Pololu, USB hub and the PicoCalc's J703](docs/wiring-picocalc.svg)
 
-The GENERATOR menu item has two more modes (the first row, "Mode"), both on the board's ADC input (J703.7):
+The GENERATOR menu item has three more modes (the first row, "Mode"). The voltmeter and the
+oscilloscope are on the board's ADC input (J703.7):
 - **voltmeter** - the voltage, min / max and a 10 s graph;
 - **oscilloscope** (RP2350) - 256 points per sweep, 100 us to 50 ms per division, rising-edge trigger
   through a set level, frequency and peak-to-peak, pause. The ADC runs at ~500 k conversions/s and each
   point is the mean of the conversions in its interval ("high-res"), so the sine / triangle PWM shows as
   the wave even without the RC filter.
+
+and the **logic analyzer** - the six J703 lines (2-7 = GP6 GP3 GP4 GP5 GP2 GP26, J703.2 being the
+generator's own output): an RP2350 PIO state machine samples all GPIO every tick and DMA stores them
+(up to 25 M samples/s), 512 samples per sweep, 5 us to 20 ms per division, rising-edge trigger on a
+chosen line, its frequency and duty, pause.
 
 The generator keeps running, so its output can be fed into the input to see the wave.
 
@@ -279,6 +285,7 @@ siggen get                   # ok board=rp2350 shape=square freq=2500 duty=25 ou
 siggen probe                 # the board reads its output back: mean level in ten 0.1 s slices
 siggen adc                   # voltages on the ADC inputs (RP2350: GP26 = J703.7, GP27-29)
 siggen scope 25.6k 1.6       # one oscilloscope capture: sample rate, trigger level (V)
+siggen logic 1M 0            # one logic analyzer capture: sample rate, trigger channel
 siggen flash tools/siggen/rp2350.py   # update the board's program over the UART or USB
 ```
 
