@@ -12,13 +12,14 @@
 #   siggen decode uart 9600 [test] | decode i2c [test] | decode spi 0 [test]   protocol decoder
 #   siggen lcd st7789-240x240 [all|colors|bars|grid|text]   display tester (siggen lcd - the models)
 #   siggen bl 60                TFT backlight on J703.2, 0..100 % (the generator output goes off)
+#   siggen power | doze         is the board dozing (48 MHz after 30 s idle, output off) / doze now
 #   siggen flash tools/siggen/rp2350.py   upload a program as the board's main.py, restart it
 #
 # Every command prints the board's answer ("ok board=... shape=... freq=..." or "err ...").
 # SIGGEN_PORT sets the port instead of looking for one (115200 baud).
 
 usage() {
-    sed -n '2,18s/^# \{0,1\}//p' "$0"
+    sed -n '2,19s/^# \{0,1\}//p' "$0"
     exit "${1:-0}"
 }
 [ $# -eq 0 ] && set -- get
@@ -117,7 +118,7 @@ while [ $# -gt 0 ]; do
             send "put main.py $(stat -c %s "$2")" "$2"
             [ $status = 0 ] && send reset && wait_board
             shift 2 ;;
-        on|off|get|ping|probe|adc)
+        on|off|get|ping|probe|adc|power|doze)
             send "$1"
             shift ;;
         *)
