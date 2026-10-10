@@ -227,22 +227,27 @@ class Stream:
         self.buf = b""
 
     def receive(self, name, size, head):
-        tmp = name + ".new"
+        """put: take the whole file into RAM first - writing the flash stalls the CPU long
+        enough for the UART FIFO to overflow - then store it via a temporary file."""
+        if size > 200000:
+            return "err put: file too big"
+        data = bytearray(size)
         head = head[:size]
+        data[:len(head)] = head
         got, end = len(head), time.ticks_add(time.ticks_ms(), 10000 + size // 5)
-        with open(tmp, "wb") as f:
-            f.write(head)
-            while got < size and time.ticks_diff(end, time.ticks_ms()) > 0:
-                if self.avail():
-                    data = self.read(size - got)
-                    if data:
-                        f.write(data)
-                        got += len(data)
-                else:
-                    time.sleep_ms(2)
+        while got < size and time.ticks_diff(end, time.ticks_ms()) > 0:
+            if self.avail():
+                chunk = self.read(size - got)
+                if chunk:
+                    data[got:got + len(chunk)] = chunk
+                    got += len(chunk)
+            else:
+                time.sleep_ms(1)
         if got != size:
-            os.remove(tmp)
             return "err put: got %d of %d bytes" % (got, size)
+        tmp = name + ".new"
+        with open(tmp, "wb") as f:
+            f.write(data)
         try:
             os.remove(name)
         except OSError:

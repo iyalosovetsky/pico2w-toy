@@ -143,23 +143,27 @@ def status():
 
 
 def receive(name, size, head=b""):
-    """put: size raw bytes (head = those already read) from the UART into name, via a temp file."""
-    tmp = name + ".new"
+    """put: size raw bytes (head = those already read) from the UART - into RAM first, as
+    writing the flash meanwhile can lose UART bytes - then into name via a temp file."""
+    if size > 100000:
+        return "err put: file too big"
+    data = bytearray(size)
     head = head[:size]
+    data[:len(head)] = head
     got, end = len(head), time.ticks_add(time.ticks_ms(), 10000 + size // 5)
-    with open(tmp, "wb") as f:
-        f.write(head)
-        while got < size and time.ticks_diff(end, time.ticks_ms()) > 0:
-            n = uart.any()
-            if n:
-                data = uart.read(min(n, size - got))
-                f.write(data)
-                got += len(data)
-            else:
-                time.sleep_ms(2)
+    while got < size and time.ticks_diff(end, time.ticks_ms()) > 0:
+        n = uart.any()
+        if n:
+            chunk = uart.read(min(n, size - got))
+            data[got:got + len(chunk)] = chunk
+            got += len(chunk)
+        else:
+            time.sleep_ms(2)
     if got != size:
-        os.remove(tmp)
         return "err put: got %d of %d bytes" % (got, size)
+    tmp = name + ".new"
+    with open(tmp, "wb") as f:
+        f.write(data)
     try:
         os.remove(name)
     except OSError:
