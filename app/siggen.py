@@ -216,6 +216,7 @@ LTIMEBASES = [0.5e-6, 1e-6, 2e-6, 5e-6, 10e-6, 20e-6, 50e-6, 100e-6, 200e-6, 500
 LT_NORMAL_MIN = 2           # LTIMEBASES index: 2 us/div (25.6 M/s) is the fastest without the fast mode
 LAROWS = ["Режим", "Час/под", "Синхр.", "Швидкий"]
 R_TURBO = 3
+TURBO_MHZ = [0, 250, 300, 200]   # the fast mode's clock (0 = off); the capture goes up to half of it
 LA_ROW_H = 11
 LOGIC_N = 512
 LOGIC_CH = ["2", "3", "4", "5", "6", "7"]   # J703 pins: GP6 GP3 GP4 GP5 GP2 GP26
@@ -496,7 +497,7 @@ def draw_logic(st, row, la, note, note_color):
     screen.fill(BG)
     text("АНАЛІЗАТОР " + st["board"], (64, 2), ACCENT, f_title, center=True)
     values = ["аналізатор", time_text(LTIMEBASES[la["tb"]]), "J703.%s ↑" % LOGIC_CH[la["ch"]],
-              "200 МГц" if la["turbo"] else "вимк"]
+              "%d МГц" % la["turbo"] if la["turbo"] else "вимк"]
     for i, (name, value) in enumerate(zip(LAROWS, values)):
         y = 12 + i * LA_ROW_H
         sel = i == row
@@ -721,7 +722,7 @@ def main():
     last_key = None
     vm = {"input": 0, "value": None, "min": None, "max": None, "history": [], "next": 0}
     sc = {"tb": 3, "level": 1.6, "data": None, "rate": 1, "trig": False, "paused": False}
-    la = {"tb": 7, "ch": 0, "data": None, "rate": 1, "trig": False, "paused": False, "turbo": False}
+    la = {"tb": 7, "ch": 0, "data": None, "rate": 1, "trig": False, "paused": False, "turbo": 0}
     dc = {"proto": 0, "baud": 0, "spi": 0, "test": True, "lines": None, "busy": False}
     lt = {"model": 0, "pattern": 0, "result": None, "busy": False, "w": 240, "h": 240, "x": 0, "y": 0, "rot": 0,
           "bl": 15, "pick": 0, "profiles": load_profiles(), "name": "", "top": 0}   # a dim backlight to start
@@ -806,7 +807,7 @@ def main():
 
     def capture_logic():
         nonlocal note, note_color, note_until
-        rate = min(LOGIC_N / SCOPE_DIVS / LTIMEBASES[la["tb"]], 100e6 if la["turbo"] else 26e6)
+        rate = min(LOGIC_N / SCOPE_DIVS / LTIMEBASES[la["tb"]], la["turbo"] * 0.5e6 if la["turbo"] else 26e6)
         reply = link.ask("logic %g %d%s" % (rate, la["ch"], " turbo" if la["turbo"] else ""),
                          2 * LOGIC_N / rate + 2) if link else None
         got = parse_logic(reply)
@@ -908,7 +909,9 @@ def main():
             elif row == R_TRIG:
                 la["ch"] = (la["ch"] + sign) % len(LOGIC_CH)
             elif row == R_TURBO:
-                la["turbo"] = not la["turbo"]
+                la["turbo"] = TURBO_MHZ[(TURBO_MHZ.index(la["turbo"]) + sign) % len(TURBO_MHZ)]
+                if la["turbo"] and link:
+                    link.ask("turbo %d" % la["turbo"])
                 if not la["turbo"]:
                     la["tb"] = max(la["tb"], LT_NORMAL_MIN)
             la["paused"] = False

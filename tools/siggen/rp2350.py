@@ -29,8 +29,9 @@
 #                GP2 GP26): 512 samples at <rate> (2.5 k .. 25 M samples/s, a PIO state machine +
 #                DMA), lined up on a rising edge of channel <ch> (0..5, default 0) if there is
 #                one; answers "ok logic rate=.. n=512 trig=1|0 turbo=0|1 data=<hex, a byte per sample>";
-#                "turbo": the fast mode - the clock goes to 200 MHz for the capture (the
-#                generator output is re-made for it), up to 100 M samples/s
+#                "turbo": the fast mode - the clock goes to the turbo clock (200 MHz, see
+#                turbo) for the capture (the generator output is re-made for it), up to half of it
+#   turbo [MHz]  the fast mode's clock, 150..300 (the QSPI flash divider follows above 260)
 #   decode uart <baud> [pin] [test] | decode i2c [test] | decode spi <mode 0-3> [test]
 #                protocol decoder on the J703 lines: waits (2 s) for the first falling edge -
 #                UART start bit on <pin> (GPIO, default GP4 = J703.4), I2C SDA (GP4 = J703.4,
@@ -69,7 +70,8 @@ DDS_FMIN, DDS_FMAX = 1, 20000
 SQ_PWM_MIN = 10                 # below this the square wave comes from the DMA path
 SHAPES = ("square", "sine", "triangle", "saw")
 CLK = 150000000                 # the normal system clock
-TURBO_HZ = 200000000            # the logic analyzer's fast mode (RP2350 is rated for 200 MHz)
+turbo_hz = [200000000]          # the logic analyzer's fast mode (RP2350 is rated for 200 MHz; 250-300 run)
+QMI_M0_TIMING = 0x400d000c      # the QSPI flash clock divider (bits 7:0): flash SCK = clk_sys / CLKDIV
 TOP = 255                       # DDS carrier: 8 bits, CLK / 256 = 586 kHz
 PWM_SLICE = 0x400a8000 + 0x14 * ((OUT_PIN >> 1) & 7)    # CSR, DIV, CTR, CC, TOP (RP2350A)
 PWM_CC = PWM_SLICE + 0x0C       # 16-bit DMA writes land in both A and B
@@ -314,22 +316,32 @@ def _pack(src: ptr32, dst: ptr8, start: int, n: int):
 
 
 def set_clock(hz):
-    """Change the system clock and re-make the generator output for it (a short glitch)."""
-    if machine.freq() != hz:
-        machine.freq(hz)
-        if state["on"]:
-            apply()
+    """Change the system clock and re-make the generator output for it (a short glitch). The
+    firmware runs from the QSPI flash, clocked at clk_sys / CLKDIV: above 260 MHz the divider
+    goes 2 -> 3, so the flash stays under ~133 MHz (it is set before a raise, after a drop)."""
+    if machine.freq() == hz:
+        return
+    div = 3 if hz > 260000000 else 2
+    t = mem32[QMI_M0_TIMING]
+    if div > (t & 0xFF):
+        mem32[QMI_M0_TIMING] = (t & ~0xFF) | div
+    machine.freq(hz)
+    t = mem32[QMI_M0_TIMING]
+    if div < (t & 0xFF):
+        mem32[QMI_M0_TIMING] = (t & ~0xFF) | div
+    if state["on"]:
+        apply()
 
 
 def logic(rate, ch=0, turbo=False):
     rate = float(rate)
-    top = 100000000 if turbo else 26000000
+    top = turbo_hz[0] // 2 if turbo else 26000000
     if not 2500 <= rate <= top:          # the PIO clock divider stops at 150 MHz / 65536
         return "err logic rate 2500..%d%s" % (top, "" if turbo else " (fast mode: up to 100 M)")
     if not 0 <= ch < len(LOGIC_PINS):
         return "err logic channel 0..5"
     if turbo:
-        set_clock(TURBO_HZ)
+        set_clock(turbo_hz[0])
     try:
         return _logic_capture(rate, ch, turbo)
     finally:
@@ -1058,9 +1070,16 @@ def command(line):
             return "pong"
         if cmd == "power":
             return power_status()
+        if cmd == "turbo":               # the fast mode's clock: turbo [MHz] (150..300)
+            if args:
+                mhz = int(number(args[0]))
+                if not 150 <= mhz <= 300:
+                    return "err turbo 150..300 MHz"
+                turbo_hz[0] = mhz * 1000000
+            return "ok turbo %d MHz, logic up to %d M/s" % (turbo_hz[0] // 1000000, turbo_hz[0] // 2000000)
         if cmd == "clocks":              # diagnostics: clk_peri / clk_usb / clk_adc CTRL and DIV
             c = 0x40010000
-            return "ok clocks sys=%d %s" % (machine.freq(), " ".join(
+            return "ok clocks sys=%d qmi=%08x %s" % (machine.freq(), mem32[QMI_M0_TIMING], " ".join(
                 "%s=%08x/%08x" % (n, mem32[c + o], mem32[c + o + 4]) for n, o in (("peri", 0x48), ("usb", 0x60), ("adc", 0x6C))))
         if cmd == "doze":                # for testing: doze now
             doze()
