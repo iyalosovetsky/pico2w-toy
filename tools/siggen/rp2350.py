@@ -19,10 +19,17 @@
 #   on / off     get     ping     reset
 #   probe        self-check: the mean level of the output in ten 0.1 s slices (0..100 %)
 #   adc          voltages on GP26-GP29 (ADC0-3; GP26 = the PicoCalc's J703.7), 64-sample mean
+#   scope <rate> [level]   oscilloscope on GP26: 256 8-bit samples at <rate> samples/s
+#                (500 .. 500 k; each sample is the mean of the ~500 k/s conversions in its
+#                interval), lined up on a rising edge through <level> volts (default 1.65)
+#                if there is one; answers
+#                "ok scope rate=.. n=256 trig=1|0 data=<hex>", 0..255 = 0..3.3 V
 #   put <file> <bytes>   answers "ok send", then takes that many raw bytes: replaces a file
 #                        (program updates over the UART: siggen flash)
 import array
+import binascii
 import math
+import micropython
 import os
 import select
 import sys
@@ -47,7 +54,7 @@ DREQ_DMA_TIMER0 = 59
 NMAX = 4096                     # samples in a wave table (16 bit -> 8 KB ring)
 LED_MAX = 0.35                  # LED brightness at 100 % duty (full is blinding)
 
-uart = UART(0, baudrate=115200, tx=Pin(0), rx=Pin(1), rxbuf=2048)
+uart = UART(0, baudrate=115200, tx=Pin(0), rx=Pin(1), rxbuf=2048, txbuf=1024)
 usb = select.poll()
 usb.register(sys.stdin, select.POLLIN)
 leds = [PWM(Pin(p), freq=1000, duty_u16=65535) for p in (18, 19, 20)]  # R G B, active low
@@ -181,6 +188,68 @@ def adc():
     return "ok adc " + " ".join(out)
 
 
+ADC_BASE = 0x400a0000          # CS, RESULT, FCS, FIFO, DIV
+SCOPE_N = 256
+_scope = bytearray(2 * SCOPE_N)
+
+
+@micropython.viper
+def _capture(buf: ptr8, n: int, k: int):
+    """n samples from the ADC FIFO (8 bit), each the mean of k conversions."""
+    fcs = ptr32(0x400a0008)
+    fifo = ptr32(0x400a000c)
+    i = 0
+    while i < n:
+        acc = 0
+        j = 0
+        while j < k:
+            while (fcs[0] >> 16) & 0xF == 0:
+                pass
+            acc += fifo[0] & 0xFF
+            j += 1
+        buf[i] = acc // k
+        i += 1
+
+
+def scope(rate, level=1.65):
+    rate = float(rate)
+    if not 500 <= rate <= 500000:
+        return "err scope rate 500..500000"
+    # "high-res": the ADC runs near its 500 k/s and every point is the mean of the conversions
+    # in its interval - an anti-alias filter that also smooths the DDS shapes' 586 kHz PWM
+    k = max(1, int(500000 / rate))
+    ADCS[0].read_u16()                         # GP26 set up as an analog input
+    mem32[ADC_BASE] = 1                        # EN, AINSEL 0 = GP26
+    while not mem32[ADC_BASE] & 0x100:
+        pass
+    mem32[ADC_BASE + 8] = 1 | 2 | 3 << 10      # FIFO on, 8-bit results, clear under/overflow
+    while mem32[ADC_BASE + 8] & 0xF << 16:
+        mem32[ADC_BASE + 0xC]
+    d = 48000000 / (rate * k) - 1
+    mem32[ADC_BASE + 0x10] = int(d) << 8 | int((d - int(d)) * 256)
+    mem32[ADC_BASE] = 1 | 8                    # START_MANY
+    _capture(_scope, 2 * SCOPE_N, k)
+    mem32[ADC_BASE] = 1
+    while not mem32[ADC_BASE] & 0x100:
+        pass
+    over = mem32[ADC_BASE + 8] >> 11 & 1
+    mem32[ADC_BASE + 8] = 3 << 10
+    while mem32[ADC_BASE + 8] & 0xF << 16:
+        mem32[ADC_BASE + 0xC]
+    mem32[ADC_BASE + 8] = 0
+    mem32[ADC_BASE + 0x10] = 0
+    # trigger: the first rising crossing of the level, with 1/8 of the window before it
+    lv = int(level / 3.3 * 255)
+    pre = SCOPE_N // 8
+    start, trig = 0, 0
+    for i in range(pre + 1, SCOPE_N + pre):
+        if _scope[i - 1] < lv <= _scope[i]:
+            start, trig = i - pre, 1
+            break
+    data = binascii.hexlify(_scope[start:start + SCOPE_N]).decode()
+    return "ok scope rate=%g n=%d trig=%d over=%d data=%s" % (rate, SCOPE_N, trig, over, data)
+
+
 def number(s):
     s = s.strip().lower()
     mult = {"k": 1000, "m": 1000000}.get(s[-1:], 1)
@@ -210,6 +279,8 @@ def command(line):
             return probe()
         if cmd == "adc":
             return adc()
+        if cmd == "scope" and 1 <= len(args) <= 2:
+            return scope(number(args[0]), float(args[1]) if len(args) > 1 else 1.65)
         if cmd == "shape" and len(args) == 1 and args[0].lower() in SHAPES:
             state["shape"] = args[0].lower()
             lo, hi = limits()
@@ -303,11 +374,18 @@ class Stream:
                 self.write(reply.encode() + b"\n")
 
 
+def uart_write(data):
+    """uart.write() takes only what fits in the TX buffer: write until all of it went out."""
+    mv, sent = memoryview(data), 0
+    while sent < len(data):
+        sent += uart.write(mv[sent:]) or 0
+
+
 def usb_read(n):
     return sys.stdin.buffer.read(1)  # one byte at a time: never blocks after poll()
 
 
-streams = [Stream(lambda n: uart.read(min(n, uart.any())), uart.write, uart.any),
+streams = [Stream(lambda n: uart.read(min(n, uart.any())), uart_write, uart.any),
            Stream(usb_read, sys.stdout.buffer.write, lambda: usb.poll(0))]
 
 apply()

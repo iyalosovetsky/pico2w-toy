@@ -7,13 +7,14 @@
 #   siggen on | off             start / stop the output
 #   siggen get | ping | probe   settings / link check / the board reads its output back
 #   siggen adc                  voltages on the board's ADC inputs (RP2350: GP26-29)
+#   siggen scope 100k [1.65]    oscilloscope capture on GP26: rate (samples/s), trigger level (V)
 #   siggen flash tools/siggen/rp2350.py   upload a program as the board's main.py, restart it
 #
 # Every command prints the board's answer ("ok board=... shape=... freq=..." or "err ...").
 # SIGGEN_PORT sets the port instead of looking for one (115200 baud).
 
 usage() {
-    sed -n '2,13s/^# \{0,1\}//p' "$0"
+    sed -n '2,14s/^# \{0,1\}//p' "$0"
     exit "${1:-0}"
 }
 [ $# -eq 0 ] && set -- get
@@ -89,6 +90,9 @@ find_port
 status=0
 while [ $# -gt 0 ]; do
     case "$1" in
+        scope)  # scope <rate> [level]: one capture, printed as the board sends it
+            [ $# -ge 2 ] || usage 1
+            if [ $# -ge 3 ] && [[ $3 =~ ^[0-9.]+$ ]]; then send "scope $2 $3"; shift 3; else send "scope $2"; shift 2; fi ;;
         freq|duty|shape)
             [ $# -ge 2 ] || usage 1
             send "$1 $2"

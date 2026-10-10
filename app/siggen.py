@@ -1,8 +1,10 @@
 """Signal generator board (tools/siggen: an RP2350 or an ESP32-C6 running rp2350.py / esp32c6.py
 as its main.py), driven over the UART (/dev/serial0) or USB (/dev/ttyACM*) - whichever answers.
 
-Two modes (the first row): generator and voltmeter (the board's ADC inputs, GP26 = J703.7 in
-the PicoCalc; min / max and a 10 s graph; the generator keeps running meanwhile).
+Three modes (the first row): generator, voltmeter (the board's ADC inputs, GP26 = J703.7 in
+the PicoCalc; min / max and a 10 s graph) and oscilloscope (GP26: 256 points per sweep, time base
+100 us .. 50 ms per division, rising-edge trigger, frequency and peak-to-peak measured; Enter
+pauses). The generator keeps running in all of them, so its output can go to the input.
 UP / DOWN - row (mode, shape, frequency, duty, signal / mode, input), LEFT / RIGHT - change (held: repeats),
 + / - (KEY1 / KEY2 on the HAT) - fine step, PRESS / Enter - signal on / off,
 keyboard digits (and k / M for the frequency) + Enter - exact value, KEY3 / Esc - exit.
@@ -149,6 +151,11 @@ ROW_H = 14
 ADC_INPUTS = [("gp26", "J703.7"), ("gp27", "GP27"), ("gp28", "GP28"), ("gp29", "GP29")]
 VMAX = 3.3
 HISTORY = 100  # samples in the graph (0.1 s apart)
+SROWS = ["Режим", "Час/под", "Синхр."]
+R_TIME, R_TRIG = 1, 2
+TIMEBASES = [100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3]  # s per division
+SCOPE_N, SCOPE_DIVS = 256, 10
+MODES = ["gen", "volt", "scope"]
 HAT = lcd.DEVICE == "hat144"
 
 
@@ -273,6 +280,84 @@ def draw_volt(st, row, vm, note, note_color):
     lcd.flip()
 
 
+def time_text(t):
+    return ("%g мкс" % round(t * 1e6, 3)) if t < 1e-3 else ("%g мс" % round(t * 1e3, 3))
+
+
+def parse_scope(reply):
+    """'ok scope rate=.. n=256 trig=1 over=0 data=<hex>' -> (rate, trig, [0..255, ...]) or None."""
+    if not reply or not reply.startswith("ok scope"):
+        return None
+    try:
+        kv = dict(w.split("=", 1) for w in reply.split()[2:])
+        return float(kv["rate"]), kv.get("trig") == "1", list(bytes.fromhex(kv["data"]))
+    except (KeyError, ValueError):
+        return None
+
+
+def measure_wave(data, rate):
+    """(frequency or None, peak-to-peak volts) from a sweep: rising crossings of the middle."""
+    lo, hi = min(data), max(data)
+    vpp = (hi - lo) * VMAX / 255
+    if hi - lo < 20:
+        return None, vpp
+    mid, hyst = (lo + hi) / 2, (hi - lo) / 10
+    armed, rises = False, []
+    for i, v in enumerate(data):
+        if v < mid - hyst:
+            armed = True
+        elif armed and v > mid + hyst:
+            rises.append(i)
+            armed = False
+    if len(rises) < 2:
+        return None, vpp
+    return (len(rises) - 1) * rate / (rises[-1] - rises[0]), vpp
+
+
+def draw_scope(st, row, sc, note, note_color):
+    screen.fill(BG)
+    text("ОСЦИЛОГРАФ " + st["board"], (64, 2), ACCENT, f_title, center=True)
+    tdiv = TIMEBASES[sc["tb"]]
+    values = ["осцилограф", time_text(tdiv), "%.1f В ↑" % sc["level"]]
+    for i, (name, value) in enumerate(zip(SROWS, values)):
+        y = 13 + i * ROW_H
+        sel = i == row
+        if sel:
+            pygame.draw.rect(screen, ACCENT, (2, y - 1, 124, ROW_H - 1), border_radius=3)
+        text(name, (6, y + 2), BG if sel else DIM, f_label)
+        text(value, (122, y), BG if sel else FG, f_value, right=True)
+    gx0, gx1, gy0, gy1 = 2, 126, 55, 103
+    w, h = gx1 - gx0, gy1 - gy0
+    pygame.draw.rect(screen, (60, 60, 60), (gx0, gy0, w, h), 1)
+    for i in range(1, SCOPE_DIVS):
+        x = gx0 + w * i / SCOPE_DIVS
+        pygame.draw.line(screen, (32, 32, 32), (x, gy0 + 1), (x, gy1 - 2))
+    for v in (1.1, 2.2):
+        y = gy1 - h * v / VMAX
+        pygame.draw.line(screen, (32, 32, 32), (gx0 + 1, y), (gx1 - 2, y))
+    ty = gy1 - h * sc["level"] / VMAX
+    for x in range(gx0 + 2, gx1 - 2, 4):  # the trigger level, dashed
+        pygame.draw.line(screen, (90, 70, 0), (x, ty), (x + 1.5, ty))
+    data = sc["data"]
+    if data:
+        n = len(data)
+        pts = [(gx0 + 1 + (w - 2) * i / (n - 1), gy1 - 1 - (h - 2) * v / 255) for i, v in enumerate(data)]
+        pygame.draw.lines(screen, GREEN, False, pts, 2 if BIG else 1)
+        f, vpp = measure_wave(data, sc["rate"])
+        ftxt = freq_text(round(f)) if f and f >= 1 else "—"
+        info = "f %s   розмах %.2f В" % (ftxt, vpp)
+        if sc["paused"]:
+            info += "   пауза"
+        elif not sc["trig"]:
+            info += "   без синхр."
+        text(info, (64, 105), FG, f_small, center=True)
+    elif note:
+        text(note, (64, 105), note_color, f_small, center=True)
+    hint = "←/→, натиск - пауза, KEY3 - назад" if HAT else "←/→ змінити, Enter - пауза, Esc - назад"
+    text(hint, (64, 116), DIM, f_small, center=True)
+    lcd.flip()
+
+
 def parse_adc(reply):
     """'ok adc gp26=0.531 gp27=0.713 ...' -> {'gp26': 0.531, ...} or None."""
     if not reply or not reply.startswith("ok adc"):
@@ -308,6 +393,20 @@ def main():
     last_try = 0
     mode = "gen"
     vm = {"input": 0, "value": None, "min": None, "max": None, "history": [], "next": 0}
+    sc = {"tb": 3, "level": 1.6, "data": None, "rate": 1, "trig": False, "paused": False}
+
+    def sweep():
+        nonlocal note, note_color, note_until
+        tdiv = TIMEBASES[sc["tb"]]
+        rate = SCOPE_N / SCOPE_DIVS / tdiv
+        reply = link.ask("scope %g %.2f" % (rate, sc["level"]), 2 * SCOPE_N / rate + 1.5) if link else None
+        got = parse_scope(reply)
+        if got is None:
+            sc["data"] = None
+            note, note_color, note_until = ("у плати немає осцилографа" if reply and reply.startswith("err")
+                                            else "немає відповіді"), RED, time.monotonic() + 3
+            return
+        sc["rate"], sc["trig"], sc["data"] = got
 
     def reset_volt():
         vm.update(value=None, min=None, max=None, history=[])
@@ -344,8 +443,16 @@ def main():
     def change(sign, fine):
         nonlocal mode, row
         if row == R_MODE:
-            mode = "volt" if mode == "gen" else "gen"
+            mode = MODES[(MODES.index(mode) + sign) % len(MODES)]
             reset_volt()
+            sc["data"], sc["paused"] = None, False
+            return
+        if mode == "scope":
+            if row == R_TIME:
+                sc["tb"] = min(max(0, sc["tb"] + sign), len(TIMEBASES) - 1)
+            elif row == R_TRIG:
+                sc["level"] = round(min(max(0.1, sc["level"] + sign * 0.1), 3.2), 1)
+            sc["paused"] = False
             return
         if mode == "volt":
             if row == R_INPUT:
@@ -394,12 +501,16 @@ def main():
                 return
             if st is None:
                 continue
-            rows = ROWS if mode == "gen" else VROWS
+            rows = {"gen": ROWS, "volt": VROWS, "scope": SROWS}[mode]
             if mode == "volt" and k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
                 reset_volt()
                 lcd.play("select")
                 continue
-            if mode == "volt" and k in DIGITS and not hat:
+            if mode == "scope" and k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                sc["paused"] = not sc["paused"]
+                lcd.play("select")
+                continue
+            if mode != "gen" and k in DIGITS and not hat:
                 continue
             if k in DIGITS and not hat and row in (R_FREQ, R_DUTY):
                 if DIGITS[k] in "kM" and row != R_FREQ:
@@ -442,8 +553,12 @@ def main():
         if mode == "volt" and st and link and time.monotonic() >= vm["next"]:
             vm["next"] = time.monotonic() + 0.1
             measure()
+        if mode == "scope" and st and link and not sc["paused"]:
+            sweep()
         if mode == "volt" and st:
             draw_volt(st, min(row, len(VROWS) - 1), vm, note, note_color)
+        elif mode == "scope" and st:
+            draw_scope(st, min(row, len(SROWS) - 1), sc, note, note_color)
         else:
             draw(st, row, typing, note, note_color)
         clock.tick(20)
