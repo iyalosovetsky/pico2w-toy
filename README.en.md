@@ -121,7 +121,7 @@ A 172×103×20 mm PicoCalc back cover for the zero mod (a Zero 2 W instead of th
 | **PREFERANS** | Preferans (Russian whist) against two computer players: Sochi (default) or Leningrad rules, chosen when a new pulka starts, pulka to 20, auto-saved. Engine and AI: [Python Pref](https://python-pref.sourceforge.io/index_ru.html) (the same one that ran on Nokia/Symbian), ported to Python 3 |
 | **BOOKS** | EPUB / FB2 / TXT (also zipped) and PDF reader for the `~/books` folder: images, contents, font size, light/dark theme; PDF as zoomed page fragments with smooth scrolling; the position in every book is saved |
 | **DOOM** | Doom (shareware episode 1) via [doomgeneric](https://github.com/ozkl/doomgeneric), downscaled to 128×80 |
-| **GENERATOR** | Signal generator on a separate board (PicoCalc, over the UART or USB): shape (square, sine, triangle, saw), frequency, duty cycle, on/off, and a voltmeter and an oscilloscope on the ADC, a logic analyzer and an I2C / SPI / UART decoder on J703; the board's LED shows the duty and the frequency - see [generator](#picocalc-components) |
+| **GENERATOR** | Signal generator on a separate board (PicoCalc, over the UART or USB): shape (square, sine, triangle, saw), frequency, duty cycle, on/off, and a voltmeter and an oscilloscope on the ADC, a logic analyzer, an I2C / SPI / UART decoder and a display tester on J703; the board's LED shows the duty and the frequency - see [generator](#picocalc-components) |
 | **AI CHAT** | Chat with a local LLM (llama.cpp / any OpenAI-compatible server) on the text console, US/UA keyboard |
 | **CONSOLE** | Leaves the menu and opens a text console with login on the LCD (tty7); `lcdmenu` brings the menu back |
 | **HDMI** | Lends the USB keyboard to the console on the monitor (tty1); the HAT buttons stay with the menu, KEY3 takes the keyboard back |
@@ -285,6 +285,13 @@ UART 8N1 (RX - J703.4), I2C (SDA - J703.4, SCL - J703.5: START, address R/W, byt
 SPI modes 0-3 (SCK .6, MOSI .3, MISO .4, CS .5). The "test" source makes the board send its own
 traffic with its hardware UART / I2C / SPI on the same lines.
 
+**Display tester** - the board sets up a display and draws test pictures: colours, bars, a grid with a
+border and coloured corners (shows window offset errors, which differ between ST7789 versions) and text.
+SPI: ST7789 240x240, 240x320, 240x280 (V2), 135x240, 170x320 and 172x320 (V3), ILI9341, ILI9488 (RGB666),
+Waveshare 7.5" e-Paper V2 (800x480); I2C: SSD1306 128x64 / 128x32, SH1106. Wiring: SCK - J703.6, MOSI - .3,
+CS - .5, DC - .4, RST - .7, e-Paper BUSY - .2; I2C SDA - .4, SCL - .5; power - J703.1 (3.3 V once the
+Pico socket's pin 36 is wired to the Zero's 3.3 V) and .8.
+
 The generator keeps running, so its output can be fed into the input to see the wave.
 
 From the Zero: the GENERATOR menu item or the `siggen` command (installed by `install.sh`):
@@ -299,6 +306,7 @@ siggen adc                   # voltages on the ADC inputs (RP2350: GP26 = J703.7
 siggen scope 25.6k 1.6       # one oscilloscope capture: sample rate, trigger level (V)
 siggen logic 1M 0            # one logic analyzer capture: sample rate, trigger channel
 siggen decode uart 9600 test # UART / I2C / SPI decoder (test - the board sends its own traffic)
+siggen lcd st7789-240x240 grid   # display test: model, picture (all colors bars grid text)
 siggen flash tools/siggen/rp2350.py   # update the board's program over the UART or USB
 ```
 
