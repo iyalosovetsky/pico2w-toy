@@ -24,6 +24,10 @@
 #                interval), lined up on a rising edge through <level> volts (default 1.65)
 #                if there is one; answers
 #                "ok scope rate=.. n=256 trig=1|0 data=<hex>", 0..255 = 0..3.3 V
+#   logic <rate> [ch]   logic analyzer on the J703 lines (bit 0..5 = J703.2..7 = GP6 GP3 GP4 GP5
+#                GP2 GP26): 512 samples at <rate> (2.5 k .. 25 M samples/s, a PIO state machine +
+#                DMA), lined up on a rising edge of channel <ch> (0..5, default 0) if there is
+#                one; answers "ok logic rate=.. n=512 trig=1|0 data=<hex, a byte per sample>"
 #   put <file> <bytes>   answers "ok send", then takes that many raw bytes: replaces a file
 #                        (program updates over the UART: siggen flash)
 import array
@@ -250,6 +254,65 @@ def scope(rate, level=1.65):
     return "ok scope rate=%g n=%d trig=%d over=%d data=%s" % (rate, SCOPE_N, trig, over, data)
 
 
+LOGIC_PINS = (6, 3, 4, 5, 2, 26)   # J703.2 .. J703.7
+LOGIC_N = 512
+_logic = array.array("I", [0] * (2 * LOGIC_N))
+_logic_out = bytearray(LOGIC_N)
+PIO1_RXF0 = 0x50300020
+DREQ_PIO1_RX0 = 12
+
+
+@rp2.asm_pio(in_shiftdir=rp2.PIO.SHIFT_LEFT, autopush=True, push_thresh=32, fifo_join=rp2.PIO.JOIN_RX)
+def _la_prog():
+    in_(pins, 32)
+
+
+@micropython.viper
+def _pack(src: ptr32, dst: ptr8, start: int, n: int):
+    """The six J703 lines of each sampled GPIO word into a byte (bit 0 = J703.2)."""
+    i = 0
+    while i < n:
+        w = src[start + i]
+        dst[i] = ((w >> 6) & 1) | ((w >> 2) & 2) | ((w >> 2) & 4) | ((w >> 2) & 8) | ((w << 2) & 16) | ((w >> 21) & 32)
+        i += 1
+
+
+def logic(rate, ch=0):
+    rate = float(rate)
+    if not 2500 <= rate <= 25000000:     # the PIO clock divider stops at 150 MHz / 65536
+        return "err logic rate 2500..25000000"
+    if not 0 <= ch < len(LOGIC_PINS):
+        return "err logic channel 0..5"
+    for p in LOGIC_PINS:            # inputs readable: our own output (GP6) keeps driving
+        if p != OUT_PIN:
+            Pin(p, Pin.IN)
+        mem32[0x40038000 + 4 + 4 * p] = (mem32[0x40038000 + 4 + 4 * p] | 1 << 6) & ~(1 << 8)  # IE on, ISO off
+    sm = rp2.StateMachine(4, _la_prog, freq=int(rate), in_base=Pin(0))
+    dma2 = rp2.DMA()
+    try:
+        ctrl = dma2.pack_ctrl(size=2, inc_read=False, inc_write=True, treq_sel=DREQ_PIO1_RX0)
+        dma2.config(read=PIO1_RXF0, write=_logic, count=2 * LOGIC_N, ctrl=ctrl, trigger=True)
+        sm.active(1)
+        end = time.ticks_add(time.ticks_ms(), int(2 * LOGIC_N / rate * 1000) + 500)
+        while dma2.active() and time.ticks_diff(end, time.ticks_ms()) > 0:
+            pass
+        done = not dma2.active()
+    finally:
+        sm.active(0)
+        dma2.active(0)
+        dma2.close()
+    if not done:
+        return "err logic: capture timed out"
+    # trigger: the first rising edge of the channel, with 1/8 of the window before it
+    pre, bit, start, trig = LOGIC_N // 8, 1 << LOGIC_PINS[ch], 0, 0
+    for i in range(pre + 1, LOGIC_N + pre):
+        if not _logic[i - 1] & bit and _logic[i] & bit:
+            start, trig = i - pre, 1
+            break
+    _pack(_logic, _logic_out, start, LOGIC_N)
+    return "ok logic rate=%g n=%d trig=%d data=%s" % (rate, LOGIC_N, trig, binascii.hexlify(_logic_out).decode())
+
+
 def number(s):
     s = s.strip().lower()
     mult = {"k": 1000, "m": 1000000}.get(s[-1:], 1)
@@ -279,6 +342,8 @@ def command(line):
             return probe()
         if cmd == "adc":
             return adc()
+        if cmd == "logic" and 1 <= len(args) <= 2:
+            return logic(number(args[0]), int(args[1]) if len(args) > 1 else 0)
         if cmd == "scope" and 1 <= len(args) <= 2:
             return scope(number(args[0]), float(args[1]) if len(args) > 1 else 1.65)
         if cmd == "shape" and len(args) == 1 and args[0].lower() in SHAPES:
