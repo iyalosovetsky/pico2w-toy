@@ -182,6 +182,51 @@ def text(s, pos, color, f, right=False, center=False):
     screen.blit(img, (x, y))
 
 
+# J703 on the PicoCalc (left side of the case, pin 1 at the top): the strip at the bottom of every
+# screen shows which pins the mode uses and which way - out of the board or into it
+C_OUT, C_IN, C_IO = (255, 170, 0), (110, 170, 255), (200, 120, 255)
+J703_USE = {"uart": {4: "in"}, "i2c": {4: "in", 5: "in"}, "spi": {6: "in", 3: "in", 4: "in", 5: "in"}}
+J703_TEST = {"uart": {4: "out"}, "i2c": {4: "io", 5: "io"}, "spi": {6: "out", 3: "out", 4: "in", 5: "out"}}
+LOGIC_PIN = [2, 3, 4, 5, 6, 7]   # logic channel -> J703 pin
+
+
+def draw_j703(uses, gen_on, strong_gen=False, y=104):
+    """uses: {J703 pin: "in" | "out" | "io"}. The generator output (pin 2) is shown when running."""
+    text("J703", (2, y + 4), DIM, f_small)
+    uses = dict(uses)
+    if gen_on and 2 not in uses:
+        uses[2] = "gen"
+    for pin in range(1, 9):
+        x = 24 + (pin - 1) * 12.6
+        use = uses.get(pin)
+        if pin == 1:
+            color = (230, 60, 50)
+        elif pin == 8:
+            color = (150, 150, 150)
+        else:
+            color = {"out": C_OUT, "in": C_IN, "io": C_IO,
+                     "gen": C_OUT if strong_gen else (120, 85, 0)}.get(use, (55, 55, 55))
+        filled = use is not None or pin in (1, 8)
+        box = (x, y + 4, 10.5, 8)
+        if filled:
+            pygame.draw.rect(screen, color, box, border_radius=2)
+        else:
+            pygame.draw.rect(screen, color, box, 1, border_radius=2)
+        label = {1: "+", 8: "⊥"}.get(pin, str(pin))
+        text(label, (x + 5.25, y + 4.5), BG if filled else (110, 110, 110), f_small, center=True)
+        cx = x + 5.25
+        if use in ("out", "gen"):      # out of the board: up
+            pygame.draw.polygon(screen, color, [(cx, y), (cx - 2.5, y + 3), (cx + 2.5, y + 3)])
+        elif use == "in":              # into the board: down
+            pygame.draw.polygon(screen, color, [(cx - 2.5, y), (cx + 2.5, y), (cx, y + 3)])
+        elif use == "io":
+            pygame.draw.polygon(screen, color, [(cx, y), (cx + 2, y + 1.5), (cx, y + 3), (cx - 2, y + 1.5)])
+
+
+def hint_line(s):
+    text(s, (64, 118), DIM, f_small, center=True)
+
+
 def draw(st, row, typing, note, note_color):
     screen.fill(BG)
     title = "ГЕНЕРАТОР " + (st["board"] if st else "")
@@ -240,12 +285,8 @@ def draw(st, row, typing, note, note_color):
     pygame.draw.circle(screen, DIM, (10, 92), 5, 1)
     if note:
         text(note, (64, 99), note_color, f_small, center=True)
-    if HAT:
-        hints = ["←/→ змінити, KEY1/2 точно", "натиск - сигнал, KEY3 - назад"]
-    else:
-        hints = ["←/→ змінити, +/- точно, цифри", "Enter - сигнал, Esc - назад"]
-    text(hints[0], (64, 106), DIM, f_small, center=True)
-    text(hints[1], (64, 116), DIM, f_small, center=True)
+    draw_j703({2: "out"} if st["on"] else {}, False)
+    hint_line("←/→, KEY1/2, натиск - сигнал" if HAT else "←/→ +/- цифри, Enter - сигнал, Esc")
     lcd.flip()
 
 
@@ -269,7 +310,7 @@ def draw_volt(st, row, vm, note, note_color):
     if vm["min"] is not None:
         text("мін %.3f   макс %.3f" % (vm["min"], vm["max"]), (64, 64), FG, f_small, center=True)
     # graph, 0 .. 3.3 V
-    gx0, gx1, gy0, gy1 = 4, 124, 74, 102
+    gx0, gx1, gy0, gy1 = 4, 124, 72, 100
     pygame.draw.rect(screen, (40, 40, 40), (gx0, gy0, gx1 - gx0, gy1 - gy0), 1)
     for level in (1, 2, 3):
         y = gy1 - (gy1 - gy0) * level / VMAX
@@ -284,12 +325,8 @@ def draw_volt(st, row, vm, note, note_color):
         pygame.draw.lines(screen, GREEN, False, pts, 2 if BIG else 1)
     if note:
         text(note, (64, 64), note_color, f_small, center=True)
-    if HAT:
-        hints = ["←/→ змінити, натиск - скинути", "мін / макс, KEY3 - назад"]
-    else:
-        hints = ["←/→ змінити, Enter - скинути", "мін / макс, Esc - назад"]
-    text(hints[0], (64, 106), DIM, f_small, center=True)
-    text(hints[1], (64, 116), DIM, f_small, center=True)
+    draw_j703({7: "in"} if vm["input"] == 0 else {}, st["on"])
+    hint_line("←/→, натиск - скинути мін/макс" if HAT else "←/→ змінити, Enter - скинути мін/макс")
     lcd.flip()
 
 
@@ -342,7 +379,7 @@ def draw_scope(st, row, sc, note, note_color):
             pygame.draw.rect(screen, ACCENT, (2, y - 1, 124, ROW_H - 1), border_radius=3)
         text(name, (6, y + 2), BG if sel else DIM, f_label)
         text(value, (122, y), BG if sel else FG, f_value, right=True)
-    gx0, gx1, gy0, gy1 = 2, 126, 55, 103
+    gx0, gx1, gy0, gy1 = 2, 126, 55, 96
     w, h = gx1 - gx0, gy1 - gy0
     pygame.draw.rect(screen, (60, 60, 60), (gx0, gy0, w, h), 1)
     for i in range(1, SCOPE_DIVS):
@@ -366,11 +403,11 @@ def draw_scope(st, row, sc, note, note_color):
             info += "   пауза"
         elif not sc["trig"]:
             info += "   без синхр."
-        text(info, (64, 105), FG, f_small, center=True)
+        text(info, (64, 97), FG, f_small, center=True)
     elif note:
-        text(note, (64, 105), note_color, f_small, center=True)
-    hint = "←/→, натиск - пауза, KEY3 - назад" if HAT else "←/→ змінити, Enter - пауза, Esc - назад"
-    text(hint, (64, 116), DIM, f_small, center=True)
+        text(note, (64, 97), note_color, f_small, center=True)
+    draw_j703({7: "in"}, st["on"])
+    hint_line("←/→, натиск - пауза, KEY3 - назад" if HAT else "←/→ змінити, Enter - пауза, Esc - назад")
     lcd.flip()
 
 
@@ -406,7 +443,7 @@ def draw_logic(st, row, la, note, note_color):
             pygame.draw.rect(screen, ACCENT, (2, y - 1, 124, ROW_H - 1), border_radius=3)
         text(name, (6, y + 2), BG if sel else DIM, f_label)
         text(value, (122, y), BG if sel else FG, f_value, right=True)
-    gx0, gx1, gy0, gy1 = 10, 126, 55, 103
+    gx0, gx1, gy0, gy1 = 10, 126, 55, 96
     w = gx1 - gx0
     lane = (gy1 - gy0) / len(LOGIC_CH)
     pygame.draw.rect(screen, (60, 60, 60), (gx0, gy0, w, gy1 - gy0), 1)
@@ -439,11 +476,11 @@ def draw_logic(st, row, la, note, note_color):
             info += "   пауза"
         elif not la["trig"]:
             info += "   без синхр."
-        text(info, (64, 105), FG, f_small, center=True)
+        text(info, (64, 97), FG, f_small, center=True)
     elif note:
-        text(note, (64, 105), note_color, f_small, center=True)
-    hint = "←/→, натиск - пауза, KEY3 - назад" if HAT else "←/→ змінити, Enter - пауза, Esc - назад"
-    text(hint, (64, 116), DIM, f_small, center=True)
+        text(note, (64, 97), note_color, f_small, center=True)
+    draw_j703({p: "in" for p in LOGIC_PIN}, st["on"])
+    hint_line("←/→, натиск - пауза, KEY3 - назад" if HAT else "←/→ змінити, Enter - пауза, Esc - назад")
     lcd.flip()
 
 
@@ -506,8 +543,8 @@ def draw_decode(st, row, dc, note, note_color):
             y += f_small.get_linesize()
     elif note:
         text(note, (64, y + 4), note_color, f_small, center=True)
-    hint = "←/→ змінити, натиск - захопити, KEY3" if HAT else "←/→ змінити, Enter - захопити, Esc - назад"
-    text(hint, (64, 116), DIM, f_small, center=True)
+    draw_j703((J703_TEST if dc["test"] else J703_USE)[proto], st["on"])
+    hint_line("←/→, натиск - захопити, KEY3" if HAT else "←/→ змінити, Enter - захопити, Esc - назад")
     lcd.flip()
 
 
