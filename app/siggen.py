@@ -147,6 +147,7 @@ f_label = font("DejaVuSans.ttf", 15 if BIG else 8)
 f_value = font("DejaVuSans-Bold.ttf", 24 if BIG else 11)
 f_title = font("DejaVuSans-Bold.ttf", 16 if BIG else 8)
 f_big = font("DejaVuSans-Bold.ttf", 40 if BIG else 18)
+f_lbold = font("DejaVuSans-Bold.ttf", 15 if BIG else 8)
 
 ROWS = ["Режим", "Форма", "Частота", "Скважність", "Сигнал"]
 R_MODE, R_SHAPE, R_FREQ, R_DUTY, R_OUT = range(5)
@@ -576,14 +577,15 @@ def draw_lcd(st, row, lt, note, note_color):
     screen.fill(BG)
     text("ДИСПЛЕЙ " + st["board"], (64, 2), ACCENT, f_title, center=True)
     model, name = LCD_MODELS[lt["model"]]
-    values = ["тест дисплея", name, LCD_PATTERNS[lt["pattern"]][1]]
-    for i, (rname, value) in enumerate(zip(LROWS, values)):
+    values = ["дисплей", name, LCD_PATTERNS[lt["pattern"]][1]]
+    for i, (rname, value) in enumerate(zip(["Режим", "LCD", "Тест"] if HAT else LROWS, values)):
         y = 13 + i * ROW_H
         sel = i == row
         if sel:
             pygame.draw.rect(screen, ACCENT, (2, y - 1, 124, ROW_H - 1), border_radius=3)
         text(rname, (6, y + 2), BG if sel else DIM, f_label)
-        text(value, (122, y), BG if sel else FG, f_value, right=True)
+        f = f_value if i == 0 else f_lbold   # model names are long
+        text(value, (122, y + (0 if i == 0 else 2)), BG if sel else FG, f, right=True)
     pins, lines = lcd_wiring(model)
     y = 57
     for line in lines:
@@ -598,7 +600,7 @@ def draw_lcd(st, row, lt, note, note_color):
         for i, part in enumerate(wrap_words(note.split(), f_small, 120)[:3]):
             text(part, (64, y + i * f_small.get_linesize()), note_color, f_small, center=True)
     draw_j703(pins, st["on"] and model != "epd7in5v2")
-    hint_line("←/→ змінити, натиск - показати, KEY3" if HAT else "←/→ змінити, Enter - показати, Esc - назад")
+    hint_line("←/→, натиск - показати, KEY3" if HAT else "←/→ змінити, Enter - показати, Esc - назад")
     lcd.flip()
 
 
