@@ -1,7 +1,9 @@
 """Signal generator board (tools/siggen: an RP2350 or an ESP32-C6 running rp2350.py / esp32c6.py
 as its main.py), driven over the UART (/dev/serial0) or USB (/dev/ttyACM*) - whichever answers.
 
-UP / DOWN - row (shape, frequency, duty, signal), LEFT / RIGHT - change (held: repeats),
+Two modes (the first row): generator and voltmeter (the board's ADC inputs, GP26 = J703.7 in
+the PicoCalc; min / max and a 10 s graph; the generator keeps running meanwhile).
+UP / DOWN - row (mode, shape, frequency, duty, signal / mode, input), LEFT / RIGHT - change (held: repeats),
 + / - (KEY1 / KEY2 on the HAT) - fine step, PRESS / Enter - signal on / off,
 keyboard digits (and k / M for the frequency) + Enter - exact value, KEY3 / Esc - exit.
 Every change is sent at once; the screen shows what the board answered.
@@ -137,10 +139,16 @@ f_small = font("DejaVuSans.ttf", 12 if BIG else 7)
 f_label = font("DejaVuSans.ttf", 15 if BIG else 8)
 f_value = font("DejaVuSans-Bold.ttf", 24 if BIG else 11)
 f_title = font("DejaVuSans-Bold.ttf", 16 if BIG else 8)
+f_big = font("DejaVuSans-Bold.ttf", 40 if BIG else 18)
 
-ROWS = ["Форма", "Частота", "Скважність", "Сигнал"]
-R_SHAPE, R_FREQ, R_DUTY, R_OUT = range(4)
-ROW_H = 16
+ROWS = ["Режим", "Форма", "Частота", "Скважність", "Сигнал"]
+R_MODE, R_SHAPE, R_FREQ, R_DUTY, R_OUT = range(5)
+VROWS = ["Режим", "Вхід"]
+R_INPUT = 1
+ROW_H = 14
+ADC_INPUTS = [("gp26", "J703.7"), ("gp27", "GP27"), ("gp28", "GP28"), ("gp29", "GP29")]
+VMAX = 3.3
+HISTORY = 100  # samples in the graph (0.1 s apart)
 HAT = lcd.DEVICE == "hat144"
 
 
@@ -166,10 +174,10 @@ def draw(st, row, typing, note, note_color):
         lcd.flip()
         return
     square = st["shape"] == "square"
-    values = [SHAPE_NAMES.get(st["shape"], st["shape"]), freq_text(st["freq"]),
+    values = ["генератор", SHAPE_NAMES.get(st["shape"], st["shape"]), freq_text(st["freq"]),
               "%g %%" % st["duty"] if square else "—", "УВІМК" if st["on"] else "ВИМК"]
     for i, name in enumerate(ROWS):
-        y = 14 + i * ROW_H
+        y = 13 + i * ROW_H
         sel = i == row
         if sel:
             pygame.draw.rect(screen, ACCENT, (2, y - 1, 124, ROW_H - 1), border_radius=3)
@@ -185,7 +193,7 @@ def draw(st, row, typing, note, note_color):
     # the wave: three periods of the shape, in the LED's colour
     color = led_color(st)
     wave = color if st["on"] else DIM
-    x0, x1, lo, hi = 22, 124, 94, 80
+    x0, x1, lo, hi = 22, 124, 98, 86
     period = (x1 - x0) / 3
     if not st["on"]:
         pts = [(x0, lo), (x1, lo)]
@@ -208,10 +216,10 @@ def draw(st, row, typing, note, note_color):
             if st["shape"] == "saw" and i and t % 1 == 0 and i < 60:
                 pts.append((x0 + (x1 - x0) * i / 60, lo))  # the drop of the saw
     pygame.draw.lines(screen, wave, False, pts, 2 if BIG else 1)
-    pygame.draw.circle(screen, color, (10, 87), 6)        # the LED
-    pygame.draw.circle(screen, DIM, (10, 87), 6, 1)
+    pygame.draw.circle(screen, color, (10, 92), 5)        # the LED
+    pygame.draw.circle(screen, DIM, (10, 92), 5, 1)
     if note:
-        text(note, (64, 97), note_color, f_small, center=True)
+        text(note, (64, 99), note_color, f_small, center=True)
     if HAT:
         hints = ["←/→ змінити, KEY1/2 точно", "натиск - сигнал, KEY3 - назад"]
     else:
@@ -219,6 +227,60 @@ def draw(st, row, typing, note, note_color):
     text(hints[0], (64, 106), DIM, f_small, center=True)
     text(hints[1], (64, 116), DIM, f_small, center=True)
     lcd.flip()
+
+
+def draw_volt(st, row, vm, note, note_color):
+    """Voltmeter: the selected ADC input, min / max, a graph of the last 10 s."""
+    screen.fill(BG)
+    text("ВОЛЬТМЕТР " + st["board"], (64, 2), ACCENT, f_title, center=True)
+    key, label = ADC_INPUTS[vm["input"]]
+    for i, (name, value) in enumerate(zip(VROWS, ["вольтметр", label if label == key.upper() else "%s (%s)" % (label, key.upper())])):
+        y = 13 + i * ROW_H
+        sel = i == row
+        if sel:
+            pygame.draw.rect(screen, ACCENT, (2, y - 1, 124, ROW_H - 1), border_radius=3)
+        text(name, (6, y + 2), BG if sel else DIM, f_label)
+        text(value, (122, y), BG if sel else FG, f_value, right=True)
+    v = vm["value"]
+    if v is None:
+        text("—", (64, 44), DIM, f_big, center=True)
+    else:
+        text("%.3f В" % v, (64, 42), GREEN, f_big, center=True)
+    if vm["min"] is not None:
+        text("мін %.3f   макс %.3f" % (vm["min"], vm["max"]), (64, 64), FG, f_small, center=True)
+    # graph, 0 .. 3.3 V
+    gx0, gx1, gy0, gy1 = 4, 124, 74, 102
+    pygame.draw.rect(screen, (40, 40, 40), (gx0, gy0, gx1 - gx0, gy1 - gy0), 1)
+    for level in (1, 2, 3):
+        y = gy1 - (gy1 - gy0) * level / VMAX
+        pygame.draw.line(screen, (35, 35, 35), (gx0 + 1, y), (gx1 - 2, y))
+        text("%d" % level, (gx0 + 2, y - 4), (70, 70, 70), f_small)
+    hist = vm["history"]
+    if len(hist) > 1:
+        step = (gx1 - gx0 - 2) / (HISTORY - 1)
+        x_start = gx1 - 1 - step * (len(hist) - 1)
+        pts = [(x_start + i * step, gy1 - 1 - (gy1 - gy0 - 2) * min(max(h, 0), VMAX) / VMAX)
+               for i, h in enumerate(hist)]
+        pygame.draw.lines(screen, GREEN, False, pts, 2 if BIG else 1)
+    if note:
+        text(note, (64, 64), note_color, f_small, center=True)
+    if HAT:
+        hints = ["←/→ змінити, натиск - скинути", "мін / макс, KEY3 - назад"]
+    else:
+        hints = ["←/→ змінити, Enter - скинути", "мін / макс, Esc - назад"]
+    text(hints[0], (64, 106), DIM, f_small, center=True)
+    text(hints[1], (64, 116), DIM, f_small, center=True)
+    lcd.flip()
+
+
+def parse_adc(reply):
+    """'ok adc gp26=0.531 gp27=0.713 ...' -> {'gp26': 0.531, ...} or None."""
+    if not reply or not reply.startswith("ok adc"):
+        return None
+    try:
+        return {k: float(v) for k, v in (w.split("=", 1) for w in reply.split()[2:])}
+    except ValueError:
+        return None
 
 
 DIGITS = {getattr(pygame, "K_%d" % d): str(d) for d in range(10)}
@@ -244,6 +306,27 @@ def main():
     note, note_color, note_until = "", DIM, 0
     held, held_hat, next_repeat = None, False, 0
     last_try = 0
+    mode = "gen"
+    vm = {"input": 0, "value": None, "min": None, "max": None, "history": [], "next": 0}
+
+    def reset_volt():
+        vm.update(value=None, min=None, max=None, history=[])
+
+    def measure():
+        nonlocal note, note_color, note_until
+        reply = link.ask("adc") if link else None
+        got = parse_adc(reply)
+        if got is None:
+            if reply and reply.startswith("err"):
+                note, note_color, note_until = "у плати немає АЦП", RED, time.monotonic() + 3
+            return
+        v = got.get(ADC_INPUTS[vm["input"]][0])
+        if v is None:
+            return
+        vm["value"] = v
+        vm["min"] = v if vm["min"] is None else min(vm["min"], v)
+        vm["max"] = v if vm["max"] is None else max(vm["max"], v)
+        vm["history"] = (vm["history"] + [v])[-HISTORY:]
 
     def send(cmd):
         nonlocal st, note, note_color, note_until
@@ -259,6 +342,16 @@ def main():
         return got
 
     def change(sign, fine):
+        nonlocal mode, row
+        if row == R_MODE:
+            mode = "volt" if mode == "gen" else "gen"
+            reset_volt()
+            return
+        if mode == "volt":
+            if row == R_INPUT:
+                vm["input"] = (vm["input"] + sign) % len(ADC_INPUTS)
+                reset_volt()
+            return
         if row == R_SHAPE:
             i = SHAPES.index(st["shape"]) if st["shape"] in SHAPES else 0
             send("shape " + SHAPES[(i + sign) % len(SHAPES)])
@@ -301,6 +394,13 @@ def main():
                 return
             if st is None:
                 continue
+            rows = ROWS if mode == "gen" else VROWS
+            if mode == "volt" and k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                reset_volt()
+                lcd.play("select")
+                continue
+            if mode == "volt" and k in DIGITS and not hat:
+                continue
             if k in DIGITS and not hat and row in (R_FREQ, R_DUTY):
                 if DIGITS[k] in "kM" and row != R_FREQ:
                     continue
@@ -319,10 +419,10 @@ def main():
                     send("off" if st["on"] else "on")
                     lcd.play("select")
             elif k == pygame.K_UP:
-                row, typing = (row - 1) % len(ROWS), None
+                row, typing = (row - 1) % len(rows), None
                 lcd.play("click")
             elif k == pygame.K_DOWN:
-                row, typing = (row + 1) % len(ROWS), None
+                row, typing = (row + 1) % len(rows), None
                 lcd.play("click")
             elif k in (pygame.K_LEFT, pygame.K_RIGHT):
                 typing = None
@@ -334,12 +434,18 @@ def main():
                 change(-1, True)
         if held and not held_hat and held not in lcd._held_arrows:  # a keyboard says it's up
             held = None
-        if held and st and time.monotonic() >= next_repeat and row in (R_FREQ, R_DUTY):  # repeats
+        if held and st and mode == "gen" and time.monotonic() >= next_repeat and row in (R_FREQ, R_DUTY):
             change(1 if held == pygame.K_RIGHT else -1, False)
             next_repeat = time.monotonic() + 0.12
         if note and time.monotonic() > note_until and note_color == RED:
             note = ""
-        draw(st, row, typing, note, note_color)
+        if mode == "volt" and st and link and time.monotonic() >= vm["next"]:
+            vm["next"] = time.monotonic() + 0.1
+            measure()
+        if mode == "volt" and st:
+            draw_volt(st, min(row, len(VROWS) - 1), vm, note, note_color)
+        else:
+            draw(st, row, typing, note, note_color)
         clock.tick(20)
 
 
