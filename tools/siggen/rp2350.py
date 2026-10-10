@@ -18,7 +18,8 @@
 #   shape square|sine|triangle|saw     freq <Hz> (2.5k, 1M)     duty <%> (square)
 #   on / off     get     ping     reset
 #   probe        self-check: the mean level of the output in ten 0.1 s slices (0..100 %)
-#   put <file> <bytes>   then the raw bytes: replaces a file (program updates over the UART)
+#   put <file> <bytes>   answers "ok send", then takes that many raw bytes: replaces a file
+#                        (program updates over the UART: siggen flash)
 import array
 import math
 import os
@@ -267,6 +268,9 @@ class Stream:
             line, self.buf = self.buf.split(b"\n", 1)
             words = line.decode("utf-8", "replace").split()
             if len(words) == 3 and words[0] == "put":
+                # handshake: the sender waits for "ok send", so the file never arrives before
+                # this line was understood (and its lines are never taken as commands)
+                self.write(b"ok send\n")
                 try:
                     reply = self.receive(words[1], int(words[2]), self.buf)
                 except Exception as e:

@@ -19,7 +19,7 @@
 #   on / off      start / stop the output
 #   get           current settings
 #   ping          answers "pong"
-#   put <file> <bytes>   then exactly that many raw bytes: replaces a file on the board
+#   put <file> <bytes>   answers "ok send", then takes exactly that many raw bytes: replaces a file
 #                        (siggen flash tools/siggen/esp32c6.py does this - no USB needed)
 #   reset         restart the board (runs the new main.py)
 import array
@@ -222,7 +222,8 @@ while True:
         while b"\n" in buf:
             line, buf = buf.split(b"\n", 1)
             words = line.decode("utf-8", "replace").split()
-            if len(words) == 3 and words[0] == "put":  # the file follows right after this line
+            if len(words) == 3 and words[0] == "put":
+                uart.write("ok send\n")  # handshake: the sender waits for it, then sends the file
                 try:
                     reply = receive(words[1], int(words[2]), buf)
                 except Exception as e:
