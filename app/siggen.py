@@ -162,9 +162,10 @@ R_TIME, R_TRIG = 1, 2
 TIMEBASES = [100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3]  # s per division
 SCOPE_N, SCOPE_DIVS = 256, 10
 MODES = ["gen", "volt", "scope", "logic", "decode", "lcd"]
-LROWS = ["Режим", "Дисплей", "Картинка", "Ширина", "Висота", "Зсув X", "Зсув Y"]
-R_MODEL, R_PATTERN, R_W, R_H, R_X, R_Y = 1, 2, 3, 4, 5, 6
-LROW_H = 11
+LROWS = ["Режим", "Дисплей", "Картинка", "Поворот", "Ширина", "Висота", "Зсув X", "Зсув Y"]
+R_MODEL, R_PATTERN, R_ROT, R_W, R_H, R_X, R_Y = 1, 2, 3, 4, 5, 6, 7
+LROW_H = 10
+ROTATIONS = [0, 90, 180, 270]
 # model, name, default width, height, x offset, y offset (as in tools/siggen/rp2350.py)
 LCD_MODELS = [("st7789-240x240", "ST7789", 240, 240, 0, 0), ("st7789-240x320", "ST7789", 240, 320, 0, 0),
               ("st7789-240x280", "ST7789V2", 240, 280, 0, 20), ("st7789-135x240", "ST7789", 135, 240, 52, 40),
@@ -207,7 +208,7 @@ LOGIC_PIN = [2, 3, 4, 5, 6, 7]   # logic channel -> J703 pin
 
 def draw_j703(uses, gen_on, strong_gen=False, y=104):
     """uses: {J703 pin: "in" | "out" | "io"}. The generator output (pin 2) is shown when running."""
-    text("J703", (2, y + 4), DIM, f_small)
+    text("J703", (1, y + 4), FG, f_small)
     uses = dict(uses)
     if gen_on and 2 not in uses:
         uses[2] = "gen"
@@ -220,15 +221,15 @@ def draw_j703(uses, gen_on, strong_gen=False, y=104):
             color = (150, 150, 150)
         else:
             color = {"out": C_OUT, "in": C_IN, "io": C_IO,
-                     "gen": C_OUT if strong_gen else (120, 85, 0)}.get(use, (55, 55, 55))
+                     "gen": C_OUT if strong_gen else (150, 105, 0)}.get(use, (120, 120, 120))
         filled = use is not None or pin in (1, 8)
-        box = (x, y + 4, 10.5, 8)
+        box = (x, y + 4, 10.5, 9)
         if filled:
             pygame.draw.rect(screen, color, box, border_radius=2)
         else:
             pygame.draw.rect(screen, color, box, 1, border_radius=2)
         label = {1: "+", 8: "⊥"}.get(pin, str(pin))
-        text(label, (x + 5.25, y + 4.5), BG if filled else (110, 110, 110), f_small, center=True)
+        text(label, (x + 5.25, y + 4), BG if filled else (200, 200, 200), f_lbold, center=True)
         cx = x + 5.25
         if use in ("out", "gen"):      # out of the board: up
             pygame.draw.polygon(screen, color, [(cx, y), (cx - 2.5, y + 3), (cx + 2.5, y + 3)])
@@ -239,7 +240,7 @@ def draw_j703(uses, gen_on, strong_gen=False, y=104):
 
 
 def hint_line(s):
-    text(s, (64, 118), DIM, f_small, center=True)
+    text(s, (64, 118), (150, 150, 150), f_small, center=True)
 
 
 def draw(st, row, typing, note, note_color):
@@ -581,8 +582,9 @@ def draw_lcd(st, row, lt, note, note_color, typing=None):
     model, name, dw, dh, dx, dy = LCD_MODELS[lt["model"]]
     size = (lt["w"], lt["h"], lt["x"], lt["y"])
     default = size == (dw, dh, dx, dy)
-    values = ["дисплей", name if default else name + " *", LCD_PATTERNS[lt["pattern"]][1]] + [str(v) for v in size]
-    names = ["Режим", "LCD", "Тест", "Ширина", "Висота", "Зсув X", "Зсув Y"] if HAT else LROWS
+    values = (["дисплей", name if default else name + " *", LCD_PATTERNS[lt["pattern"]][1], "%d°" % lt["rot"]]
+              + [str(v) for v in size])
+    names = ["Режим", "LCD", "Тест", "Поворот", "Ширина", "Висота", "Зсув X", "Зсув Y"] if HAT else LROWS
     for i, (rname, value) in enumerate(zip(names, values)):
         y = 12 + i * LROW_H
         sel = i == row
@@ -594,7 +596,7 @@ def draw_lcd(st, row, lt, note, note_color, typing=None):
         changed = i >= R_W and size[i - R_W] != (dw, dh, dx, dy)[i - R_W]
         text(value, (122, y + 1), BG if sel else (ACCENT if changed else FG), f_lbold, right=True)
     pins, lines = lcd_wiring(model)
-    y = 89
+    y = 92
     for line in lines[:-1]:   # the power line is in the help
         text(line, (64, y), DIM, f_small, center=True)
         y += f_small.get_linesize()
@@ -648,7 +650,7 @@ def main():
     sc = {"tb": 3, "level": 1.6, "data": None, "rate": 1, "trig": False, "paused": False}
     la = {"tb": 4, "ch": 0, "data": None, "rate": 1, "trig": False, "paused": False}
     dc = {"proto": 0, "baud": 0, "spi": 0, "test": True, "lines": None, "busy": False}
-    lt = {"model": 0, "pattern": 0, "result": None, "busy": False, "w": 240, "h": 240, "x": 0, "y": 0}
+    lt = {"model": 0, "pattern": 0, "result": None, "busy": False, "w": 240, "h": 240, "x": 0, "y": 0, "rot": 0}
 
     def lcd_defaults():
         _, _, lt["w"], lt["h"], lt["x"], lt["y"] = LCD_MODELS[lt["model"]]
@@ -658,12 +660,13 @@ def main():
         model = LCD_MODELS[lt["model"]][0]
         lt["busy"], lt["result"] = True, None
         draw_lcd(st, min(row, len(LROWS) - 1), lt, note, note_color)
-        reply = link.ask("lcd %s %s w=%d h=%d x=%d y=%d" % (model, LCD_PATTERNS[lt["pattern"]][0], lt["w"], lt["h"],
-                                                             lt["x"], lt["y"]), 40) if link else None
+        reply = link.ask("lcd %s %s w=%d h=%d x=%d y=%d r=%d" % (model, LCD_PATTERNS[lt["pattern"]][0], lt["w"],
+                                                                  lt["h"], lt["x"], lt["y"], lt["rot"]), 40) if link else None
         lt["busy"] = False
         if reply and reply.startswith("ok lcd"):
             w = reply.split()
-            lt["result"] = "готово: %s, %s %s" % (w[3], w[5], w[6]) + ("   I2C %s" % w[7][5:] if len(w) > 7 else "")
+            kv = dict(x.split("=", 1) for x in w if "=" in x)
+            lt["result"] = "готово: %s, %s %s" % (w[3], w[5], w[6]) + ("   I2C %s" % kv["addr"] if "addr" in kv else "")
             note = ""
             send("get")   # an e-Paper test switches the generator off
         else:
@@ -759,6 +762,8 @@ def main():
                 lcd_defaults()
             elif row == R_PATTERN:
                 lt["pattern"] = (lt["pattern"] + sign) % len(LCD_PATTERNS)
+            elif row == R_ROT:
+                lt["rot"] = ROTATIONS[(ROTATIONS.index(lt["rot"]) + sign) % len(ROTATIONS)]
             elif row >= R_W:
                 key = "whxy"[row - R_W]
                 lo = 0 if key in "xy" else 8

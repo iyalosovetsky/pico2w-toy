@@ -36,8 +36,9 @@
 #                UART / I2C / SPI traffic on those pins meanwhile. Answers "ok decode <proto>
 #                <tokens>" (UART: hex bytes; I2C: S, addr:W/R, bytes, A/N, P; SPI: mosi/miso
 #                per byte, | between CS frames) or "ok decode <proto> none"
-#   lcd <model> [all|colors|bars|grid|text] [w=.. h=.. x=.. y=..]   display tester on J703
-#                (w / h: the panel size, x / y: the window offset - instead of the model's): SPI SCK .6 MOSI .3 CS .5
+#   lcd <model> [all|colors|bars|grid|text] [w=.. h=.. x=.. y=.. r=0|90|180|270]   display
+#                tester on J703 (w / h: the panel size, x / y: the window offset - in the
+#                controller's portrait frame, instead of the model's; r: rotation): SPI SCK .6 MOSI .3 CS .5
 #                DC .4 RST .7 (e-Paper BUSY .2), I2C SDA .4 SCL .5; models: st7789-240x240,
 #                -240x320, -135x240, -170x320, -172x320, -240x280, ili9341, ili9488, epd7in5v2,
 #                ssd1306-128x64, ssd1306-128x32, sh1106
@@ -598,9 +599,22 @@ SH1106_INIT = (0xAE, 0xD5, 0x80, 0xA8, 0x3F, 0xD3, 0x00, 0x40, 0xAD, 0x8B, 0xA1,
 class Tft:
     """ST7789 / ILI9341 (RGB565) and ILI9488 (RGB666 over SPI) - just enough for test pictures."""
 
-    def __init__(self, kind, w, h, xo, yo):
+    RAM = {"st7789": (240, 320), "ili9341": (240, 320), "ili9488": (320, 480)}
+    # MADCTL for 0 / 90 / 180 / 270 degrees (MY 0x80, MX 0x40, MV 0x20, BGR 0x08)
+    MADCTL = {"st7789": {0: 0x00, 90: 0x60, 180: 0xC0, 270: 0xA0},
+              "ili9341": {0: 0x48, 90: 0x28, 180: 0x88, 270: 0xE8}}
+
+    def __init__(self, kind, w, h, xo, yo, rot=0):
+        """w, h, xo, yo: the panel and its window offset in the controller's portrait frame."""
         from machine import SPI
-        self.kind, self.w, self.h, self.xo, self.yo = kind, w, h, xo, yo
+        rw, rh = self.RAM[kind]
+        # the offsets move with the rotation (e.g. a 135x240 at 52/40 becomes 40/53, 53/40, 40/52)
+        xo, yo = {0: (xo, yo), 90: (yo, rw - w - xo), 180: (rw - w - xo, rh - h - yo),
+                  270: (rh - h - yo, xo)}[rot]
+        if rot in (90, 270):
+            w, h = h, w
+        self.kind, self.w, self.h, self.xo, self.yo = kind, w, h, max(0, xo), max(0, yo)
+        self.madctl = self.MADCTL["st7789" if kind == "st7789" else "ili9341"][rot]
         self.bpp = 3 if kind == "ili9488" else 2
         mode = 3 if kind == "st7789" else 0       # CS-less ST7789 modules need mode 3
         self.spi = SPI(0, baudrate=20000000, polarity=mode >> 1, phase=mode & 1,
@@ -623,6 +637,7 @@ class Tft:
             self.cmd(0x36, b"\x00")
             self.cmd(0x21)                       # ST7789 panels are inverted
             self.cmd(0x13)
+        self.cmd(0x36, bytes((self.madctl,)))
         self.cmd(0x11)
         time.sleep_ms(120)
         self.cmd(0x29)
@@ -715,12 +730,37 @@ class Tft:
         self.spi.deinit()
 
 
+@micropython.viper
+def _rot_hlsb(src: ptr8, sw: int, sh: int, dst: ptr8, dw: int, mode: int):
+    """Rotate a MONO_HLSB picture (sw x sh) into dst (dw wide, cleared): mode 1 = 90, 2 = 180,
+    3 = 270 degrees."""
+    sb = sw >> 3
+    db = dw >> 3
+    sy = 0
+    while sy < sh:
+        sx = 0
+        while sx < sw:
+            if src[sy * sb + (sx >> 3)] & (0x80 >> (sx & 7)):
+                if mode == 1:
+                    px = sh - 1 - sy
+                    py = sx
+                elif mode == 2:
+                    px = sw - 1 - sx
+                    py = sh - 1 - sy
+                else:
+                    px = sy
+                    py = sw - 1 - sx
+                dst[py * db + (px >> 3)] |= 0x80 >> (px & 7)
+            sx += 1
+        sy += 1
+
+
 class Epd:
     """Waveshare 7.5" e-Paper V2 (800 x 480, UC8179): one full refresh with the test picture."""
 
-    def __init__(self, w, h):
+    def __init__(self, w, h, rot=0):
         from machine import SPI
-        self.w, self.h = w, h
+        self.w, self.h, self.rot = w, h, rot
         self.spi = SPI(0, baudrate=4000000, polarity=0, phase=0, sck=Pin(D_SCK), mosi=Pin(D_MOSI))
         self.cs, self.dc, self.rst = Pin(D_CS, Pin.OUT, value=1), Pin(D_DC, Pin.OUT), Pin(D_RST, Pin.OUT, value=1)
         self.busy = Pin(D_BUSY, Pin.IN)
@@ -765,7 +805,7 @@ class Epd:
 
     def show(self, pattern, label):
         import framebuf
-        w, h = self.w, self.h
+        w, h = (self.h, self.w) if self.rot in (90, 270) else (self.w, self.h)   # as seen
         buf = bytearray(w * h // 8)
         fb = framebuf.FrameBuffer(buf, w, h, framebuf.MONO_HLSB)   # 1 = white
         fb.fill(1)
@@ -784,6 +824,10 @@ class Epd:
             for i, s in enumerate(("PicoCalc display tester", label, "%dx%d" % (w, h))):
                 fb.fill_rect(w // 2 - 4 * len(s) - 4, h // 2 - 20 + 16 * i - 3, 8 * len(s) + 8, 14, 1)
                 fb.text(s, w // 2 - 4 * len(s), h // 2 - 20 + 16 * i, 0)
+        if self.rot:
+            panel = bytearray(len(buf))
+            _rot_hlsb(buf, w, h, panel, self.w, self.rot // 90)
+            buf = panel
         self.cmd(0x10)
         self.data(buf)
         for i in range(len(buf)):
@@ -808,9 +852,9 @@ class Epd:
 class Oled:
     """SSD1306 (128x64 / 128x32) and SH1106 (128x64, column offset 2) over I2C."""
 
-    def __init__(self, kind, w, h, xo):
+    def __init__(self, kind, w, h, xo, rot=0):
         from machine import I2C
-        self.kind, self.w, self.h, self.xo = kind, w, h, xo
+        self.kind, self.w, self.h, self.xo, self.rot = kind, w, h, xo, rot
         self.i2c = I2C(0, sda=Pin(D_SDA), scl=Pin(D_SCL), freq=400000)
         for p in (D_SDA, D_SCL):   # internal pull-ups help when the module has none
             mem32[0x40038000 + 4 + 4 * p] = (mem32[0x40038000 + 4 + 4 * p] | 1 << 3) & ~(1 << 2)
@@ -824,8 +868,28 @@ class Oled:
         else:
             init = tuple((0x3F if h == 64 else 0x1F) if i == 4 else (0x12 if h == 64 else 0x02) if i == 15 else c
                          for i, c in enumerate(SSD1306_INIT))
+        if rot == 180:   # segment remap A0 instead of A1, COM scan C0 instead of C8
+            init = tuple({0xA1: 0xA0, 0xC8: 0xC0}.get(c, c) for c in init)
         for c in init:
             self.i2c.writeto(self.addr, bytes((0x00, c)))
+
+    def flush_view(self, vbuf, vw, vh):
+        """The picture as seen; 90 / 270 degrees are turned in software."""
+        if self.rot not in (90, 270):
+            self.flush(vbuf)
+            return
+        import framebuf
+        vfb = framebuf.FrameBuffer(vbuf, vw, vh, framebuf.MONO_VLSB)
+        buf = bytearray(self.w * self.h // 8)
+        pfb = framebuf.FrameBuffer(buf, self.w, self.h, framebuf.MONO_VLSB)
+        for vy in range(vh):
+            for vx in range(vw):
+                if vfb.pixel(vx, vy):
+                    if self.rot == 90:
+                        pfb.pixel(vh - 1 - vy, vx, 1)
+                    else:
+                        pfb.pixel(vy, vw - 1 - vx, 1)
+        self.flush(buf)
 
     def flush(self, buf):
         pages = self.h // 8
@@ -842,19 +906,19 @@ class Oled:
 
     def show(self, pattern, label):
         import framebuf
-        w, h = self.w, self.h
-        buf = bytearray(w * h // 8)
+        w, h = (self.h, self.w) if self.rot in (90, 270) else (self.w, self.h)   # as seen
+        buf = bytearray(w * h // 8 + 8)
         fb = framebuf.FrameBuffer(buf, w, h, framebuf.MONO_VLSB)
         if pattern in ("all", "colors"):
             for v in (1, 0, 1, 0):
                 fb.fill(v)
-                self.flush(buf)
+                self.flush_view(buf, w, h)
                 time.sleep_ms(300)
         if pattern in ("all", "bars"):
             fb.fill(0)
             for i in range(0, 8, 2):
                 fb.fill_rect(i * w // 8, 0, w // 8, h, 1)
-            self.flush(buf)
+            self.flush_view(buf, w, h)
             if pattern == "all":
                 time.sleep_ms(600)
         if pattern in ("all", "grid", "text"):
@@ -866,12 +930,15 @@ class Oled:
                 fb.hline(0, y, w, 1)
             fb.rect(0, 0, w, h, 1)
         if pattern in ("all", "text"):
-            for i, s in enumerate(("PicoCalc", label[:16], "%dx%d %02X" % (w, h, self.addr))):
-                y = h // 2 - 12 + 10 * i if h == 64 else 1 + 10 * i
+            for i, s in enumerate(("PicoCalc", label[:w // 8], "%dx%d" % (w, h), "%02X" % self.addr)):
+                y = h // 2 - 20 + 10 * i if h >= 64 else 1 + 10 * i
+                if y + 8 > h:
+                    break
+                s = s[:w // 8]
                 fb.fill_rect(w // 2 - 4 * len(s) - 1, y - 1, 8 * len(s) + 2, 10, 0)
                 fb.text(s, w // 2 - 4 * len(s), y, 1)
         if pattern != "colors":
-            self.flush(buf)
+            self.flush_view(buf, w, h)
 
     def close(self):
         pass
@@ -890,8 +957,11 @@ def lcd_test(args):
     try:   # w= h= x= y=: a panel size / window offset other than the model's default
         w, h = int(opts.get("w", w)), int(opts.get("h", h))
         xo, yo = int(opts.get("x", xo)), int(opts.get("y", yo))
+        rot = int(opts.get("r", 0))
     except ValueError:
-        return "err lcd: w= h= x= y= take numbers"
+        return "err lcd: w= h= x= y= r= take numbers"
+    if rot not in (0, 90, 180, 270):
+        return "err lcd rotation: r=0, 90, 180 or 270"
     limit = {"st7789": (320, 320), "ili9341": (320, 320), "ili9488": (480, 480), "epd": (800, 800),
              "ssd1306": (128, 64), "sh1106": (132, 64)}[kind]
     if not (8 <= w <= limit[0] and 8 <= h <= max(limit) and 0 <= xo < 320 and 0 <= yo < 320):
@@ -904,17 +974,18 @@ def lcd_test(args):
         state["on"] = False
         apply()
     if kind in ("st7789", "ili9341", "ili9488"):
-        d = Tft(kind, w, h, xo, yo)
+        d = Tft(kind, w, h, xo, yo, rot)
     elif kind == "epd":
-        d = Epd(w, h)
+        d = Epd(w, h, rot)
     else:
-        d = Oled(kind, w, h, xo)
+        d = Oled(kind, w, h, xo, rot)
     try:
         d.show(pattern, model)
     finally:
         d.close()
     extra = (" addr=%02X" % d.addr) if kind in ("ssd1306", "sh1106") else ""
-    return "ok lcd %s %dx%d %s %d ms%s" % (model, w, h, pattern, time.ticks_diff(time.ticks_ms(), t), extra)
+    sw, sh = (h, w) if rot in (90, 270) else (w, h)   # as seen
+    return "ok lcd %s %dx%d %s %d ms r=%d%s" % (model, sw, sh, pattern, time.ticks_diff(time.ticks_ms(), t), rot, extra)
 
 
 def number(s):
