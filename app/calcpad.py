@@ -37,7 +37,7 @@ HISTORY_FILE = os.path.expanduser("~/.config/lcdtoy/calc-history")
 HISTORY_MAX = 300
 N2D = 161     # samples of a function plot
 N3D = 25      # grid of a function surface
-DIGITS = 16   # calc's config("display"): fits a line of the PicoCalc; config("display", 50) for more
+DIGITS = 12   # calc's config("display"): fits a line of the PicoCalc; config("display", 50) for more
 EXAMPLES = [
     "2^100", "sqrt(2)", "pi(1e-30)", "fact(30)", "exp(1)", "sin(pi()/6)",
     "mat A[3,3] = {2,1,0, 1,3,1, 0,1,4}", "det(A)", "inverse(A)", "A * A",
@@ -46,8 +46,8 @@ EXAMPLES = [
     "plot3d sin(x)*cos(y), -3, 3", "plot3d A", "ln(2)", "factor(2^32+1)", "(1+2i) * (3-1i)",
 ]
 
-BG, FG, DIM = (0, 0, 0), (225, 225, 225), (110, 110, 110)
-ACCENT, RED, GREEN, BLUE = (255, 200, 0), (240, 90, 80), (90, 200, 90), (110, 170, 255)
+BG, FG, DIM = (0, 0, 0), (255, 255, 255), (175, 175, 175)
+ACCENT, RED, GREEN, BLUE = (255, 210, 40), (255, 110, 95), (110, 245, 110), (140, 205, 255)
 FONT_DIR = "/usr/share/fonts/truetype/dejavu/"
 STOPS = [(68, 1, 84), (59, 82, 139), (33, 145, 140), (94, 201, 98), (253, 231, 37)]  # viridis
 
@@ -288,9 +288,9 @@ def font(name, px):
 
 
 BIG = lcd.S > 1
-f_mono = font("DejaVuSansMono.ttf", 12 if BIG else 7)
-f_small = font("DejaVuSans.ttf", 11 if BIG else 7)
-f_bold = font("DejaVuSans-Bold.ttf", 11 if BIG else 7)
+f_mono = font("DejaVuSansMono.ttf", 17 if BIG else 8)
+f_small = font("DejaVuSans.ttf", 15 if BIG else 8)
+f_bold = font("DejaVuSans-Bold.ttf", 15 if BIG else 8)
 LINE_H = f_mono.get_linesize()
 CHAR_W = f_mono.size("0")[0]
 COLS = max(10, int((128 - 3) / CHAR_W))
@@ -698,7 +698,7 @@ plot3d ВИРАЗ від x і y, a, b - поверхня над квадрато
 > clear
 > reset
 > config("display", 50)
-Скільки знаків показувати (типово 16).
+Скільки знаків показувати (типово 12).
 # Клавіші
 Enter - обчислити; Esc - очистити рядок, зупинити довге обчислення, вийти; ↑/↓ - історія; PgUp/PgDn - прокрутка; F1 - ця довідка (Enter вставляє приклад у рядок).
 """
@@ -777,7 +777,7 @@ def show_help():
                 screen.blit(f.render(text, True, ACCENT if n == sel else color), (2, y))
                 y += f.get_linesize()
             screen.fill(BG, (0, 0, 128, top_y - 1))
-            t = f_bold.render("ДОВІДКА  ↑↓ приклад, Enter - вставити", True, ACCENT)
+            t = f_bold.render("ДОВІДКА   Enter - вставити", True, ACCENT)
             screen.blit(t, (2, 0))
             pygame.draw.line(screen, DIM, (0, top_y - 2), (128, top_y - 2))
             lcd.flip()
