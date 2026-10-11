@@ -294,6 +294,9 @@ class Radio:
                 blocks = iq[:segs * nfft].reshape(segs, nfft) * win
                 p = (np.abs(np.fft.fft(blocks, axis=1)) ** 2).mean(axis=0)
                 db = 10 * np.log10(np.fft.fftshift(p) / (nfft * nfft) + 1e-12)
+                if self.fb:   # narrow modes: the stick's own spike at its centre is not a signal - hide it
+                    c = nfft // 2
+                    db[c - 2:c + 3] = np.median(np.concatenate((db[c - 8:c - 3], db[c + 3:c + 8])))
                 avg = db if avg is None or len(avg) != len(db) else 0.6 * avg + 0.4 * db
                 self.spectrum = avg
                 floor = float(np.median(avg))
