@@ -90,7 +90,27 @@ KEYMAP = {
         (16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 30, 31, 32, 33, 34, 35, 36, 38, 44, 45, 46, 47, 48, 49),
         "qwertyuiopasdfghjlzxcvbn")},
     111: pygame.K_DELETE,
+    # punctuation (text typed in the calculator)
+    26: pygame.K_LEFTBRACKET, 27: pygame.K_RIGHTBRACKET, 39: pygame.K_SEMICOLON,
+    40: pygame.K_QUOTE, 41: pygame.K_BACKQUOTE, 43: pygame.K_BACKSLASH, 51: pygame.K_COMMA,
+    53: pygame.K_SLASH, 55: pygame.K_KP_MULTIPLY, 74: pygame.K_KP_MINUS, 78: pygame.K_KP_PLUS,
+    98: pygame.K_KP_DIVIDE, 117: pygame.K_KP_EQUALS, 179: pygame.K_LEFTPAREN,
+    180: pygame.K_RIGHTPAREN,
 }
+
+# evdev keycode -> (character, with Shift) of a US keyboard: ev.unicode of the posted events
+CHARS = {
+    **{code: (d, s) for code, d, s in zip(range(2, 12), "1234567890", "!@#$%^&*()")},
+    **{code: (ch, ch.upper()) for code, ch in zip(
+        (16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 30, 31, 32, 33, 34, 35, 36, 37, 38,
+         44, 45, 46, 47, 48, 49, 50), "qwertyuiopasdfghjklzxcvbnm")},
+    12: ("-", "_"), 13: ("=", "+"), 26: ("[", "{"), 27: ("]", "}"), 39: (";", ":"),
+    40: ("'", '"'), 41: ("`", "~"), 43: ("\\", "|"), 51: (",", "<"), 52: (".", ">"),
+    53: ("/", "?"), 57: (" ", " "), 55: ("*", "*"), 74: ("-", "-"), 78: ("+", "+"),
+    98: ("/", "/"), 117: ("=", "="), 179: ("(", "("), 180: (")", ")"),
+}
+SHIFT_CODES = (42, 54)
+CAPSLOCK = 58
 
 _fb = None
 _screen = None
@@ -105,6 +125,8 @@ _grab_keyboards = True  # False while the USB keyboard is lent to the HDMI conso
 _hat_fds = set()      # HAT buttons (gpio-key), as opposed to keyboards
 _sounds = {}
 _held_arrows = set()  # pygame arrow keys currently held on a keyboard
+_shift = set()        # Shift keys held (evdev codes)
+_caps = False         # Caps Lock toggled
 _sound_ok = False
 
 
@@ -387,6 +409,7 @@ def _scan_inputs():
 
 
 def _pump_buttons():
+    global _caps
     if time.monotonic() - _last_scan > RESCAN_SECONDS:
         _scan_inputs()
     if not _inputs:
@@ -410,13 +433,25 @@ def _pump_buttons():
                     pygame.event.post(pygame.event.Event(pygame.KEYUP, key=key, mod=0, unicode="",
                                                          scancode=0, hat=False))
                 _held_arrows.clear()
+            elif etype == 1 and code in SHIFT_CODES:
+                (_shift.add if value else _shift.discard)(code)
+            elif etype == 1 and code == CAPSLOCK and value == 1:
+                _caps = not _caps
             elif etype == 1 and code in KEYMAP and value in (0, 1):  # EV_KEY, no autorepeat
                 key = KEYMAP[code]
                 kind = pygame.KEYDOWN if value else pygame.KEYUP
-                if fd not in _hat_fds and key in (pygame.K_UP, pygame.K_DOWN, pygame.K_LEFT, pygame.K_RIGHT):
+                hat = fd in _hat_fds
+                if not hat and key in (pygame.K_UP, pygame.K_DOWN, pygame.K_LEFT, pygame.K_RIGHT):
                     (_held_arrows.add if value else _held_arrows.discard)(key)
-                pygame.event.post(pygame.event.Event(kind, key=key, mod=0, unicode="",
-                                                     scancode=code, hat=fd in _hat_fds))
+                char = ""
+                if not hat and code in CHARS:
+                    normal, shifted = CHARS[code]
+                    char = shifted if _shift else normal
+                    if _caps and normal.isalpha():
+                        char = char.swapcase()
+                mod = pygame.KMOD_SHIFT if _shift and not hat else 0
+                pygame.event.post(pygame.event.Event(kind, key=key, mod=mod, unicode=char,
+                                                     scancode=code, hat=hat))
 
 
 # ---------------------------------------------------------------- display

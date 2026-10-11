@@ -26,6 +26,7 @@ ITEMS = [
     ("BOOKS", "epub fb2", ["/usr/bin/python3", HERE + "/reader.py"], HERE),
     ("DOOM", "E1", [HERE + "/doom/doomlcd", "-iwad", "/usr/share/games/doom/doom1.wad"], HERE + "/doom"),
     ("GENERATOR", "", ["/usr/bin/python3", HERE + "/siggen.py"], HERE),
+    ("CALC", "apcalc", ["/usr/bin/python3", HERE + "/calcpad.py"], HERE),
     ("AI CHAT", "zen4", "aichat", None),
     ("PYTHON", "bpython", "term:python", None),
     ("BASIC", "MMBasic", "term:basic", None),

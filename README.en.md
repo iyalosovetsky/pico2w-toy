@@ -122,6 +122,7 @@ A 172×103×20 mm PicoCalc back cover for the zero mod (a Zero 2 W instead of th
 | **BOOKS** | EPUB / FB2 / TXT (also zipped) and PDF reader for the `~/books` folder: images, contents, font size, light/dark theme; PDF as zoomed page fragments with smooth scrolling; the position in every book is saved |
 | **DOOM** | Doom (shareware episode 1) via [doomgeneric](https://github.com/ozkl/doomgeneric), downscaled to 128×80 |
 | **GENERATOR** | Signal generator on a separate board (PicoCalc, over the UART or USB): shape (square, sine, triangle, saw), frequency, duty cycle, on/off, and a voltmeter and an oscilloscope on the ADC, a logic analyzer, an I2C / SPI / UART decoder and a display tester on J703; the board's LED shows the duty and the frequency - see [generator](#picocalc-components) |
+| **CALC** | Calculator on top of [calc](http://www.isthe.com/chongo/tech/comp/calc/) (apcalc): arbitrary precision, matrices, your own functions (`define`), one session for the whole run; plots: `plot sin(x), -5, 5`, `plot V` (a vector), `heat A` (a matrix as a heat map), `plot3d A` and `plot3d sin(x)*cos(y), -3, 3` (a surface rotated with the arrows). On the HAT without a keyboard: ready examples on KEY1 / KEY2 |
 | **AI CHAT** | Chat with a local LLM (llama.cpp / any OpenAI-compatible server) on the text console, US/UA keyboard |
 | **CONSOLE** | Leaves the menu and opens a text console with login on the LCD (tty7); `lcdmenu` brings the menu back |
 | **HDMI** | Lends the USB keyboard to the console on the monitor (tty1); the HAT buttons stay with the menu, KEY3 takes the keyboard back |
@@ -149,12 +150,13 @@ How the pieces fit together:
 | File / folder | Purpose |
 |---|---|
 | `install.sh` | One-shot installer (packages, driver, fonts, services) for the HAT or the PicoCalc |
-| `app/lcd.py` | Shared display + input layer for all pygame apps |
+| `app/lcd.py` | Shared display + input layer for all pygame apps (from a keyboard also characters with Shift / Caps Lock, US) |
 | `app/menu.py` | Launcher menu (scrolling list) |
 | `app/pong.py`, `app/tetris.py`, `app/poker.py`, `app/chessgame.py` | The games |
 | `app/preferans.py` | 128×128 Preferans front-end for the PyPref engine |
 | `app/reader.py`, `app/books.py`, `app/pdfdoc.py` | The reader: UI, EPUB / FB2 / TXT / ZIP parsing (FB2 and TXT in any encoding), PDF pages via `pdftoppm` |
 | `app/prefgame/` | [Python Pref](https://sourceforge.net/projects/python-pref/) 2.34 engine and AI, ported to Python 3 (GPL-3.0) |
+| `app/calcpad.py` | Calculator: a `calc -q -p` session in a pipe, 2D plots / heat map / 3D surface |
 | `app/ai_chat.py` | Streaming chat client for a llama.cpp / OpenAI-compatible server |
 | `app/demo.py` | Minimal pygame example: draw something, read the buttons |
 | `app/term.sh` | Starts the PicoCalc console tools: PYTHON (bpython), BASIC (MMBasic), EDIT (micro) |
