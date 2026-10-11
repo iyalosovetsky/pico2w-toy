@@ -22,7 +22,7 @@ import numpy as np  # noqa: E402
 import pygame  # noqa: E402
 import lcd  # noqa: E402
 
-SR = 44100
+SR = 22050           # plenty for the PicoCalc's speaker, and half the work
 LOWER = "zsxdcvgbhnjm,l.;/"          # semitones 0..16 from the octave's C
 UPPER = "q2w3er5t6y7ui9o0p"          # semitones 12..28
 KEYS = {ch: i for i, ch in enumerate(LOWER)}
@@ -41,14 +41,22 @@ def midi_hz(m):
 
 
 # ---------------------------------------------------------------- building blocks
+# Sounds are rendered from wavetables: the sum of a note's harmonics is computed once over one period
+# (TABLE points), then read at the note's phase - the cost does not grow with the number of harmonics
+# (a Zero 2 W took ~1 s a note with one sin() per harmonic). Harmonics that decay differently go to
+# separate tables (2-3 groups).
+
+TABLE = 2048
+_X = np.arange(TABLE) / TABLE
+
 
 def tvec(dur):
     return np.arange(int(SR * dur), dtype=np.float32) / SR
 
 
-def env_adsr(n, a, d, s, r_start=None):
+def env_adsr(n, a, d, s):
     """Attack (s), decay (s) to the sustain level, held; a gentle fade over the last 40 ms."""
-    t = np.arange(n) / SR
+    t = np.arange(n, dtype=np.float32) / SR
     e = np.where(t < a, t / max(a, 1e-4), s + (1 - s) * np.exp(-(t - a) / max(d, 1e-4)))
     tail = min(n, int(0.04 * SR))
     e[-tail:] *= np.linspace(1, 0, tail)
@@ -61,73 +69,92 @@ def fade_end(y, ms=30):
     return y
 
 
-def additive(f, dur, amps, decays=None, inharm=0.0, vib=None, detune=0.0):
-    """Sum of harmonics k*f (amps[k-1]); each with its own exponential decay (1/s)."""
-    t = tvec(dur)
-    phase = 2 * np.pi * f * t
-    if vib:                                   # (rate Hz, depth fraction, delay s)
-        rate, depth, delay = vib
-        ramp = np.clip((t - delay) / 0.3, 0, 1)
-        phase = phase - f * depth * ramp * np.cos(2 * np.pi * rate * t) / rate     # f(t) = f (1 + depth sin)
-    y = np.zeros_like(t)
+def table(f, amps, ratios=None):
+    """One period of sum(a_k sin(2 pi r_k x)), harmonics above Nyquist left out (no aliasing)."""
+    y = np.zeros(TABLE, np.float32)
     for k, a in enumerate(amps, 1):
-        if a == 0 or k * f > SR / 2.2:
-            continue
-        ratio = k * math.sqrt(1 + inharm * k * k)
-        part = np.sin(ratio * phase)
-        if detune:
-            part = 0.5 * (part + np.sin(ratio * phase * (1 + detune)))
-        if decays is not None:
-            part *= np.exp(-decays[k - 1] * t)
-        y += a * part
+        r = ratios[k - 1] if ratios else k
+        if a and r * f < SR / 2.2:
+            y += a * np.sin(2 * np.pi * r * _X).astype(np.float32)
     return y
 
 
+def cycles(f, t, vib=None):
+    """The phase in periods: f t, with vibrato (rate Hz, depth fraction, delay s) easing in."""
+    c = f * t
+    if vib:
+        rate, depth, delay = vib
+        ramp = np.clip((t - delay) / 0.3, 0, 1)
+        c = c - f * depth * ramp * np.cos(2 * np.pi * rate * t) / (2 * np.pi * rate)
+    return c
+
+
+def read(tab, c):
+    return tab[((c % 1.0) * TABLE).astype(np.int32) % TABLE]
+
+
+_NOISE = RNG.uniform(-1, 1, SR * 4).astype(np.float32)
+
+
 def noise(n):
-    return RNG.uniform(-1, 1, n).astype(np.float32)
+    start = int(RNG.integers(0, len(_NOISE) - n)) if n < len(_NOISE) else 0
+    return _NOISE[start:start + n].copy()
 
 
 def band(x, lo, hi):
-    """Band-pass by FFT (fine for sounds rendered once)."""
+    """Band-pass by FFT (for short bursts and the drums, rendered once)."""
     X = np.fft.rfft(x)
     f = np.fft.rfftfreq(len(x), 1 / SR)
     w = np.clip((f - lo * 0.8) / (lo * 0.2 + 1), 0, 1) * np.clip((hi * 1.2 - f) / (hi * 0.2 + 1), 0, 1)
     return np.fft.irfft(X * w, len(x)).astype(np.float32)
 
 
+_BANDS = {}
+
+
+def band_noise(lo, hi, n):
+    """A slice of band-passed noise (each band computed once)."""
+    key = (lo, hi)
+    if key not in _BANDS:
+        _BANDS[key] = band(RNG.uniform(-1, 1, SR * 3).astype(np.float32), lo, hi)
+    src = _BANDS[key]
+    if n <= len(src):
+        return src[:n].copy()
+    return np.resize(src, n)
+
+
 # ---------------------------------------------------------------- instruments: f -> samples
 
 def piano(f):
-    dur = 2.6 if f < 400 else 1.8
+    t = tvec(2.2 if f < 400 else 1.6)
     base = 0.9 + f / 900                       # higher notes die faster
-    amps = [1, 0.6, 0.35, 0.25, 0.18, 0.12, 0.08, 0.06, 0.04, 0.03]
-    decs = [base * (1 + 0.45 * k) for k in range(10)]
-    y = additive(f, dur, amps, decs, inharm=0.0003, detune=0.0012)
-    n = len(y)
-    att = np.minimum(np.arange(n) / (0.004 * SR), 1)
-    hammer = band(noise(int(0.015 * SR)), 1500, 6000) * np.linspace(1, 0, int(0.015 * SR)) * 0.15
-    y[:len(hammer)] += hammer
-    return y * att
+    c = cycles(f, t)
+    y = read(table(f, [1, 0.6, 0.35]), c) * np.exp(-base * t)
+    y += read(table(f, [1, 0.6, 0.35]), c * 1.0012) * np.exp(-base * t) * 0.5      # a second string
+    y += read(table(f, [0, 0, 0, 0.25, 0.18, 0.12]), c) * np.exp(-base * 2.8 * t)
+    y += read(table(f, [0] * 6 + [0.08, 0.06, 0.04, 0.03]), c) * np.exp(-base * 4.5 * t)
+    k = int(0.015 * SR)
+    y[:k] += band_noise(1500, 6000, k) * np.linspace(0.15, 0, k)                  # the hammer
+    return y * np.minimum(t / 0.004, 1)
 
 
 def epiano(f):                                 # FM "tine": modulator at f, index decaying
-    t = tvec(2.2)
+    t = tvec(1.8)
     idx = 1.6 * np.exp(-t * 4) + 0.2
-    y = np.sin(2 * np.pi * f * t + idx * np.sin(2 * np.pi * f * t))
-    y += 0.25 * np.sin(2 * np.pi * 14 * f * t) * np.exp(-t * 30)       # the bark of the tine
+    w = 2 * np.pi * f * t
+    y = np.sin(w + idx * np.sin(w))
+    if 14 * f < SR / 2.2:
+        y += 0.25 * np.sin(14 * w) * np.exp(-t * 30)                              # the tine's bark
     return y * np.exp(-t * (1.2 + f / 1500)) * np.minimum(t / 0.003, 1)
 
 
 def organ(f):
-    t = tvec(3.0)
-    amps = {0.5: 0.25, 1: 1, 2: 0.8, 3: 0.5, 4: 0.4, 6: 0.2, 8: 0.15}
-    y = np.zeros_like(t)
-    for r, a in amps.items():
-        if r * f < SR / 2.2:
-            y += a * np.sin(2 * np.pi * r * f * t)
-    y *= 1 + 0.12 * np.sin(2 * np.pi * 6.2 * t)          # a Leslie's tremolo
-    click = band(noise(int(0.006 * SR)), 2000, 8000) * 0.2
-    y[:len(click)] += click
+    t = tvec(2.5)
+    # drawbars 16' 8' 4' 2 2/3' 2' 1 1/3' 1': harmonics of f/2
+    tab = table(f / 2, [0.25, 1, 0, 0.8, 0, 0.5, 0, 0.4, 0, 0, 0, 0.2, 0, 0, 0, 0.15])
+    y = read(tab, cycles(f / 2, t)) * (1 + 0.12 * np.sin(2 * np.pi * 6.2 * t))   # a Leslie's tremolo
+    k = int(0.006 * SR)
+    y[:k] += band_noise(2000, 8000, k) * 0.2
     return y * env_adsr(len(t), 0.006, 0.05, 1.0)
 
 
@@ -135,59 +162,66 @@ def violin(f):
     amps = [1 / k for k in range(1, 16)]
     for k in range(15):                         # the body's resonances around 3 kHz
         amps[k] *= 1 + 1.2 * math.exp(-(((k + 1) * f - 3000) / 1200) ** 2)
-    y = additive(f, 3.0, amps, vib=(5.5, 0.006, 0.25))
-    y += 0.03 * band(noise(len(y)), 2000, 7000)           # bow noise
-    return y * env_adsr(len(y), 0.12, 0.3, 0.85)
+    t = tvec(2.5)
+    y = read(table(f, amps), cycles(f, t, (5.5, 0.006, 0.25)))
+    y += 0.03 * band_noise(2000, 7000, len(t))                                   # bow noise
+    return y * env_adsr(len(t), 0.12, 0.3, 0.85)
 
 
 def strings(f):                                 # an ensemble: three detuned saws, a slow swell
-    amps = [1 / k for k in range(1, 12)]
-    y = sum(additive(f * (1 + d), 3.2, amps, vib=(5 + i, 0.004, 0.1)) for i, d in enumerate((-0.004, 0, 0.005)))
-    return y * env_adsr(len(y), 0.35, 0.5, 0.9)
+    t = tvec(2.6)
+    tab = table(f, [1 / k for k in range(1, 12)])
+    y = sum(read(tab, cycles(f * (1 + d), t, (5 + i, 0.004, 0.1))) for i, d in enumerate((-0.004, 0, 0.005)))
+    return y * env_adsr(len(t), 0.35, 0.5, 0.9)
 
 
 def brass(f):
-    t = tvec(2.8)
+    t = tvec(2.3)
     e = env_adsr(len(t), 0.05, 0.4, 0.75)
-    y = np.zeros_like(t)
-    for k in range(1, 18):                      # brighter while it is louder
-        if k * f > SR / 2.2:
-            break
-        y += np.exp(-k / (1.5 + 7 * e)) * np.sin(2 * np.pi * k * f * t * (1 - 0.01 * np.exp(-t * 25)))
-    return y * e
+    c = cycles(f, t) - 0.01 * f * (1 - np.exp(-t * 25)) / 25      # a small scoop into the note
+    dark = read(table(f, [math.exp(-k / 2) for k in range(1, 18)]), c)
+    bright = read(table(f, [math.exp(-k / 8) for k in range(1, 18)]), c)
+    return (dark * (1 - e) + bright * e) * e                       # brighter while it is louder
 
 
 def flute(f):
-    y = additive(f, 2.8, [1, 0.25, 0.08, 0.03], vib=(5, 0.004, 0.3))
-    y += 0.08 * band(noise(len(y)), f, min(f * 6, 9000))          # breath
-    return y * env_adsr(len(y), 0.07, 0.3, 0.85)
+    t = tvec(2.3)
+    y = read(table(f, [1, 0.25, 0.08, 0.03]), cycles(f, t, (5, 0.004, 0.3)))
+    lo = 400 if f < 400 else 1000 if f < 1000 else 2000
+    y += 0.08 * band_noise(lo, lo * 6, len(t))                                    # breath
+    return y * env_adsr(len(t), 0.07, 0.3, 0.85)
 
 
 def clarinet(f):
-    y = additive(f, 2.8, [1, 0.02, 0.55, 0.02, 0.3, 0.02, 0.18, 0, 0.1, 0, 0.06], vib=(4.5, 0.002, 0.4))
-    return y * env_adsr(len(y), 0.04, 0.3, 0.8)
+    t = tvec(2.3)
+    y = read(table(f, [1, 0.02, 0.55, 0.02, 0.3, 0.02, 0.18, 0, 0.1, 0, 0.06]), cycles(f, t, (4.5, 0.002, 0.4)))
+    return y * env_adsr(len(t), 0.04, 0.3, 0.8)
 
 
 def xylophone(f):
-    t = tvec(1.0)
+    t = tvec(0.9)
     y = np.sin(2 * np.pi * f * t) * np.exp(-t * (6 + f / 400))
-    y += 0.4 * np.sin(2 * np.pi * 3.0 * f * t) * np.exp(-t * 18)
-    y += 0.15 * np.sin(2 * np.pi * 6.0 * f * t) * np.exp(-t * 35)
+    if 3 * f < SR / 2.2:
+        y += 0.4 * np.sin(2 * np.pi * 3.0 * f * t) * np.exp(-t * 18)
+    if 6 * f < SR / 2.2:
+        y += 0.15 * np.sin(2 * np.pi * 6.0 * f * t) * np.exp(-t * 35)
     k = int(0.004 * SR)
-    y[:k] += band(noise(k), 2000, 9000) * 0.4                      # the mallet
+    y[:k] += band_noise(2000, 9000, k) * 0.4                                      # the mallet
     return y
 
 
 def marimba(f):
-    t = tvec(1.6)
+    t = tvec(1.4)
     y = np.sin(2 * np.pi * f * t) * np.exp(-t * (2.5 + f / 600))
-    y += 0.25 * np.sin(2 * np.pi * 4.0 * f * t) * np.exp(-t * 12)
-    y += 0.08 * np.sin(2 * np.pi * 10.0 * f * t) * np.exp(-t * 30)
+    if 4 * f < SR / 2.2:
+        y += 0.25 * np.sin(2 * np.pi * 4.0 * f * t) * np.exp(-t * 12)
+    if 10 * f < SR / 2.2:
+        y += 0.08 * np.sin(2 * np.pi * 10.0 * f * t) * np.exp(-t * 30)
     return y * np.minimum(t / 0.002, 1)
 
 
 def bells(f):                                   # glockenspiel-like: inharmonic partials
-    t = tvec(2.5)
+    t = tvec(2.0)
     y = np.zeros_like(t)
     for r, a, d in ((1, 1, 1.5), (2.76, 0.5, 3), (5.4, 0.25, 5), (8.93, 0.12, 8)):
         if r * f < SR / 2.2:
@@ -197,32 +231,35 @@ def bells(f):                                   # glockenspiel-like: inharmonic 
 
 def guitar(f):
     """Karplus-Strong, rendered at a rate where the loop is a whole number of samples, resampled."""
-    dur = 2.0
+    dur = 1.8
     N = int(math.ceil(SR / f))
     sr = (N + 0.5) * f                 # the two-point average adds half a sample to the loop
     n = int(sr * dur)
     y = np.zeros(n + N + 1, np.float32)
-    burst = np.convolve(noise(N), [0.5, 0.5], "same")          # a softer pluck
+    # a softer pluck: smoothed noise plus one sawtooth period, so the fundamental is always there
+    burst = 0.6 * np.convolve(noise(N), [0.5, 0.5], "same") + 0.8 * np.linspace(-1, 1, N, dtype=np.float32)
     y[:N] = burst - burst.mean()                                # no DC: the loop would keep it
     g = 0.996 - f / 40000
     for start in range(N, n, N):
         idx = np.arange(start, min(start + N, n))
         y[idx] = g * 0.5 * (y[idx - N] + y[idx - N - 1])
     y = y[:n]
-    out = np.interp(np.arange(int(SR * dur)) * (sr / SR), np.arange(n), y).astype(np.float32)
-    return out
+    return np.interp(np.arange(int(SR * dur)) * (sr / SR), np.arange(n), y).astype(np.float32)
 
 
 def bass(f):
-    t = tvec(1.6)
-    y = additive(f, 1.6, [1 / k for k in range(1, 12)], [3 + 1.2 * k for k in range(11)])
+    t = tvec(1.4)
+    c = cycles(f, t)
+    y = read(table(f, [1, 0.5, 0.33]), c) * np.exp(-3 * t)
+    y += read(table(f, [0, 0, 0] + [1 / k for k in range(4, 12)]), c) * np.exp(-9 * t)
     return y * np.minimum(t / 0.005, 1)
 
 
 def synth(f):
-    t = tvec(2.0)
-    amps = [1 / k for k in range(1, 20)]
-    y = additive(f, 2.0, amps, detune=0.004)
+    t = tvec(1.8)
+    tab = table(f, [1 / k for k in range(1, 20)])
+    c = cycles(f, t)
+    y = 0.5 * (read(tab, c) + read(tab, c * 1.004))
     return y * env_adsr(len(t), 0.01, 0.4, 0.6)
 
 
