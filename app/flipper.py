@@ -207,6 +207,17 @@ class Scanner:
             self.pending = []
 
     def add(self, lines, color=GREEN):
+        if self.mode == "ir" and lines and self.items:
+            # a held remote button: "RC6, A:0x00, C:0x5A" then the same with " R" (repeat) many times -
+            # one line with a count instead of a screenful
+            key = re.sub(r"\s+R$", "", lines[0])
+            t, last, c = self.items[0]
+            m = re.match(r"^(.*?)(?:  ×(\d+))?$", last[0])
+            if m.group(1) == key:
+                n = int(m.group(2) or 1) + 1
+                self.items[0] = (time.strftime("%H:%M:%S"), ["%s  ×%d" % (key, n)] + last[1:], c)
+                return
+            lines = [key] + lines[1:]
         if self.mode == "subghz" and lines and HEADER.match(lines[0]):
             # the header line: protocol · manufacturer · button
             mf, btn, rest = [], [], []
