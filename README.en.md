@@ -38,8 +38,8 @@ joystick and buttons or with a small USB keyboard.
 | ![chess](docs/gif-picocalc/chess.gif) | ![preferans](docs/gif-picocalc/preferans.gif) | ![doom](docs/gif-picocalc/doom.gif) | ![aichat](docs/gif-picocalc/aichat.gif) |
 | **Books** | **PDF** | **GENERATOR** | **Voltmeter** |
 | ![reader](docs/gif-picocalc/reader.gif) | ![pdf](docs/gif-picocalc/pdf.gif) | ![generator](docs/gif-picocalc/generator.gif) | ![voltmeter](docs/gif-picocalc/voltmeter.gif) |
-| **Oscilloscope** | **Logic analyzer** | **Calculator** | |
-| ![oscilloscope](docs/gif-picocalc/oscilloscope.gif) | ![logic](docs/gif-picocalc/logic.gif) | ![calc](docs/gif-picocalc/calc.gif) | |
+| **Oscilloscope** | **Logic analyzer** | **Calculator** | **SDR** |
+| ![oscilloscope](docs/gif-picocalc/oscilloscope.gif) | ![logic](docs/gif-picocalc/logic.gif) | ![calc](docs/gif-picocalc/calc.gif) | ![sdr](docs/gif-picocalc/sdr.gif) |
 
 *(GIFs recorded 1:1 from the PicoCalc framebuffer, 320×320, with `tools/record_gif.py`.)*
 
@@ -123,7 +123,7 @@ A 172×103×20 mm PicoCalc back cover for the zero mod (a Zero 2 W instead of th
 | **DOOM** | Doom (shareware episode 1) via [doomgeneric](https://github.com/ozkl/doomgeneric), downscaled to 128×80 |
 | **GENERATOR** | Signal generator on a separate board (PicoCalc, over the UART or USB): shape (square, sine, triangle, saw), frequency, duty cycle, on/off, and a voltmeter and an oscilloscope on the ADC, a logic analyzer, an I2C / SPI / UART decoder and a display tester on J703; the board's LED shows the duty and the frequency - see [generator](#picocalc-components) |
 | **CALC** | Calculator on top of [calc](http://www.isthe.com/chongo/tech/comp/calc/) (apcalc): arbitrary precision, matrices, your own functions (`define`), one session for the whole run; plots: `plot sin(x), -5, 5`, `plot V` (a vector), `heat A` (a matrix as a heat map), `plot3d A` and `plot3d sin(x)*cos(y), -3, 3` (a surface rotated with the arrows). F1 - help with examples, Enter puts one in the line; on the HAT without a keyboard: examples on KEY1 / KEY2 |
-| **SDR** | A receiver on an RTL-SDR stick (RTL2832U on USB, tested with the RTL-SDR Blog V4, 0.5 - 1766 MHz): spectrum and waterfall, WFM / NFM / AM / USB / LSB to the speaker, squelch, station memory, frequency typed in digits, a 2 MHz overview. `rtl_tcp` + numpy DSP |
+| **SDR** | A receiver on an RTL-SDR stick (RTL2832U on USB, tested with the RTL-SDR Blog V4, 0.5 - 1766 MHz): spectrum and waterfall, WFM / NFM / AM / USB / LSB to the speaker, squelch, station memory, frequency typed in digits, a 2 MHz overview. `rtl_tcp` + numpy DSP. The GIF: USB at 7.499 MHz, the carrier of a 7.5 MHz square from GENERATOR (switched off - gone from the waterfall), then the 2 MHz overview |
 | **AI CHAT** | Chat with an LLM (llama.cpp / any OpenAI-compatible server) on the text console, US/UA keyboard. Servers are in `~/.config/lcdtoy/ai-chat.json` (url, token, model), `/provider NAME` switches; the menu shows the current one |
 | **CONSOLE** | Leaves the menu and opens a text console with login on the LCD (tty7); `lcdmenu` brings the menu back |
 | **HDMI** | Lends the USB keyboard to the console on the monitor (tty1); the HAT buttons stay with the menu, KEY3 takes the keyboard back |

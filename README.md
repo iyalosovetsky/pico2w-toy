@@ -38,8 +38,8 @@ Doom, чат з локальною LLM, текстова консоль і ви�
 | ![chess](docs/gif-picocalc/chess.gif) | ![preferans](docs/gif-picocalc/preferans.gif) | ![doom](docs/gif-picocalc/doom.gif) | ![aichat](docs/gif-picocalc/aichat.gif) |
 | **Книжки** | **PDF** | **GENERATOR** | **Вольтметр** |
 | ![reader](docs/gif-picocalc/reader.gif) | ![pdf](docs/gif-picocalc/pdf.gif) | ![generator](docs/gif-picocalc/generator.gif) | ![voltmeter](docs/gif-picocalc/voltmeter.gif) |
-| **Осцилограф** | **Логічний аналізатор** | **Калькулятор** | |
-| ![oscilloscope](docs/gif-picocalc/oscilloscope.gif) | ![logic](docs/gif-picocalc/logic.gif) | ![calc](docs/gif-picocalc/calc.gif) | |
+| **Осцилограф** | **Логічний аналізатор** | **Калькулятор** | **SDR** |
+| ![oscilloscope](docs/gif-picocalc/oscilloscope.gif) | ![logic](docs/gif-picocalc/logic.gif) | ![calc](docs/gif-picocalc/calc.gif) | ![sdr](docs/gif-picocalc/sdr.gif) |
 
 *(GIF записані з фреймбуфера PicoCalc 1:1, 320×320, скриптом `tools/record_gif.py`.)*
 
@@ -122,7 +122,7 @@ Doom і вмикає сервіси. Що має бути в `config.txt` - ди
 | **DOOM** | Doom (shareware, 1-й епізод) на [doomgeneric](https://github.com/ozkl/doomgeneric), зменшений до 128×80 |
 | **GENERATOR** | Генератор сигналів на окремій платі (PicoCalc, через UART або USB): форма (меандр, синус, трикутник, пила), частота, скважність, увімк/вимк, а також вольтметр і осцилограф на АЦП, логічний аналізатор, декодер I2C / SPI / UART і тест дисплеїв на J703; світлодіод плати показує скважність і частоту - див. [генератор](#компоненти-picocalc) |
 | **CALC** | Калькулятор поверх [calc](http://www.isthe.com/chongo/tech/comp/calc/) (apcalc): довільна точність, матриці, свої функції (`define`), одна сесія на весь час роботи; графіки: `plot sin(x), -5, 5`, `plot V` (вектор), `heat A` (матриця кольорами), `plot3d A` і `plot3d sin(x)*cos(y), -3, 3` (поверхня, що обертається стрілками). F1 - довідка з прикладами, Enter вставляє приклад у рядок; на HAT без клавіатури - приклади на KEY1 / KEY2 |
-| **SDR** | Приймач на RTL-SDR (RTL2832U у USB, перевірено з RTL-SDR Blog V4, 0,5 - 1766 МГц): спектр і водоспад, WFM / NFM / AM / USB / LSB на динамік, шумодав, пам'ять станцій, набір частоти цифрами, огляд 2 МГц. `rtl_tcp` + обробка на numpy |
+| **SDR** | Приймач на RTL-SDR (RTL2832U у USB, перевірено з RTL-SDR Blog V4, 0,5 - 1766 МГц): спектр і водоспад, WFM / NFM / AM / USB / LSB на динамік, шумодав, пам'ять станцій, набір частоти цифрами, огляд 2 МГц. `rtl_tcp` + обробка на numpy. На GIF - USB 7,499 МГц: несуча меандру 7,5 МГц з GENERATOR (вимикається - зникає з водоспаду), далі огляд 2 МГц |
 | **AI CHAT** | Чат з LLM (llama.cpp або будь-який OpenAI-сумісний сервер) у текстовій консолі, розкладка US/UA. Сервери - у `~/.config/lcdtoy/ai-chat.json` (url, token, model), `/provider НАЗВА` перемикає; у меню видно поточний |
 | **CONSOLE** | Закриває меню і відкриває текстову консоль на LCD (tty7) з логіном; команда `lcdmenu` повертає меню |
 | **HDMI** | Віддає USB-клавіатуру консолі на моніторі (tty1); кнопки HAT лишаються в меню, KEY3 повертає клавіатуру меню |
