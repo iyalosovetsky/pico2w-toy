@@ -8,7 +8,10 @@ pauses) and logic analyzer (the six J703 lines, 512 samples per sweep, 5 us .. 2
 division, rising-edge trigger on a chosen line, its frequency and duty; Enter pauses) and
 protocol decoder (UART / I2C / SPI on the J703 lines, decoded by the board; Enter captures once,
 "test" makes the board send its own traffic) and display tester (ST7789 of several sizes,
-ILI9341, ILI9488, Waveshare 7.5" e-Paper V2 over SPI, SSD1306 / SH1106 over I2C; test pictures).
+ILI9341, ILI9488, Waveshare 7.5" e-Paper V2 over SPI, SSD1306 / SH1106 over I2C; test pictures) and
+UART tester (a frame typed in hex or "text" gets its protocol's checksum / header - TMC2209, Feetech
+SCS/STS, Modbus RTU, CRSF, DDSM210, Dynamixel 2.0, NMEA, plain SUM8 / XOR8 / CRC-8 / CRC-16 - goes out
+on J703.4, the reply from J703.5 is checked and decoded; app/uartproto.py).
 The generator keeps running in all of them, so its output can go to the inputs.
 UP / DOWN - row (mode, shape, frequency, duty, signal / mode, input), LEFT / RIGHT - change (held: repeats),
 + / - (KEY1 / KEY2 on the HAT) - fine step, PRESS / Enter - signal on / off,
@@ -27,6 +30,7 @@ sys.path.insert(0, HERE)
 
 import pygame  # noqa: E402
 import lcd  # noqa: E402
+import uartproto  # noqa: E402
 
 PORTS = os.environ.get("SIGGEN_PORT", "").split() or ["/dev/serial0", "/dev/ttyACM0", "/dev/ttyACM1"]
 FMIN, FMAX = 1, 1000000           # widest range; the board answers its limit for the shape (fmax)
@@ -161,7 +165,7 @@ SROWS = ["Режим", "Час/под", "Синхр."]
 R_TIME, R_TRIG = 1, 2
 TIMEBASES = [100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3]  # s per division
 SCOPE_N, SCOPE_DIVS = 256, 10
-MODES = ["gen", "volt", "scope", "logic", "decode", "lcd"]
+MODES = ["gen", "volt", "scope", "logic", "decode", "uart", "lcd"]
 LROWS = ["Режим", "Назва", "Дисплей", "Картинка", "Поворот", "Підсвітка", "Ширина", "Висота", "Зсув X", "Зсув Y"]
 R_NAME, R_MODEL, R_PATTERN, R_ROT, R_BL, R_W, R_H, R_X, R_Y = 1, 2, 3, 4, 5, 6, 7, 8, 9
 LROW_H, LROWS_SHOWN = 10, 8      # the rows scroll
@@ -212,6 +216,11 @@ BAUDS = [9600, 19200, 38400, 57600, 115200, 230400, 300, 1200, 2400, 4800]
 # protocol lines: (name, J703 pin) - drawn in the colour of the pin's ribbon wire
 PROTO_PINS = {"uart": [("RX", 4)], "i2c": [("SDA", 4), ("SCL", 5)],
               "spi": [("SCK", 6), ("MOSI", 3), ("MISO", 4), ("CS", 5)]}
+TROWS = ["Режим", "Протокол", "Швидкість", "Формат", "Лінія", "Кадр"]
+R_TPROTO, R_TBAUD, R_TFMT, R_TLINE, R_TFRAME = 1, 2, 3, 4, 5
+TROW_H = 11 if lcd.DEVICE == "hat144" else 10
+UART_WAIT = 300     # ms the board waits for the first byte of a reply
+LINE_NAMES = {"full": "TX/RX", "half": "1 дріт (1 кОм)", "inv": "TX/RX інверсні"}
 LTIMEBASES = [0.5e-6, 1e-6, 2e-6, 5e-6, 10e-6, 20e-6, 50e-6, 100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3]
 LT_NORMAL_MIN = 2           # LTIMEBASES index: 2 us/div (25.6 M/s) is the fastest without the fast mode
 LAROWS = ["Режим", "Час/под", "Синхр.", "Швидкий"]
@@ -611,6 +620,82 @@ def draw_decode(st, row, dc, note, note_color):
     lcd.flip()
 
 
+def colored_rows(parts, f, width, max_lines):
+    """[(text, color)] word-wrapped into lines of [(text, color, x)]; "…" when cut."""
+    lines, cur, x = [], [], 0
+    space = f.size(" ")[0]
+    for t, c in parts:
+        w = f.size(t)[0]
+        if cur and x + w > width:
+            lines.append(cur)
+            cur, x = [], 0
+        cur.append((t, c, x))
+        x += w + space
+    if cur:
+        lines.append(cur)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        lines[-1] = lines[-1][:-1] + [("…", DIM, lines[-1][-1][2])]
+    return lines
+
+
+def draw_uart(st, row, ut, note, note_color, typing):
+    screen.fill(BG)
+    text("UART " + st["board"], (64, 2), ACCENT, f_title, center=True)
+    p = uartproto.PRESETS[ut["preset"]]
+    frame_text = ut["text"] + ("_" if row == R_TFRAME and typing else "")
+    values = ["UART-тестер", p.title, "%d" % uartproto.BAUDS[ut["baud"]], uartproto.FORMATS[ut["fmt"]],
+              LINE_NAMES[ut["line"]], frame_text]
+    for i, (name, value) in enumerate(zip(TROWS, values)):
+        y = 12 + i * TROW_H
+        sel = i == row
+        if sel:
+            pygame.draw.rect(screen, ACCENT, (2, y - 1, 124, TROW_H - 1), border_radius=2)
+        text(name, (6, y + 1), BG if sel else DIM, f_small if HAT else f_label)
+        if i == R_TFRAME:   # the frame: as much of the end as fits
+            v = value
+            while v and f_lbold.size(v)[0] > 84:
+                v = v[1:]
+            value = v if v == value else "…" + v[1:]
+        text(value, (122, y + 1), BG if sel else (C_IN if i == R_TFRAME else FG), f_lbold, right=True)
+    y = 12 + len(TROWS) * TROW_H + 1
+    lh = f_small.get_linesize()
+    room = int((96 - y) // lh)
+    if ut["busy"]:
+        text("надсилаю, чекаю відповіді…", (64, y + 2), ACCENT, f_small, center=True)
+    elif ut["tx"] is not None:
+        tx, n = ut["tx"], ut["csn"]
+        parts = [("→", C_OUT)] + [("%02X" % b, ACCENT if i >= len(tx) - n else FG) for i, b in enumerate(tx)]
+        out = colored_rows(parts, f_small, 124, 1 if room <= 3 else 2)
+        rx = ut["rx"]
+        if rx:
+            parts = [("←", C_IN)] + [("%02X" % b, FG) for b in rx]
+            out += colored_rows(parts, f_small, 124, max(1, room - len(out) - len(ut["checks"][:2])))
+        else:
+            out.append([("← немає відповіді за %d мс" % UART_WAIT, DIM, 0)])
+        for ok, msg in ut["checks"][:max(0, room - len(out))]:
+            mark, color = {True: ("✓", GREEN), False: ("✗", RED)}.get(ok, ("·", DIM))
+            out.append([(fit_text(mark + " " + msg, 124), color, 0)])
+        for line in out[:room]:
+            for t, c, x in line:
+                text(t, (2 + x, y), c, f_small)
+            y += lh
+    elif note:
+        text(fit_text(note, 124), (64, y + 2), note_color, f_small, center=True)
+    else:
+        text(p.hint, (64, y + 2), DIM, f_small, center=True)
+        text("кадр: hex або \"текст\", сума - сама", (64, y + 2 + lh), DIM, f_small, center=True)
+    if note and ut["tx"] is not None:
+        text(fit_text(note, 124), (64, 90), note_color, f_small, center=True)
+    pin_labels([("TX" if ut["line"] != "half" else "TX·1кОм", 4), ("RX", 5), ("GND", 8)], 97)
+    draw_j703({4: "out", 5: "in"}, st["on"])
+    if row == R_TFRAME:
+        hint_line("←/→ приклад, натиск - надіслати" if HAT else "набір, ←/→ приклади, Del, Enter - надіслати")
+    else:
+        hint_line("←/→, натиск - надіслати, KEY3" if HAT else "←/→ змінити, Enter - надіслати, Esc - назад")
+    lcd.flip()
+
+
 def lcd_wiring(model):
     """(J703 uses, rows of (name, pin) labels) for a display model."""
     if model.startswith(("ssd1306", "sh1106")):
@@ -724,6 +809,43 @@ def main():
     sc = {"tb": 3, "level": 1.6, "data": None, "rate": 1, "trig": False, "paused": False}
     la = {"tb": 7, "ch": 0, "data": None, "rate": 1, "trig": False, "paused": False, "turbo": 0}
     dc = {"proto": 0, "baud": 0, "spi": 0, "test": True, "lines": None, "busy": False}
+    ut = {"preset": 0, "baud": 0, "fmt": 0, "line": "full", "text": "", "ex": 0, "fresh": True,
+          "tx": None, "csn": 0, "rx": b"", "checks": [], "busy": False}
+
+    def uart_preset(i):
+        p = uartproto.PRESETS[i % len(uartproto.PRESETS)]
+        ut.update(preset=i % len(uartproto.PRESETS), baud=uartproto.BAUDS.index(p.baud),
+                  fmt=uartproto.FORMATS.index(p.fmt), line=p.line, text=p.examples[0], ex=0, fresh=True,
+                  tx=None, rx=b"", checks=[])
+    uart_preset(0)
+
+    def run_uart():
+        nonlocal note, note_color, note_until
+        p = uartproto.PRESETS[ut["preset"]]
+        try:
+            frame, csn = uartproto.build(p, ut["text"])
+        except uartproto.InputError as e:
+            note, note_color, note_until = str(e), RED, time.monotonic() + 5
+            ut["tx"] = None
+            return
+        if len(frame) > 512:
+            note, note_color, note_until = "кадр довший за 512 байт", RED, time.monotonic() + 5
+            return
+        ut.update(busy=True, tx=frame, csn=csn, rx=b"", checks=[])
+        note = ""
+        draw_uart(st, min(row, len(TROWS) - 1), ut, note, note_color, False)
+        cmd = "uart %d %s%s wait=%d %s" % (uartproto.BAUDS[ut["baud"]], uartproto.FORMATS[ut["fmt"]],
+                                           {"full": "", "half": " half", "inv": " inv"}[ut["line"]],
+                                           UART_WAIT, frame.hex())
+        reply = link.ask(cmd, 3 + len(frame) * 12 / uartproto.BAUDS[ut["baud"]]) if link else None
+        ut["busy"] = False
+        if reply and reply.startswith("ok uart"):
+            kv = dict(w.split("=", 1) for w in reply.split()[2:] if "=" in w)
+            ut["rx"] = bytes.fromhex(kv.get("rx", ""))
+            ut["checks"] = p.check(ut["rx"]) if ut["rx"] else []
+        else:
+            note, note_color, note_until = (reply[4:] if reply and reply.startswith("err") else
+                                            "немає відповіді від плати (стара прошивка?)"), RED, time.monotonic() + 5
     lt = {"model": 0, "pattern": 0, "result": None, "busy": False, "w": 240, "h": 240, "x": 0, "y": 0, "rot": 0,
           "bl": 15, "pick": 0, "profiles": load_profiles(), "name": "", "top": 0}   # a dim backlight to start
     model_index = {m[0]: i for i, m in enumerate(LCD_MODELS)}
@@ -890,6 +1012,23 @@ def main():
                 lt[key] = min(max(lo, lt[key] + sign * (10 if fine else 1)), 800 if key in "wh" else 319)
             lt["result"] = None
             return
+        if mode == "uart":
+            if row == R_TPROTO:
+                uart_preset(ut["preset"] + sign)
+                return
+            if row == R_TBAUD:
+                ut["baud"] = (ut["baud"] + sign) % len(uartproto.BAUDS)
+            elif row == R_TFMT:
+                ut["fmt"] = (ut["fmt"] + sign) % len(uartproto.FORMATS)
+            elif row == R_TLINE:
+                lines = uartproto.LINES
+                ut["line"] = lines[(lines.index(ut["line"]) + sign) % len(lines)]
+            elif row == R_TFRAME:
+                ex = uartproto.PRESETS[ut["preset"]].examples
+                ut["ex"] = (ut["ex"] + sign) % len(ex)
+                ut["text"], ut["fresh"] = ex[ut["ex"]], True
+            ut.update(tx=None, rx=b"", checks=[])
+            return
         if mode == "decode":
             if row == R_PROTO:
                 dc["proto"] = (dc["proto"] + sign) % len(PROTOS)
@@ -971,7 +1110,25 @@ def main():
             if st is None:
                 continue
             rows = {"gen": ROWS, "volt": VROWS, "scope": SROWS, "logic": LAROWS, "decode": DROWS,
-                    "lcd": LROWS}[mode]
+                    "uart": TROWS, "lcd": LROWS}[mode]
+            if mode == "uart" and row == R_TFRAME and not hat:
+                ch = getattr(ev, "unicode", "")
+                if k == pygame.K_BACKSPACE:
+                    ut["text"], ut["fresh"] = ut["text"][:-1], False
+                    continue
+                if k == pygame.K_DELETE:
+                    ut["text"], ut["fresh"] = "", False
+                    continue
+                if ch and ch.isprintable() and k not in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                    ut["text"] = (ch if ut["fresh"] else ut["text"] + ch)[:200]
+                    ut["fresh"] = False
+                    ut.update(tx=None, rx=b"", checks=[])
+                    continue
+            if mode == "uart" and (k in (pygame.K_RETURN, pygame.K_KP_ENTER) or
+                                   (k == pygame.K_SPACE and (row != R_TFRAME or hat))):
+                lcd.play("select")
+                run_uart()
+                continue
             if mode == "lcd" and row == R_NAME and not hat and k in NAME_KEYS:
                 typing = ((typing if typing is not None else lt["name"]) + NAME_KEYS[k])[:16]
                 continue
@@ -1066,6 +1223,7 @@ def main():
                id(sc["data"]), sc["tb"], sc["level"], sc["paused"],
                id(la["data"]), la["tb"], la["ch"], la["paused"], la["turbo"],
                id(dc["lines"]), dc["proto"], dc["baud"], dc["spi"], dc["test"], dc["busy"],
+               tuple(ut[k] for k in ("preset", "baud", "fmt", "line", "text", "busy", "tx", "rx")), id(ut["checks"]),
                tuple(lt[k] for k in ("model", "pattern", "w", "h", "x", "y", "rot", "bl", "pick", "name", "busy",
                                      "result")), len(lt["profiles"]))
         if key == last_key:
@@ -1080,6 +1238,8 @@ def main():
             draw_logic(st, min(row, len(LAROWS) - 1), la, note, note_color)
         elif mode == "decode" and st:
             draw_decode(st, min(row, len(DROWS) - 1), dc, note, note_color)
+        elif mode == "uart" and st:
+            draw_uart(st, min(row, len(TROWS) - 1), ut, note, note_color, row == R_TFRAME and not ut["fresh"])
         elif mode == "lcd" and st:
             draw_lcd(st, min(row, len(LROWS) - 1), lt, note, note_color, typing)
         else:

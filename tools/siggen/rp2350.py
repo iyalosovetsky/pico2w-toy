@@ -40,6 +40,12 @@
 #                UART / I2C / SPI traffic on those pins meanwhile. Answers "ok decode <proto>
 #                <tokens>" (UART: hex bytes; I2C: S, addr:W/R, bytes, A/N, P; SPI: mosi/miso
 #                per byte, | between CS frames) or "ok decode <proto> none"
+#   uart <baud> [8N1|8E1|8O1|8N2|8E2] [half] [inv] [wait=ms] [hex]
+#                UART tester on J703: sends the bytes (hex) on TX GP4 (J703.4) and reads the
+#                reply on RX GP5 (J703.5) until ~4 characters of silence (or wait ms, default
+#                100, without any); half - a 1-wire bus (TX through 1 kOhm to the line): the
+#                board's own frame is dropped from the reply; inv - inverted levels. Answers
+#                "ok uart n=<sent> echo=0|1 rx=<hex>"
 #   lcd <model> [all|colors|bars|grid|text] [w=.. h=.. x=.. y=.. r=0|90|180|270]   display
 #                tester on J703 (w / h: the panel size, x / y: the window offset - in the
 #                controller's portrait frame, instead of the model's; r: rotation; b: TFT
@@ -594,6 +600,77 @@ def decode(args):
     return "ok decode %s %s" % (proto, " ".join(out) if out else "none")
 
 
+# ---------------------------------------------------------------- UART tester
+# UART1 on J703: TX GP4 (.4), RX GP5 (.5). A 1-wire bus (TMC2209, Feetech / Dynamixel servos): TX
+# through 1 kOhm to the line, RX straight on it - the board hears its own frame, which is dropped.
+
+def uart_xfer(args):
+    if not args:
+        return "err uart <baud> [8N1|8E1|8O1|8N2|8E2] [half] [inv] [wait=ms] [hex]"
+    baud = int(number(args[0]))
+    fmt, half, inv, wait, data = "8N1", False, False, 100, b""
+    for a in args[1:]:
+        al = a.lower()
+        if len(al) == 3 and al[0] == "8" and al[1] in "neo" and al[2] in "12":
+            fmt = al.upper()
+        elif al == "half":
+            half = True
+        elif al == "inv":
+            inv = True
+        elif al.startswith("wait="):
+            wait = int(al[5:])
+        else:
+            try:
+                data += binascii.unhexlify(a)
+            except ValueError:
+                return "err uart: not hex: " + a
+    if not 300 <= baud <= 3000000:
+        return "err uart baud 300..3000000"
+    if not 0 <= wait <= 5000 or len(data) > 512:
+        return "err uart: wait 0..5000 ms, up to 512 bytes"
+    kw = {"baudrate": baud, "bits": 8, "parity": {"N": None, "E": 0, "O": 1}[fmt[1]], "stop": int(fmt[2]),
+          "tx": Pin(4), "rx": Pin(5), "rxbuf": 2048, "timeout": 0}
+    if inv:
+        kw["invert"] = UART.INV_TX | UART.INV_RX
+    u = UART(1, **kw)
+    # RX idles high (low when inverted): a pull so an open input reads idle, not noise
+    pad = 0x40038000 + 4 + 4 * 5
+    mem32[pad] = (mem32[pad] | (1 << 2 if inv else 1 << 3)) & ~(1 << 3 if inv else 1 << 2)
+    rx = bytearray()
+    try:
+        while u.any():
+            u.read()
+        if data:
+            u.write(data)
+            u.flush()
+        gap = max(2000, 40 * 1000000 // baud)          # ~4 characters of silence ends the reply
+        t0 = last = time.ticks_us()
+        echo_n = len(data) if half else 0
+        while True:
+            n = u.any()
+            now = time.ticks_us()
+            if n:
+                rx += u.read(n)
+                last = now
+                if len(rx) >= 1024:
+                    break
+            elif len(rx) > echo_n:
+                if time.ticks_diff(now, last) > gap:
+                    break
+            elif time.ticks_diff(now, t0) > wait * 1000:
+                break
+            if time.ticks_diff(now, t0) > 6000000:
+                break
+    finally:
+        u.deinit()
+        Pin(4, Pin.IN)
+        Pin(5, Pin.IN)
+    echo = half and data and rx[:len(data)] == data
+    if echo:
+        rx = rx[len(data):]
+    return "ok uart n=%d echo=%d rx=%s" % (len(data), 1 if echo else 0, binascii.hexlify(rx).decode())
+
+
 # ---------------------------------------------------------------- display tester
 # Wiring on J703: SPI SCK GP2 (.6), MOSI GP3 (.3), CS GP5 (.5), DC GP4 (.4), RST GP26 (.7),
 # TFT backlight BL GP6 (.2, PWM) / e-Paper BUSY GP6 - the generator output, switched off for them;
@@ -1099,6 +1176,8 @@ def command(line):
             return "ok bl %d" % int(number(args[0]))
         if cmd == "decode":
             return decode(args)
+        if cmd == "uart":
+            return uart_xfer(args)
         if cmd == "logic" and 1 <= len(args) <= 3:
             turbo = "turbo" in args
             rest = [a for a in args if a != "turbo"]

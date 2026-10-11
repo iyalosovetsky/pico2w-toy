@@ -12,6 +12,9 @@
 #                               turbo - the turbo clock for the capture, up to half of it
 #   siggen turbo 300            the fast mode's clock, 150..300 MHz (default 200)
 #   siggen decode uart 9600 [test] | decode i2c [test] | decode spi 0 [test]   protocol decoder
+#   siggen uart 115200 [8E1] [half] [inv] [wait=200] 05 00 06 6F   UART tester on J703: sends the
+#                               bytes on J703.4 (TX), prints the reply from J703.5 (RX); half - a 1-wire
+#                               bus (TX through 1 kOhm), the own echo is dropped; inv - inverted levels
 #   siggen lcd st7789-240x240 [all|colors|bars|grid|text]   display tester (siggen lcd - the models)
 #   siggen bl 60                TFT backlight on J703.2, 0..100 % (the generator output goes off)
 #   siggen power | doze         is the board dozing (48 MHz after 30 s idle, output off) / doze now
@@ -21,7 +24,7 @@
 # SIGGEN_PORT sets the port instead of looking for one (115200 baud).
 
 usage() {
-    sed -n '2,21s/^# \{0,1\}//p' "$0"
+    sed -n '2,24s/^# \{0,1\}//p' "$0"
     exit "${1:-0}"
 }
 [ $# -eq 0 ] && set -- get
@@ -100,6 +103,10 @@ while [ $# -gt 0 ]; do
         lcd)  # lcd <model> [pattern]: display tester (an e-Paper refresh takes seconds)
             shift
             send "lcd $*" "" 40
+            break ;;
+        uart)  # uart <baud> [fmt] [half] [inv] [wait=ms] [hex...]: the rest of the line goes to the board
+            shift
+            send "uart $*" "" 8
             break ;;
         decode)  # decode uart|i2c|spi [args...] [test]: the rest of the line goes to the board
             shift

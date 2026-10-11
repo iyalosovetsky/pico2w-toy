@@ -156,6 +156,7 @@ How the pieces fit together:
 | `app/preferans.py` | 128×128 Preferans front-end for the PyPref engine |
 | `app/reader.py`, `app/books.py`, `app/pdfdoc.py` | The reader: UI, EPUB / FB2 / TXT / ZIP parsing (FB2 and TXT in any encoding), PDF pages via `pdftoppm` |
 | `app/prefgame/` | [Python Pref](https://sourceforge.net/projects/python-pref/) 2.34 engine and AI, ported to Python 3 (GPL-3.0) |
+| `app/siggen.py`, `app/uartproto.py` | GENERATOR: generator, voltmeter, oscilloscope, logic analyzer, decoder, UART tester (protocols and checksums - `uartproto.py`), display tester; the board's firmware - `tools/siggen/` |
 | `app/calcpad.py` | Calculator: a `calc -q -p` session in a pipe, 2D plots / heat map / 3D surface |
 | `app/ai_chat.py` | Streaming chat client for a llama.cpp / OpenAI-compatible server |
 | `app/demo.py` | Minimal pygame example: draw something, read the buttons |
@@ -274,7 +275,7 @@ FE1.1S USB hub and the Tiny 2350's 5V pin; the hub is on the Zero's USB, port 1 
 
 ![Wiring: Zero 2 W, Tiny 2350, Pololu, USB hub and the PicoCalc's J703](docs/wiring-picocalc.svg)
 
-The GENERATOR menu item has three more modes (the first row, "Mode"). The voltmeter and the
+The GENERATOR menu item has more modes (the first row, "Mode"). The voltmeter and the
 oscilloscope are on the board's ADC input (J703.7):
 - **voltmeter** - the voltage, min / max and a 10 s graph;
 - **oscilloscope** (RP2350) - 256 points per sweep, 100 us to 50 ms per division, rising-edge trigger
@@ -292,6 +293,26 @@ the protocol's first edge, captures 32768 samples with the same PIO + DMA and de
 UART 8N1 (RX - J703.4), I2C (SDA - J703.4, SCL - J703.5: START, address R/W, bytes, ACK/NACK, STOP),
 SPI modes 0-3 (SCK .6, MOSI .3, MISO .4, CS .5). The "test" source makes the board send its own
 traffic with its hardware UART / I2C / SPI on the same lines.
+
+**UART tester** - the board sends a frame with its hardware UART1 on J703.4 (TX) and reads the reply
+from J703.5 (RX) until the line is quiet for ~4 characters. The frame is typed in hex (`05 00 06`) or
+as text in quotes (`"AT\r\n" 0D 0A`); the checksum (and a header with the length) is added by the app
+([`app/uartproto.py`](app/uartproto.py)); in the reply it is checked (✓ / ✗) and the fields are decoded:
+
+| Protocol | Typed | Sent | Default |
+|---|---|---|---|
+| TMC2209 | addr reg [4 bytes - write] | `05 addr reg … CRC8` (0x07, LSB first) | 115200, 1-wire |
+| Feetech SCS/STS (ST3215, SC09) | ID instr params | `FF FF ID LEN … ~sum` | 1 Mbaud, 1-wire |
+| Modbus RTU (and Huanyang VFDs) | addr function data | `… CRC16` (low byte first) | 9600 8N1 |
+| CRSF | type data | `C8 LEN type … CRC8` (0xD5) | 420000 |
+| DDSM210 / DDSM115 (Waveshare) | up to 9 bytes | byte 10 - CRC-8/MAXIM | 115200 |
+| Dynamixel 2.0 | ID instr params | `FF FF FD 00 ID LEN … CRC16` (0x8005) | 57600, 1-wire |
+| NMEA | text | `$text*XX\r\n` | 9600 |
+| SUM8, XOR8, CRC-8, CRC-8/MAXIM, CRC-16/MODBUS, CRC-16/XMODEM, none | data | data + sum | 115200 |
+
+"1-wire" is for half-duplex buses (TMC2209 PDN_UART, servos): TX through 1 kOhm to the line, RX straight
+on it; the board drops its own echo. Formats 8N1 / 8E1 / 8O1 / 8N2 / 8E2 and inverted levels; RS-485
+through a transceiver. From the console: `siggen uart 115200 half 05 00 06 6F` (a ready frame, no sum added).
 
 <img src="docs/picocalc-display-test.jpg" width="360" alt="Display test: a GMT147 (ST7789V3 172x320) on the PicoCalc's J703">
 
@@ -321,6 +342,7 @@ siggen logic 1M 0            # one logic analyzer capture: sample rate, trigger 
 siggen turbo 300             # the fast mode's clock, 150-300 MHz (200 from the console by default)
 siggen logic 150M 0 turbo    # the fast mode: the turbo clock for the capture, up to half of it
 siggen decode uart 9600 test # UART / I2C / SPI decoder (test - the board sends its own traffic)
+siggen uart 115200 half 05 00 06 6F   # UART tester: a frame on J703.4, the reply from J703.5
 siggen lcd st7789-240x240 grid   # display test: model, picture (all colors bars grid text)
 siggen power                 # is the board dozing: 48 MHz after 30 s without commands, output off
 siggen flash tools/siggen/rp2350.py   # update the board's program over the UART or USB
