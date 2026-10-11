@@ -163,7 +163,7 @@ class Scanner:
         self.items = []          # (time, text lines, color)
         self.pending = []
         self.nfc_busy = False    # a `scanner` is running (it blocks until a tag or Ctrl+C)
-        self.nfc_idle = 0.0      # when the last one ended
+        self.done = False        # NFC: a tag was found - one scan per Enter
 
     def start(self, mode, freq):
         self.stop()
@@ -178,7 +178,8 @@ class Scanner:
             self.cli.send("nfc\r")
             self.in_nfc = True
             self.cli.wait_prompt(3)
-            self.nfc_busy, self.nfc_idle = False, 0.0
+            self.cli.send("scanner\r")
+            self.nfc_busy, self.done = True, False
         self.mode = mode
 
     def stop(self):
@@ -242,14 +243,11 @@ class Scanner:
         if self.pending and self.mode in ("subghz", "rfid") and len(self.pending) >= 6:
             self.flush()
         # NFC: `scanner` runs until it finds a tag, prints "Protocols detected: ..." and returns to the
-        # prompt - only then start the next one (typing into a running scanner crashed the Flipper)
-        if self.mode == "nfc":
-            now = time.monotonic()
-            if prompt:
-                self.nfc_busy, self.nfc_idle = False, now
-            if not self.nfc_busy and now - self.nfc_idle > 1.0:
-                self.cli.send("scanner\r")
-                self.nfc_busy = True
+        # prompt. One scan per Enter: the Flipper (Momentum, 2025-2026) crashes when the scanner polls an
+        # ISO14443-4 card again and again, and typing into a running scanner crashed it too
+        if self.mode == "nfc" and prompt and self.nfc_busy:
+            self.nfc_busy = False
+            self.done = True
 
     def feed(self, lines):
         """Group lines into results; True when a prompt came."""
@@ -416,10 +414,16 @@ def main():
             sc.poll()
             if len(sc.items) > n:
                 lcd.play("chip")
+            if sc.done:                    # NFC: the tag is read - this scan is over
+                sc.stop()
+                sc.done = False
+                scanning = False
         if cli is None:
             status, color = "Flipper не підключено (USB)", RED
         elif scanning:
             status, color = "сканую" + "." * (int(now * 2) % 4), GREEN
+        elif MODES[st["mode"]][0] == "nfc" and sc.items:
+            status, color = "Enter - сканувати ще раз", DIM
         else:
             status, color = "Enter - почати сканування", DIM
         draw(st, sc or _Empty, row, status, color)
