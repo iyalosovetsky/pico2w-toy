@@ -179,6 +179,10 @@ class Radio:
         if not shutil.which("rtl_tcp"):
             self.error = "немає rtl_tcp: sudo apt install rtl-sdr"
             return False
+        # an rtl_tcp left by an earlier run of this app (exactly its command line) still holds the stick
+        subprocess.run(["pkill", "-9", "-u", str(os.getuid()), "-f", r"^rtl_tcp -a 127\.0\.0\.1 -p [0-9]+ -s %d$" % SR_NARROW],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(0.3)
         port = free_port()
         self.proc = subprocess.Popen(["rtl_tcp", "-a", "127.0.0.1", "-p", str(port), "-s", str(SR_NARROW)],
                                      stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -207,11 +211,20 @@ class Radio:
 
     def stop(self):
         self.running = False
-        for f in (lambda: self.sock.close(), lambda: self.proc.terminate()):
+        try:
+            self.sock.close()
+        except Exception:
+            pass
+        if self.proc:   # rtl_tcp may ignore SIGTERM and keep the stick: then SIGKILL
+            self.proc.terminate()
             try:
-                f()
-            except Exception:
-                pass
+                self.proc.wait(1.5)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                try:
+                    self.proc.wait(2)
+                except subprocess.TimeoutExpired:
+                    pass
 
     def cmd(self, code, value):
         try:
