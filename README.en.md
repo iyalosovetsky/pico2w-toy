@@ -429,7 +429,15 @@ their thinking is shown as a single "(думаю...)" ("thinking...") line and i
   is instant.
 - **Testing without touching the device.** `tools/vkeys.py` creates a virtual keyboard
   (`sudo python3 tools/vkeys.py "down down enter"`), `tools/snap.py` saves a screenshot,
-  `tools/record_gif.py` records the GIFs above.
+  `tools/record_gif.py` records the GIFs above (a frame is taken when two framebuffer reads match -
+  otherwise some frames come out "torn", read in the middle of a screen update).
+- **Wi-Fi drops exactly every ~61 s** (`CTRL-EVENT-DISCONNECTED reason=3 locally_generated=1`, each
+  followed by `REGDOM-CHANGE`). That was the PicoCalc with `cfg80211.ieee80211_regdom=UA` in
+  `cmdline.txt`: UA marks 2.4 GHz NO-OUTDOOR, and 60 s after every regulatory domain change the kernel
+  finds the channel not allowed and drops the link itself - in a loop (and with several access points
+  it also hops between them). Not the kernel version: 6.12 and 6.18 behave the same. The fix is a
+  country without that flag, here `cfg80211.ieee80211_regdom=GB` (the same ETSI limits). See also
+  [raspberrypi/firmware#2019](https://github.com/raspberrypi/firmware/issues/2019).
 
 ## 8. Software used
 

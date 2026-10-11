@@ -22,11 +22,25 @@ ap.add_argument("--fps", type=float, default=10)
 ap.add_argument("--scale", type=int, default=2)
 args = ap.parse_args()
 
+
+
+def stable_grab(tries=4):
+    """A frame read twice the same: a read while an app writes the framebuffer gets the top
+    of the new picture over the bottom of the old one."""
+    img = grab()
+    for _ in range(tries):
+        again = grab()
+        if again.tobytes() == img.tobytes():
+            break
+        img = again
+    return img
+
+
 frames, stamps = [], []
 start = time.monotonic()
 while time.monotonic() - start < args.seconds:
     t = time.monotonic()
-    frames.append(grab())
+    frames.append(stable_grab())
     stamps.append(t)
     time.sleep(max(0, 1 / args.fps - (time.monotonic() - t)))
 
