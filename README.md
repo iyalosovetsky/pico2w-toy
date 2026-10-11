@@ -122,6 +122,7 @@ Doom і вмикає сервіси. Що має бути в `config.txt` - ди
 | **DOOM** | Doom (shareware, 1-й епізод) на [doomgeneric](https://github.com/ozkl/doomgeneric), зменшений до 128×80 |
 | **GENERATOR** | Генератор сигналів на окремій платі (PicoCalc, через UART або USB): форма (меандр, синус, трикутник, пила), частота, скважність, увімк/вимк, а також вольтметр і осцилограф на АЦП, логічний аналізатор, декодер I2C / SPI / UART і тест дисплеїв на J703; світлодіод плати показує скважність і частоту - див. [генератор](#компоненти-picocalc) |
 | **CALC** | Калькулятор поверх [calc](http://www.isthe.com/chongo/tech/comp/calc/) (apcalc): довільна точність, матриці, свої функції (`define`), одна сесія на весь час роботи; графіки: `plot sin(x), -5, 5`, `plot V` (вектор), `heat A` (матриця кольорами), `plot3d A` і `plot3d sin(x)*cos(y), -3, 3` (поверхня, що обертається стрілками). F1 - довідка з прикладами, Enter вставляє приклад у рядок; на HAT без клавіатури - приклади на KEY1 / KEY2 |
+| **SDR** | Приймач на RTL-SDR (RTL2832U у USB, перевірено з RTL-SDR Blog V4, 0,5 - 1766 МГц): спектр і водоспад, WFM / NFM / AM / USB / LSB на динамік, шумодав, пам'ять станцій, набір частоти цифрами, огляд 2 МГц. `rtl_tcp` + обробка на numpy |
 | **AI CHAT** | Чат з LLM (llama.cpp або будь-який OpenAI-сумісний сервер) у текстовій консолі, розкладка US/UA. Сервери - у `~/.config/lcdtoy/ai-chat.json` (url, token, model), `/provider НАЗВА` перемикає; у меню видно поточний |
 | **CONSOLE** | Закриває меню і відкриває текстову консоль на LCD (tty7) з логіном; команда `lcdmenu` повертає меню |
 | **HDMI** | Віддає USB-клавіатуру консолі на моніторі (tty1); кнопки HAT лишаються в меню, KEY3 повертає клавіатуру меню |
@@ -157,6 +158,7 @@ Doom і вмикає сервіси. Що має бути в `config.txt` - ди
 | `app/reader.py`, `app/books.py`, `app/pdfdoc.py` | Читалка: інтерфейс, розбір EPUB / FB2 / TXT / ZIP (FB2 і TXT у будь-якому кодуванні), сторінки PDF через `pdftoppm` |
 | `app/prefgame/` | Рушій і AI [Python Pref](https://sourceforge.net/projects/python-pref/) 2.34, портовані на Python 3 (GPL-3.0) |
 | `app/siggen.py`, `app/uartproto.py` | GENERATOR: генератор, вольтметр, осцилограф, аналізатор, декодер, UART-тестер (протоколи й контрольні суми - `uartproto.py`), тест дисплеїв; прошивка плати - `tools/siggen/` |
+| `app/sdr.py` | SDR: `rtl_tcp` у фоні, numpy-обробка (фільтри, демодулятори WFM / NFM / AM / SSB), спектр і водоспад, звук через `aplay` |
 | `app/calcpad.py` | Калькулятор: сесія `calc -q -p` у пайпі, графіки 2D / теплова карта / 3D-поверхня |
 | `app/ai_chat.py` | Клієнт чату з потоковою відповіддю для llama.cpp / OpenAI-сумісного сервера |
 | `app/demo.py` | Мінімальний приклад на pygame: намалювати щось і прочитати кнопки |
@@ -419,6 +421,8 @@ sudo reboot           # лише при першому встановленні:
 | `systemd/ai-chat.service` | `/etc/systemd/system/` | AI-чат на tty7 (LCD) зі шрифтом 6×10, після виходу - назад у меню |
 | `lcdmenu` | `/usr/local/bin/` | Команда, щоб повернутися з консолі LCD (або з SSH) в меню |
 | `keyboard` | `/etc/default/keyboard` | Розкладки US + українська, Alt+Shift перемикає, світлодіод Scroll Lock = UA |
+| `rtl-sdr-blacklist.conf` | `/etc/modprobe.d/` | Не дає DVB-T-драйверу ядра захопити RTL-SDR (інакше `rtl_tcp` не відкриє його) |
+| `rtl-sdr.rules` | `/etc/udev/rules.d/61-rtl-sdr.rules` | Доступ до RTL-SDR для меню (сервіс, а не користувач за екраном - правило пакета з `uaccess` його не охоплює) |
 | `ai-chat.env` | `/etc/default/lcd-ai-chat` | `AI_URL` - перший провайдер для `~/.config/lcdtoy/ai-chat.json` (там список серверів з токенами) |
 
 Консолі на HDMI мають звичайний шрифт; шрифт 5×7 ставиться лише на tty7 (LCD) у `lcd-console.service`.

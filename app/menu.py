@@ -27,6 +27,7 @@ ITEMS = [
     ("DOOM", "E1", [HERE + "/doom/doomlcd", "-iwad", "/usr/share/games/doom/doom1.wad"], HERE + "/doom"),
     ("GENERATOR", "", ["/usr/bin/python3", HERE + "/siggen.py"], HERE),
     ("CALC", "apcalc", ["/usr/bin/python3", HERE + "/calcpad.py"], HERE),
+    ("SDR", "rtl-sdr", ["/usr/bin/python3", HERE + "/sdr.py"], HERE),
     ("AI CHAT", "", "aichat", None),
     ("PYTHON", "bpython", "term:python", None),
     ("BASIC", "MMBasic", "term:basic", None),
@@ -64,6 +65,10 @@ ITEMS = [(n, _ai_provider() if c == "aichat" else h, c, d) for n, h, c, d in ITE
 # console tools (PicoCalc): only where install.sh set up lcd-term@.service
 if not os.path.exists("/etc/systemd/system/lcd-term@.service"):
     ITEMS = [it for it in ITEMS if not str(it[2]).startswith("term:")]
+
+# the SDR item: where the rtl-sdr package (rtl_tcp) is installed
+if not os.path.exists("/usr/bin/rtl_tcp"):
+    ITEMS = [it for it in ITEMS if it[0] != "SDR"]
 
 # the generator board talks over the GPIO 14/15 UART or USB: only where one of them is there
 if not os.path.exists("/dev/serial0") and not glob.glob("/dev/ttyACM*"):

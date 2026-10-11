@@ -181,7 +181,7 @@ EXTRA=
 [ "$DEVICE" = picocalc ] && EXTRA="libsdl2-dev libsdl2-mixer-dev console-setup micro bpython nano curl"
 sudo apt-get update -q
 sudo apt-get install -y python3-pygame python3-numpy python3-pil python3-pip \
-    stockfish doom-wad-shareware git build-essential fonts-dejavu-core poppler-utils apcalc $EXTRA
+    stockfish doom-wad-shareware git build-essential fonts-dejavu-core poppler-utils apcalc rtl-sdr $EXTRA
 mkdir -p "$HOME/books"  # the BOOKS reader's library (.epub / .fb2 / .zip)
 
 echo "== python-chess (into app/vendor, not in the Raspbian repo)"
@@ -194,6 +194,11 @@ backup /etc/default/keyboard
 sudo cp "$DEV_CONFIG/keyboard" /etc/default/keyboard
 sudo setupcon --save-only >/dev/null 2>&1 || true
 [ -e /etc/default/lcd-ai-chat ] || sudo cp "$REPO/config/ai-chat.env" /etc/default/lcd-ai-chat
+
+echo "== RTL-SDR stick (the SDR item): no DVB-T driver on it, open to the menu's user"
+sudo install -m 644 "$REPO/config/rtl-sdr-blacklist.conf" /etc/modprobe.d/rtl-sdr-blacklist.conf
+sudo install -m 644 "$REPO/config/rtl-sdr.rules" /etc/udev/rules.d/61-rtl-sdr.rules
+sudo udevadm control --reload 2>/dev/null || true
 
 if [ "$BUILD_DOOM" = 1 ]; then
     echo "== Doom"
