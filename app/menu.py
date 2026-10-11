@@ -28,6 +28,7 @@ ITEMS = [
     ("GENERATOR", "", ["/usr/bin/python3", HERE + "/siggen.py"], HERE),
     ("CALC", "apcalc", ["/usr/bin/python3", HERE + "/calcpad.py"], HERE),
     ("SDR", "rtl-sdr", ["/usr/bin/python3", HERE + "/sdr.py"], HERE),
+    ("FLIPPER", "scan", ["/usr/bin/python3", HERE + "/flipper.py"], HERE),
     ("AI CHAT", "", "aichat", None),
     ("PYTHON", "bpython", "term:python", None),
     ("BASIC", "MMBasic", "term:basic", None),
