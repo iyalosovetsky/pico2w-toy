@@ -14,8 +14,9 @@ The front end adds its own commands:
 Keys: typing + Enter - evaluate, UP / DOWN - history, LEFT / RIGHT / Home / End / Backspace /
 Del - edit, PgUp / PgDn - scroll the output, Esc - clear the line / stop a long computation / exit.
 In a plot: arrows move the cursor (2D) or rotate (3D), + / - zoom, Enter - filled / wireframe
-(3D), Esc - back. HAT: UP / DOWN - history, KEY1 / KEY2 - next / previous example,
-PRESS - evaluate, KEY3 - exit.
+(3D), Esc - back. F1 / help - the help screen with examples (Enter puts one in the line).
+HAT: UP / DOWN - history, KEY1 - next example, KEY2 - the help screen, PRESS - evaluate,
+KEY3 - exit.
 """
 import math
 import os
@@ -42,7 +43,7 @@ EXAMPLES = [
     "mat A[3,3] = {2,1,0, 1,3,1, 0,1,4}", "det(A)", "inverse(A)", "A * A",
     "define f(x) = x^3 - 2*x", "f(1.5)", "plot sin(x)*x, -10, 10", "plot f(x), -2, 2",
     "mat V[20]; for (i=0; i<20; i++) V[i] = i^2", "plot V", "heat A",
-    "plot3d sin(x)*cos(y), -3, 3", "plot3d A", "ln(2)", "isprime(2^61-1)",
+    "plot3d sin(x)*cos(y), -3, 3", "plot3d A", "ln(2)", "factor(2^32+1)", "(1+2i) * (3-1i)",
 ]
 
 BG, FG, DIM = (0, 0, 0), (225, 225, 225), (110, 110, 110)
@@ -189,13 +190,16 @@ def evaluate_line(calc, line):
             return None
         calc.send(line)
     else:
-        calc.send("eval(%s)" % quote(line))
+        # a math error aborts the rest of calc's input line: __ok stays 0 -> shown as an error
+        calc.send('__ok = 0,; eval(%s); __ok = 1,;\nif (!__ok) print "@@ERR";' % quote(line))
     return True
 
 
 def tidy(lines):
     """calc output -> (lines, is_error)."""
-    err = any(re.match(r"\s*Error E_|.*undefined|Missing|Bad |Unterminated", l) for l in lines)
+    err = any(l == "@@ERR" or re.match(r"\s*Error E_|.*undefined|Missing|Bad |Unterminated", l)
+              for l in lines)
+    lines = [l for l in lines if l != "@@ERR"]
     # calc marks inexact numbers with "~", which looks like a minus in a small font
     lines = [re.sub(r"~(?=[-\d.])", "≈", l) for l in lines if l.strip() != "Error E_EVAL"]
     while lines and not lines[0].strip():
@@ -286,6 +290,7 @@ def font(name, px):
 BIG = lcd.S > 1
 f_mono = font("DejaVuSansMono.ttf", 12 if BIG else 7)
 f_small = font("DejaVuSans.ttf", 11 if BIG else 7)
+f_bold = font("DejaVuSans-Bold.ttf", 11 if BIG else 7)
 LINE_H = f_mono.get_linesize()
 CHAR_W = f_mono.size("0")[0]
 COLS = max(10, int((128 - 3) / CHAR_W))
@@ -637,21 +642,147 @@ def save_history(hist):
         pass
 
 
-HELP = [
-    "calc: довільна точність. Приклади:",
-    "  2^100   sqrt(2)   pi(1e-30)",
-    "  mat A[2,2] = {1,2,3,4}",
-    "  det(A)   inverse(A)   A*A",
-    "  define f(x) = x^2 - 2",
-    "Графіки:",
-    "  plot sin(x), -5, 5   plot V",
-    "  heat A   plot3d A",
-    "  plot3d sin(x)*cos(y), -3, 3",
-    "  plot - останній графік знову",
-    "config(\"display\", 50) - більше знаків",
-    "clear - очистити, reset - нова сесія",
-    "↑↓ історія, PgUp/PgDn прокрутка, Esc",
-]
+# the help screen (F1 / help): "# " - a heading, "> " - an example (Enter puts it in the line),
+# anything else - a note
+HELP = """\
+# Основне
+Рядок іде в calc, відповідь - під ним. Змінні й функції живуть до виходу (або reset).
+> 2^100
+> sqrt(2)
+> pi(1e-30)
+> 1/3 + 1/6
+> sqrt(-4)
+> (1+2i) * (3-1i)
+Уявна одиниця пишеться 1i (просто i - це змінна).
+> factor(2^32+1)
+> isprime(2^31-1)
+> x = 5; x^2 + 1
+# Свої функції
+> define f(x) = x^3 - 2*x
+> f(1.5)
+> define g(x, y) = sin(x) * cos(y)
+# Матриці
+> mat A[3,3] = {2,1,0, 1,3,1, 0,1,4}
+> det(A)
+> inverse(A)
+> A * A
+> A[1,2]
+> mat V[20]; for (i=0; i<20; i++) V[i] = i^2
+# Графік y(x)
+plot ВИРАЗ від x, a, b - на відрізку a..b (без меж: -10..10). У графіку ←/→ - курсор зі значенням x, y; ↑/↓ або +/- - масштаб по y.
+> plot sin(x)*x, -10, 10
+> plot exp(-x^2), -3, 3
+> plot tan(x), -3, 3
+> plot f(x), -2, 2
+> plot floor(x) % 3, 0, 10
+# Графік даних
+Вектор - лінія за номером елемента; матриця N×2 - лінія через точки (x, y); інша матриця - теплова карта.
+> plot V
+> mat P[60,2]; for (i=0; i<60; i++) {P[i,0] = cos(i/5); P[i,1] = sin(i/3)}
+> plot P
+# Теплова карта
+heat МАТРИЦЯ - клітинки кольорами (темно-синій - мінімум, жовтий - максимум). Стрілки - курсор, вгорі [i,j] = значення.
+> heat A
+> mat M[12,12]; for (i=0; i<12; i++) for (j=0; j<12; j++) M[i,j] = sin(i/2) + cos(j/3)
+> heat M
+# 3D
+plot3d ВИРАЗ від x і y, a, b - поверхня над квадратом a..b (без меж: -5..5); plot3d МАТРИЦЯ - поверхня z = M[i,j]. Стрілки - обертання, +/- - масштаб, Enter - заливка / каркас.
+> plot3d sin(x)*cos(y), -3, 3
+> plot3d exp(-(x^2+y^2)/4), -4, 4
+> plot3d x^2 - y^2, -2, 2
+> plot3d g(x, y), -3, 3
+> plot3d M
+# Команди
+> plot
+Без аргументу - останній графік знову.
+> clear
+> reset
+> config("display", 50)
+Скільки знаків показувати (типово 16).
+# Клавіші
+Enter - обчислити; Esc - очистити рядок, зупинити довге обчислення, вийти; ↑/↓ - історія; PgUp/PgDn - прокрутка; F1 - ця довідка (Enter вставляє приклад у рядок).
+"""
+
+
+def show_help():
+    """The help screen: UP / DOWN pick an example, Enter returns it, Esc returns None."""
+    rows, examples = [], []   # rows: (text, font, color, example number or None)
+    for line in HELP.splitlines():
+        if line.startswith("# "):
+            rows.append(("", f_small, FG, None))
+            rows.append((line[2:], f_bold, ACCENT, None))
+        elif line.startswith("> "):
+            text, n = line[2:], len(examples)
+            examples.append(text)
+            pre = ""
+            while text:  # long examples wrap, continuation lines indented
+                rows.append((pre + text[:COLS - 1 - len(pre)], f_mono, GREEN, n))
+                text, pre = text[COLS - 1 - len(pre):], "  "
+        else:
+            cur = ""
+            for w in line.split(" "):
+                cand = w if not cur else cur + " " + w
+                if cur and f_small.size(cand)[0] > 124:
+                    rows.append((cur, f_small, DIM, None))
+                    cur = w
+                else:
+                    cur = cand
+            rows.append((cur, f_small, DIM, None))
+    rows = rows[1:]
+    top_y = f_bold.get_linesize() + 3
+    sel, top = 0, 0
+    heights = [r[1].get_linesize() for r in rows]
+    dirty = True
+    while True:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                pygame.event.post(ev)
+                return None
+            if ev.type != pygame.KEYDOWN:
+                continue
+            dirty = True
+            k = ev.key
+            if k in (pygame.K_ESCAPE, pygame.K_F1) or (ev.hat and k == pygame.K_3):
+                return None
+            if k == pygame.K_RETURN:
+                return examples[sel]
+            if k in (pygame.K_UP, pygame.K_DOWN, pygame.K_PAGEUP, pygame.K_PAGEDOWN):
+                step = 1 if k in (pygame.K_UP, pygame.K_DOWN) else 6
+                down = k in (pygame.K_DOWN, pygame.K_PAGEDOWN)
+                sel = max(0, min(len(examples) - 1, sel + (step if down else -step)))
+                if sel == 0 and not down:
+                    top = 0
+            elif k == pygame.K_HOME:
+                sel = top = 0
+            elif k == pygame.K_END:
+                sel = len(examples) - 1
+        if dirty:
+            # keep the selected example (and the heading above it) in view
+            first = next(i for i, r in enumerate(rows) if r[3] == sel)
+            last = max(i for i, r in enumerate(rows) if r[3] == sel)
+            ctx = first
+            while ctx > 0 and rows[ctx - 1][3] is None and first - ctx < 3:
+                ctx -= 1
+            if ctx < top:
+                top = ctx
+            while sum(heights[top:last + 1]) > 128 - top_y:
+                top += 1
+            screen.fill(BG)
+            y = top_y
+            for text, f, color, n in rows[top:]:
+                if y + f.get_linesize() > 128:
+                    break
+                if n == sel:
+                    pygame.draw.rect(screen, (40, 50, 40), (0, y, 128, f.get_linesize()))
+                screen.blit(f.render(text, True, ACCENT if n == sel else color), (2, y))
+                y += f.get_linesize()
+            screen.fill(BG, (0, 0, 128, top_y - 1))
+            t = f_bold.render("ДОВІДКА  ↑↓ приклад, Enter - вставити", True, ACCENT)
+            screen.blit(t, (2, 0))
+            pygame.draw.line(screen, DIM, (0, top_y - 2), (128, top_y - 2))
+            lcd.flip()
+            dirty = False
+        clock.tick(30)
 
 
 class Console:
@@ -663,7 +794,8 @@ class Console:
         self.scroll = 0         # wrapped lines scrolled up from the bottom
         self.example = -1
         self.last_plot = None
-        self.add("info", "КАЛЬКУЛЯТОР (calc). help - підказка")
+        self.add("info", "КАЛЬКУЛЯТОР (calc)")
+        self.add("info", "F1 або help - довідка з прикладами")
 
     def add(self, kind, text):
         self.out.append((kind, text))
@@ -749,9 +881,14 @@ def main():
             if ev.hat:  # HAT buttons: no keyboard - examples instead of typing
                 if k == pygame.K_3:
                     running = False
-                elif k in (pygame.K_1, pygame.K_2):
-                    con.example = (con.example + (1 if k == pygame.K_1 else -1)) % len(EXAMPLES)
+                elif k == pygame.K_1:
+                    con.example = (con.example + 1) % len(EXAMPLES)
                     con.set_line(EXAMPLES[con.example])
+                    continue
+                elif k == pygame.K_2:
+                    text = show_help()
+                    if text:
+                        con.set_line(text)
                     continue
                 elif k == pygame.K_LEFT:
                     con.scroll += 3
@@ -761,7 +898,11 @@ def main():
                     continue
                 elif k not in (pygame.K_UP, pygame.K_DOWN, pygame.K_RETURN):
                     continue
-            if k == pygame.K_ESCAPE:
+            if k == pygame.K_F1:
+                text = show_help()
+                if text:
+                    con.set_line(text)
+            elif k == pygame.K_ESCAPE:
                 if con.line:
                     con.set_line("")
                 else:
@@ -779,8 +920,9 @@ def main():
                 if line == "clear":
                     con.out = []
                 elif line == "help":
-                    for l in HELP:
-                        con.add("info", l)
+                    text = show_help()
+                    if text:
+                        con.set_line(text)
                 elif line == "reset":
                     calc.start()
                     con.add("info", "нова сесія calc")
