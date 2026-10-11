@@ -60,7 +60,7 @@ The same apps on a PicoCalc with a Zero 2 W running Raspberry Pi OS **Trixie** L
   in Pong, Tetris, poker, chess, Preferans and the menu; the **SOUND** menu item turns them on/off,
   volume is `LCD_VOLUME` in `/etc/default/lcd-toy`. Doom is built with sound via SDL2_mixer.
 - **Doom** shows its 320×200 frame 1:1 (no downscaling), centred.
-- **AI chat** runs on tty7 with the Terminus 8×16 font (40×20 characters).
+- **AI chat** runs on tty7 with the Terminus Bold 8×16 font (40×20 characters) and a brighter console palette.
 - **PYTHON / BASIC / EDIT** - console tools on tty7 with the Terminus 12×6 font (53×26 characters),
   back to the menu on exit:
   - **PYTHON** - [bpython](https://bpython-interpreter.org/): a REPL with highlighting, hints and completion,
@@ -123,7 +123,7 @@ A 172×103×20 mm PicoCalc back cover for the zero mod (a Zero 2 W instead of th
 | **DOOM** | Doom (shareware episode 1) via [doomgeneric](https://github.com/ozkl/doomgeneric), downscaled to 128×80 |
 | **GENERATOR** | Signal generator on a separate board (PicoCalc, over the UART or USB): shape (square, sine, triangle, saw), frequency, duty cycle, on/off, and a voltmeter and an oscilloscope on the ADC, a logic analyzer, an I2C / SPI / UART decoder and a display tester on J703; the board's LED shows the duty and the frequency - see [generator](#picocalc-components) |
 | **CALC** | Calculator on top of [calc](http://www.isthe.com/chongo/tech/comp/calc/) (apcalc): arbitrary precision, matrices, your own functions (`define`), one session for the whole run; plots: `plot sin(x), -5, 5`, `plot V` (a vector), `heat A` (a matrix as a heat map), `plot3d A` and `plot3d sin(x)*cos(y), -3, 3` (a surface rotated with the arrows). F1 - help with examples, Enter puts one in the line; on the HAT without a keyboard: examples on KEY1 / KEY2 |
-| **AI CHAT** | Chat with a local LLM (llama.cpp / any OpenAI-compatible server) on the text console, US/UA keyboard |
+| **AI CHAT** | Chat with an LLM (llama.cpp / any OpenAI-compatible server) on the text console, US/UA keyboard. Servers are in `~/.config/lcdtoy/ai-chat.json` (url, token, model), `/provider NAME` switches; the menu shows the current one |
 | **CONSOLE** | Leaves the menu and opens a text console with login on the LCD (tty7); `lcdmenu` brings the menu back |
 | **HDMI** | Lends the USB keyboard to the console on the monitor (tty1); the HAT buttons stay with the menu, KEY3 takes the keyboard back |
 | **POWER OFF** | Clean shutdown, with confirmation |
@@ -400,7 +400,7 @@ HAT files (`config/hat/`):
 | `systemd/ai-chat.service` | `/etc/systemd/system/` | AI chat on tty7 (LCD) with the 6×10 font, returns to the menu |
 | `lcdmenu` | `/usr/local/bin/` | Command to get back to the menu from the LCD console (or over SSH) |
 | `keyboard` | `/etc/default/keyboard` | US + Ukrainian layouts, Alt+Shift toggles, Scroll Lock LED = UA |
-| `ai-chat.env` | `/etc/default/lcd-ai-chat` | `AI_URL` of the LLM server (default here: a llama.cpp server on the LAN) |
+| `ai-chat.env` | `/etc/default/lcd-ai-chat` | `AI_URL` - the first provider of `~/.config/lcdtoy/ai-chat.json` (the list of servers with tokens) |
 
 The HDMI consoles keep the normal font; the 5×7 font is set only on tty7 (LCD) by `lcd-console.service`.
 `/boot/firmware/cmdline.txt` gets `video=HDMI-A-1:<mode>D` and `fbcon=map:0000001`.

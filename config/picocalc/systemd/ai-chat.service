@@ -11,8 +11,8 @@ User=@USER@
 WorkingDirectory=@APP_DIR@
 Environment=LANG=C.UTF-8 TERM=linux PYTHONIOENCODING=utf-8
 EnvironmentFile=-/etc/default/lcd-ai-chat
-# Terminus 8x16: 40x20 characters on the 320x320 screen
-ExecStartPre=+/usr/bin/setfont -C /dev/tty7 /usr/share/consolefonts/Uni2-Terminus16.psf.gz
+# Terminus Bold 8x16: 40x20 characters on the 320x320 screen (the thin one is too faint)
+ExecStartPre=+/usr/bin/setfont -C /dev/tty7 /usr/share/consolefonts/Uni2-TerminusBold16.psf.gz
 ExecStartPre=+/usr/local/bin/lcd-vt text 7
 ExecStart=/usr/bin/python3 @APP_DIR@/ai_chat.py
 StandardInput=tty

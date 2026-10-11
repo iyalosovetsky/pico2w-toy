@@ -27,7 +27,7 @@ ITEMS = [
     ("DOOM", "E1", [HERE + "/doom/doomlcd", "-iwad", "/usr/share/games/doom/doom1.wad"], HERE + "/doom"),
     ("GENERATOR", "", ["/usr/bin/python3", HERE + "/siggen.py"], HERE),
     ("CALC", "apcalc", ["/usr/bin/python3", HERE + "/calcpad.py"], HERE),
-    ("AI CHAT", "zen4", "aichat", None),
+    ("AI CHAT", "", "aichat", None),
     ("PYTHON", "bpython", "term:python", None),
     ("BASIC", "MMBasic", "term:basic", None),
     ("EDIT", "micro", "term:edit", None),
@@ -36,6 +36,16 @@ ITEMS = [
     ("SOUND", "", "sound", None),
     ("POWER OFF", "", "poweroff", None),
 ]
+
+
+def _ai_provider():
+    """The AI chat's current provider (~/.config/lcdtoy/ai-chat.json), shown in the menu."""
+    import json
+    try:
+        with open(os.path.expanduser("~/.config/lcdtoy/ai-chat.json"), encoding="utf-8") as f:
+            return json.load(f).get("provider", "")
+    except (OSError, ValueError):
+        return "zen4"
 
 
 def _has_hdmi_fb():
@@ -48,6 +58,8 @@ def _has_hdmi_fb():
             pass
     return False
 
+
+ITEMS = [(n, _ai_provider() if c == "aichat" else h, c, d) for n, h, c, d in ITEMS]
 
 # console tools (PicoCalc): only where install.sh set up lcd-term@.service
 if not os.path.exists("/etc/systemd/system/lcd-term@.service"):
