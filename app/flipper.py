@@ -162,7 +162,8 @@ class Scanner:
         self.in_nfc = False
         self.items = []          # (time, text lines, color)
         self.pending = []
-        self.last_nfc = 0
+        self.nfc_busy = False    # a `scanner` is running (it blocks until a tag or Ctrl+C)
+        self.nfc_idle = 0.0      # when the last one ended
 
     def start(self, mode, freq):
         self.stop()
@@ -177,7 +178,7 @@ class Scanner:
             self.cli.send("nfc\r")
             self.in_nfc = True
             self.cli.wait_prompt(3)
-            self.last_nfc = 0
+            self.nfc_busy, self.nfc_idle = False, 0.0
         self.mode = mode
 
     def stop(self):
@@ -237,14 +238,18 @@ class Scanner:
 
     def poll(self):
         """Read new output; group the lines of one result (a blank line or a prompt ends it)."""
-        self.feed(self.cli.take())
+        prompt = self.feed(self.cli.take())
         if self.pending and self.mode in ("subghz", "rfid") and len(self.pending) >= 6:
             self.flush()
-        # NFC: the scanner reports once; run it again every 1.5 s while scanning
-        if self.mode == "nfc" and time.monotonic() - self.last_nfc > 1.5:
-            self.flush()
-            self.cli.send("scanner\r")
-            self.last_nfc = time.monotonic()
+        # NFC: `scanner` runs until it finds a tag, prints "Protocols detected: ..." and returns to the
+        # prompt - only then start the next one (typing into a running scanner crashed the Flipper)
+        if self.mode == "nfc":
+            now = time.monotonic()
+            if prompt:
+                self.nfc_busy, self.nfc_idle = False, now
+            if not self.nfc_busy and now - self.nfc_idle > 1.0:
+                self.cli.send("scanner\r")
+                self.nfc_busy = True
 
     def feed(self, lines):
         """Group lines into results; True when a prompt came."""
@@ -256,6 +261,12 @@ class Scanner:
                 self.flush()
                 continue
             if NOISE.match(line):
+                continue
+            if line.startswith("Protocols detected"):    # NFC: an empty list = aborted, no tag
+                found = line.split(":", 1)[1].strip()
+                if found:
+                    self.pending.append("NFC: " + found)
+                    self.flush()
                 continue
             if line.startswith("MF:") and HEADER.match(line):
                 head, tail = split_glued(line)
