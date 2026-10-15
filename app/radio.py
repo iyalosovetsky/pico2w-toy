@@ -493,7 +493,7 @@ def main():
                     set_volume(vol)
                     cfg["volume"] = vol
             draw(ui, player, vol)
-            clock.tick(15)
+            clock.tick(8)          # enough for the scrolling title; a full 320x320 redraw is costly
     finally:
         player.stop()
         save_config(cfg)
