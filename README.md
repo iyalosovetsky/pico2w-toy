@@ -38,7 +38,8 @@ Doom, чат з локальною LLM, текстова консоль і ви�
 | ![chess](docs/gif-picocalc/chess.gif) | ![preferans](docs/gif-picocalc/preferans.gif) | ![doom](docs/gif-picocalc/doom.gif) | ![aichat](docs/gif-picocalc/aichat.gif) |
 | **Книжки** | **PDF** | **GENERATOR** | **Вольтметр** |
 | ![reader](docs/gif-picocalc/reader.gif) | ![pdf](docs/gif-picocalc/pdf.gif) | ![generator](docs/gif-picocalc/generator.gif) | ![voltmeter](docs/gif-picocalc/voltmeter.gif) |
-| **Осцилограф** | **Логічний аналізатор** | **Калькулятор** | **SYNTH** | Синтезатор (PicoCalc, динамік): піаніно, електропіаніно, орган, скрипка, струнні, труба, флейта, кларнет, ксилофон, маримба, дзвіночки, гітара, бас, синт, ударні - звуки синтезуються numpy; поліфонія, клавіші як у трекері (z..m, q..u), ритм-машина (рок, диско, хіп-хоп, фанк, босанова, регі, вальс, марш) |
+| **Осцилограф** | **Логічний аналізатор** | **Калькулятор** | **RADIO** | Інтернет-радіо (PicoCalc, динамік): станції з radio-browser.info - обране, популярні українські, жанри, пошук; назва пісні з потоку (ICY), ffmpeg декодує MP3 / AAC / OGG / HLS, перепідключення, гучність |
+| **SYNTH** | Синтезатор (PicoCalc, динамік): піаніно, електропіаніно, орган, скрипка, струнні, труба, флейта, кларнет, ксилофон, маримба, дзвіночки, гітара, бас, синт, ударні - звуки синтезуються numpy; поліфонія, клавіші як у трекері (z..m, q..u), ритм-машина (рок, диско, хіп-хоп, фанк, босанова, регі, вальс, марш) |
 | **SDR** |
 | ![oscilloscope](docs/gif-picocalc/oscilloscope.gif) | ![logic](docs/gif-picocalc/logic.gif) | ![calc](docs/gif-picocalc/calc.gif) | ![sdr](docs/gif-picocalc/sdr.gif) |
 
@@ -160,6 +161,7 @@ Doom і вмикає сервіси. Що має бути в `config.txt` - ди
 | `app/reader.py`, `app/books.py`, `app/pdfdoc.py` | Читалка: інтерфейс, розбір EPUB / FB2 / TXT / ZIP (FB2 і TXT у будь-якому кодуванні), сторінки PDF через `pdftoppm` |
 | `app/prefgame/` | Рушій і AI [Python Pref](https://sourceforge.net/projects/python-pref/) 2.34, портовані на Python 3 (GPL-3.0) |
 | `app/siggen.py`, `app/uartproto.py` | GENERATOR: генератор, вольтметр, осцилограф, аналізатор, декодер, UART-тестер (протоколи й контрольні суми - `uartproto.py`), тест дисплеїв; прошивка плати - `tools/siggen/` |
+| `app/radio.py` | RADIO: radio-browser.info API, читання потоку з ICY-метаданими, ffmpeg → ALSA, гучність через `amixer` |
 | `app/synth.py` | SYNTH: синтез звуків інструментів і ударних (адитивний, FM, Карплус-Стронг, шум), pygame mixer, ритм-машина в окремому потоці |
 | `app/sdr.py` | SDR: `rtl_tcp` у фоні, numpy-обробка (фільтри, демодулятори WFM / NFM / AM / SSB), спектр і водоспад, звук через `aplay` |
 | `app/flipper.py` | FLIPPER: CLI Flipper Zero через USB-серійний порт, команди прийому `subghz rx` / `ir rx` / `rfid read` / `nfc scanner`, групування й показ результатів |

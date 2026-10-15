@@ -28,6 +28,7 @@ ITEMS = [
     ("GENERATOR", "", ["/usr/bin/python3", HERE + "/siggen.py"], HERE),
     ("CALC", "apcalc", ["/usr/bin/python3", HERE + "/calcpad.py"], HERE),
     ("SYNTH", "", ["/usr/bin/python3", HERE + "/synth.py"], HERE),
+    ("RADIO", "online", ["/usr/bin/python3", HERE + "/radio.py"], HERE),
     ("SDR", "rtl-sdr", ["/usr/bin/python3", HERE + "/sdr.py"], HERE),
     ("FLIPPER", "scan", ["/usr/bin/python3", HERE + "/flipper.py"], HERE),
     ("AI CHAT", "", "aichat", None),
@@ -87,7 +88,7 @@ ACCENT = (255, 200, 0)
 
 screen = lcd.init()
 if not lcd.sound_available():
-    ITEMS = [it for it in ITEMS if it[2] != "sound" and it[0] != "SYNTH"]
+    ITEMS = [it for it in ITEMS if it[2] != "sound" and it[0] not in ("SYNTH", "RADIO")]
 # PicoCalc battery (its firmware driver): percent, or 128 + percent while charging
 BATTERY_FILE = "/sys/firmware/picocalc/battery_percent"
 HAS_BATTERY = os.path.exists(BATTERY_FILE)
