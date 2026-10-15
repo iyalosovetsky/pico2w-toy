@@ -350,11 +350,14 @@ def run(cmd, cwd):
 
 sel = 0
 running = True
+shown = None    # what is on the screen: redraw only when it changes (a full frame cost 40-60 % of
+                # a core on the PicoCalc at 20 fps on an unchanging screen)
 while running:
     for ev in pygame.event.get():
         if ev.type == pygame.QUIT:  # SIGTERM from systemctl stop
             running = False
         elif ev.type == pygame.KEYDOWN:
+            shown = None            # a key (and whatever it opened - an app, help) may change the screen
             if ev.key == pygame.K_UP:
                 sel = (sel - 1) % len(ITEMS)
                 lcd.play("click")
@@ -391,7 +394,10 @@ while running:
                         poweroff()
                 else:
                     run(cmd, cwd)
-    draw(sel)
+    state = (sel, battery() if HAS_BATTERY else None, lcd.sound_enabled())
+    if state != shown:
+        draw(sel)
+        shown = state
     clock.tick(20)
 
 screen.fill(BG)
