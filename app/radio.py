@@ -368,7 +368,7 @@ def save_config(cfg):
 
 
 def main():
-    if not lcd.sound_available():
+    if lcd.DEVICE != "picocalc":   # (not lcd.sound_available(): LCD_SOUND=0 above turns that off)
         screen.fill(BG)
         text("RADIO", (64, 4), ACCENT, f_name, center=True)
         text("тут немає динаміка", (64, 50), RED, f_small, center=True)
