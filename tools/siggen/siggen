@@ -15,7 +15,8 @@
 #   siggen uart 115200 [8E1] [half] [inv] [wait=200] 05 00 06 6F   UART tester on J703: sends the
 #                               bytes on J703.4 (TX), prints the reply from J703.5 (RX); half - a 1-wire
 #                               bus (TX through 1 kOhm), the own echo is dropped; inv - inverted levels
-#   siggen lcd st7789-240x240 [all|colors|bars|grid|text]   display tester (siggen lcd - the models)
+#   siggen lcd st7789-240x240 [all|colors|bars|grid|text]   display tester (siggen lcd - the models;
+#                               epd4in2bwr - WeAct 4.2" black / white / red e-Paper, ~20 s a refresh)
 #   siggen bl 60                TFT backlight on J703.2, 0..100 % (the generator output goes off)
 #   siggen power | doze         is the board dozing (48 MHz after 30 s idle, output off) / doze now
 #   siggen flash tools/siggen/rp2350.py   upload a program as the board's main.py, restart it
@@ -24,7 +25,7 @@
 # SIGGEN_PORT sets the port instead of looking for one (115200 baud).
 
 usage() {
-    sed -n '2,24s/^# \{0,1\}//p' "$0"
+    sed -n '2,25s/^# \{0,1\}//p' "$0"
     exit "${1:-0}"
 }
 [ $# -eq 0 ] && set -- get
@@ -102,7 +103,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         lcd)  # lcd <model> [pattern]: display tester (an e-Paper refresh takes seconds)
             shift
-            send "lcd $*" "" 40
+            send "lcd $*" "" 60
             break ;;
         uart)  # uart <baud> [fmt] [half] [inv] [wait=ms] [hex...]: the rest of the line goes to the board
             shift

@@ -204,7 +204,8 @@ LCD_MODELS = [("st7789-240x240", "ST7789", 240, 240, 0, 0), ("st7789-240x320", "
               ("st7789-240x280", "ST7789V2", 240, 280, 0, 20), ("st7789-135x240", "ST7789", 135, 240, 52, 40),
               ("st7789-170x320", "ST7789V3", 170, 320, 35, 0), ("st7789-172x320", "ST7789V3", 172, 320, 34, 0),
               ("ili9341", "ILI9341", 240, 320, 0, 0), ("ili9488", "ILI9488", 320, 480, 0, 0),
-              ("epd7in5v2", "e-Paper 7,5\" V2", 800, 480, 0, 0), ("ssd1306-128x64", "SSD1306", 128, 64, 0, 0),
+              ("epd7in5v2", "e-Paper 7,5\" V2", 800, 480, 0, 0),
+              ("epd4in2bwr", "e-Paper 4,2\" ЧБЧ", 400, 300, 0, 0), ("ssd1306-128x64", "SSD1306", 128, 64, 0, 0),
               ("ssd1306-128x32", "SSD1306", 128, 32, 0, 0), ("sh1106", "SH1106", 128, 64, 2, 0)]
 LCD_PATTERNS = [("all", "усе по черзі"), ("colors", "кольори"), ("bars", "смуги"), ("grid", "сітка, рамка"),
                 ("text", "текст")]
@@ -702,7 +703,7 @@ def lcd_wiring(model):
         return {4: "io", 5: "io"}, [[("SDA", 4), ("SCL", 5), ("VCC", 1), ("GND", 8)]]
     pins = dict(LCD_SPI_PINS)
     rows = [[("SCK·SCL", 6), ("MOSI·SDA", 3), ("CS", 5)]]
-    if model == "epd7in5v2":
+    if model.startswith("epd"):
         pins[2] = "in"
         rows.append([("DC", 4), ("RST", 7), ("BUSY", 2), ("VCC", 1), ("GND", 8)])
     else:
@@ -744,10 +745,11 @@ def draw_lcd(st, row, lt, note, note_color, typing=None):
     for items in rows:
         pin_labels(items, y)
         y += f_small.get_linesize()
-    draw_j703(pins, st["on"] and model != "epd7in5v2")
+    draw_j703(pins, st["on"] and not model.startswith("epd"))
     # the result / error takes the hint line
     if lt["busy"]:
-        text("малюю…" if model != "epd7in5v2" else "оновлюю e-Paper (~5 с)…", (64, 118), ACCENT, f_small, center=True)
+        busy = {"epd7in5v2": "оновлюю e-Paper (~5 с)…", "epd4in2bwr": "оновлюю e-Paper, 3 кольори (~20 с)…"}
+        text(busy.get(model, "малюю…"), (64, 118), ACCENT, f_small, center=True)
     elif lt["result"]:
         text(lt["result"], (64, 118), GREEN, f_small, center=True)
     elif note:
@@ -897,7 +899,7 @@ def main():
         draw_lcd(st, min(row, len(LROWS) - 1), lt, note, note_color)
         reply = link.ask("lcd %s %s w=%d h=%d x=%d y=%d r=%d b=%d" % (model, LCD_PATTERNS[lt["pattern"]][0], lt["w"],
                                                                        lt["h"], lt["x"], lt["y"], lt["rot"], lt["bl"]),
-                         40) if link else None
+                         60) if link else None
         lt["busy"] = False
         if reply and reply.startswith("ok lcd"):
             w = reply.split()

@@ -53,6 +53,7 @@
 #   bl <0..100>  TFT backlight brightness on J703.2 (PWM; the generator output goes off): SPI SCK .6 MOSI .3 CS .5
 #                DC .4 RST .7 (e-Paper BUSY .2), I2C SDA .4 SCL .5; models: st7789-240x240,
 #                -240x320, -135x240, -170x320, -172x320, -240x280, ili9341, ili9488, epd7in5v2,
+#                epd4in2bwr (WeAct 4.2" black / white / red, SSD1683),
 #                ssd1306-128x64, ssd1306-128x32, sh1106
 #   put <file> <bytes>   answers "ok send", then takes that many raw bytes: replaces a file
 #                        (program updates over the UART: siggen flash)
@@ -697,6 +698,7 @@ DISPLAYS = {
     "ili9341": ("ili9341", 240, 320, 0, 0),
     "ili9488": ("ili9488", 320, 480, 0, 0),
     "epd7in5v2": ("epd", 800, 480, 0, 0),
+    "epd4in2bwr": ("ssd1683", 400, 300, 0, 0),
     "ssd1306-128x64": ("ssd1306", 128, 64, 0, 0),
     "ssd1306-128x32": ("ssd1306", 128, 32, 0, 0),
     "sh1106": ("sh1106", 128, 64, 2, 0),
@@ -969,7 +971,7 @@ class Epd:
         self.wait()
 
     def close(self):
-        self.cmd(0x50, b"\xF7")
+        self.cmd(0x50, b"\xF7")  # (UC8179)
         self.cmd(0x02)                          # power off
         try:
             self.wait(5000)
@@ -977,6 +979,97 @@ class Epd:
             pass
         self.cmd(0x07, b"\xA5")                 # deep sleep: the picture stays
         self.spi.deinit()
+
+
+class Epd1683:
+    """WeAct 4.2" e-Paper black / white / red (400 x 300, SSD1683), after the maker's reference code
+    (Doc/4.2 Inch Black&Write&Red/4D2_BWR_400X300_1683_UT From MCU.c): two RAMs - 0x24 black / white
+    (1 = white), 0x26 red (1 = red) - and one full refresh (~15-20 s for three colours)."""
+
+    def __init__(self, w, h, rot=0):
+        from machine import SPI
+        self.w, self.h, self.rot = w, h, rot
+        self.spi = SPI(0, baudrate=4000000, polarity=0, phase=0, sck=Pin(D_SCK), mosi=Pin(D_MOSI))
+        self.cs, self.dc, self.rst = Pin(D_CS, Pin.OUT, value=1), Pin(D_DC, Pin.OUT), Pin(D_RST, Pin.OUT, value=1)
+        self.busy = Pin(D_BUSY, Pin.IN)
+        for v, ms in ((1, 10), (0, 2), (1, 10)):
+            self.rst(v)
+            time.sleep_ms(ms)
+        self.cmd(0x12)                                   # software reset
+        time.sleep_ms(10)
+        self.wait(5000)
+        g = h - 1
+        self.cmd(0x01, bytes((g & 0xFF, g >> 8, 0x00)))  # gates: h - 1
+        self.cmd(0x11, b"\x01")                          # X increment, Y decrement (as the maker does)
+        self.cmd(0x44, bytes((0, w // 8 - 1)))           # RAM X: 0 .. w/8 - 1
+        self.cmd(0x45, bytes((g & 0xFF, g >> 8, 0, 0)))  # RAM Y: h - 1 .. 0
+        self.cmd(0x3C, b"\x01")                          # border: white
+
+    cmd = Epd.cmd
+    data = Epd.data
+
+    def wait(self, timeout=40000):
+        """BUSY is high while the panel works."""
+        end = time.ticks_add(time.ticks_ms(), timeout)
+        while self.busy() and time.ticks_diff(end, time.ticks_ms()) > 0:
+            time.sleep_ms(20)
+        if self.busy():
+            raise OSError("e-Paper BUSY stuck high")
+
+    def _ram(self, c, buf):
+        g = self.h - 1
+        self.cmd(0x4E, b"\x00")                          # X counter 0
+        self.cmd(0x4F, bytes((g & 0xFF, g >> 8)))        # Y counter h - 1
+        self.cmd(c)
+        self.data(buf)
+
+    def show(self, pattern, label):
+        import framebuf
+        w, h = (self.h, self.w) if self.rot in (90, 270) else (self.w, self.h)   # as seen
+        bw = bytearray(w * h // 8)
+        red = bytearray(w * h // 8)
+        fb = framebuf.FrameBuffer(bw, w, h, framebuf.MONO_HLSB)    # 1 = white
+        fr = framebuf.FrameBuffer(red, w, h, framebuf.MONO_HLSB)   # 1 = red
+        fb.fill(1)
+        if pattern in ("all", "bars", "colors"):     # white / black / red bars
+            bh = h // 2 if pattern == "all" else h
+            for i in range(6):
+                x0, x1 = i * w // 6, (i + 1) * w // 6
+                if i % 3 == 1:
+                    fb.fill_rect(x0, 0, x1 - x0, bh, 0)
+                elif i % 3 == 2:
+                    fr.fill_rect(x0, 0, x1 - x0, bh, 1)
+        if pattern in ("all", "grid"):
+            for x in range(0, w, 40):
+                fb.vline(x, 0, h, 0)
+            for y in range(0, h, 40):
+                fb.hline(0, y, w, 0)
+            fr.rect(0, 0, w, h, 1)                   # the outer frame in red: shows the edges
+            fr.rect(1, 1, w - 2, h - 2, 1)
+            fr.fill_rect(0, 0, 16, 16, 1)            # the top-left corner marked
+        if pattern in ("all", "text"):
+            for i, s in enumerate(("PicoCalc display tester", label, "%dx%d" % (w, h))):
+                x, y = w // 2 - 4 * len(s), h // 2 - 20 + 16 * i
+                fb.fill_rect(x - 4, y - 3, 8 * len(s) + 8, 14, 1)
+                fr.fill_rect(x - 4, y - 3, 8 * len(s) + 8, 14, 0)
+                if i == 1:
+                    fr.text(s, x, y, 1)              # the model name in red
+                else:
+                    fb.text(s, x, y, 0)
+        if self.rot:
+            for buf in (bw, red):
+                panel = bytearray(len(buf))
+                _rot_hlsb(buf, w, h, panel, self.w, self.rot // 90)
+                buf[:] = panel
+        self._ram(0x24, bw)
+        self._ram(0x26, red)
+        self.cmd(0x22, b"\xF7")                          # load the LUT, update the display
+        self.cmd(0x20)
+        time.sleep_ms(10)
+        self.wait()
+
+    def close(self):
+        self.cmd(0x10, b"\x01")                          # deep sleep: the picture stays
 
 
 class Oled:
@@ -1092,19 +1185,20 @@ def lcd_test(args):
         return "err lcd: w= h= x= y= r= take numbers"
     if rot not in (0, 90, 180, 270):
         return "err lcd rotation: r=0, 90, 180 or 270"
-    limit = {"st7789": (320, 320), "ili9341": (320, 320), "ili9488": (480, 480), "epd": (800, 800),
+    limit = {"st7789": (320, 320), "ili9341": (320, 320), "ili9488": (480, 480), "epd": (800, 800), "ssd1683": (400, 400),
              "ssd1306": (128, 64), "sh1106": (132, 64)}[kind]
     if not (8 <= w <= limit[0] and 8 <= h <= max(limit) and 0 <= xo < 320 and 0 <= yo < 320):
         return "err lcd size: w 8..%d, h 8..%d, x / y 0..319" % (limit[0], max(limit))
-    if kind in ("ssd1306", "sh1106") and h % 8 or kind == "epd" and w % 8:
-        return "err lcd size: %s" % ("h - a multiple of 8" if kind != "epd" else "w - a multiple of 8")
+    paper = kind in ("epd", "ssd1683")
+    if kind in ("ssd1306", "sh1106") and h % 8 or paper and w % 8:
+        return "err lcd size: %s" % ("h - a multiple of 8" if not paper else "w - a multiple of 8")
     t = time.ticks_ms()
     _adc_pins_taken[0] = True
     try:
         bl = int(opts.get("b", 15))     # a dim backlight unless asked for more
     except ValueError:
         return "err lcd: b= takes 0..100"
-    if kind == "epd" and state["on"]:   # BUSY is on the generator's pin
+    if paper and state["on"]:   # BUSY is on the generator's pin
         state["on"] = False
         apply()
     if kind in ("st7789", "ili9341", "ili9488"):
@@ -1113,6 +1207,8 @@ def lcd_test(args):
         d = Tft(kind, w, h, xo, yo, rot)
     elif kind == "epd":
         d = Epd(w, h, rot)
+    elif kind == "ssd1683":
+        d = Epd1683(w, h, rot)
     else:
         d = Oled(kind, w, h, xo, rot)
     try:
