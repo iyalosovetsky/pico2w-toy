@@ -911,7 +911,8 @@ def main():
             msg = reply[4:] if reply and reply.startswith("err") else "немає відповіді"
             msg = (msg.replace("no display at I2C 0x3C / 0x3D (found: nothing)", "на I2C 0x3C / 0x3D дисплея немає, на шині нікого")
                    .replace("no display at I2C 0x3C / 0x3D (found:", "на I2C 0x3C / 0x3D дисплея немає (є:")
-                   .replace("e-Paper BUSY stuck low", "e-Paper: BUSY не відпускає - перевірте BUSY, RST, живлення"))
+                   .replace("e-Paper BUSY stuck low", "e-Paper: BUSY не відпускає - перевірте BUSY, RST, живлення")
+                   .replace("e-Paper BUSY stuck high", "e-Paper: BUSY весь час зайнятий - перевірте BUSY, RST, живлення"))
             note, note_color, note_until = msg, RED, time.monotonic() + 8
 
     def run_decode():
