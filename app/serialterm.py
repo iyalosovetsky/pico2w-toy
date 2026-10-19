@@ -578,7 +578,7 @@ def draw(t, popup):
     else:
         hint = ""
         if not t.input:
-            hint = "Enter - наст. рядок" if job and job.mode == "step" else "F1 довідка  F2 вікно  F4 файл  F5 grbl"
+            hint = "Enter - наст. рядок" if job and job.mode == "step" else "F1 довідка  ^P порт  ^O файл  ^G grbl"
         s = "> " + t.input[-(COLS - 3):]
         text(s, (2, in_y), FG, f_mono)
         if int(time.monotonic() * 2) % 2 == 0:
@@ -628,8 +628,9 @@ class Popup:
 
 
 HELP = ["Введення + Enter - надіслати рядок", "↑/↓ - історія, PgUp/PgDn - прокрутка",
-        "F2 / Tab - сховати / показати повний вивід", "F3 - порт, швидкість, кінець рядка, minicom",
-        "F4 - файл G-code: відкрити, весь, кроками, пауза, стоп", "F5 - grbl: опитування ?, скидання, $X, $H",
+        "F2 / Tab - сховати / показати повний вивід", "F3 / Ctrl+P - порт, швидкість, кінець рядка, minicom",
+        "F4 / Ctrl+O - файл G-code: відкрити, весь, кроками, пауза, стоп",
+        "F5 / Ctrl+G - grbl: опитування ?, скидання, $X, $H",
         "? ! ~ на порожньому рядку - одразу (grbl)", "Ctrl+X - скидання, Ctrl+C / D - байт",
         "Esc - очистити рядок / вихід"]
 
@@ -818,6 +819,10 @@ def main():
                     t.save_cfg()
                     subprocess.run(["sudo", "-n", "/usr/bin/systemctl", "start", "--no-block", "lcd-term@minicom.service"])
                 continue
+            # Ctrl+P / Ctrl+O / Ctrl+G - the same menus as F3 / F4 / F5 (keyboards without them)
+            menu_key = {"\x10": pygame.K_F3, "\x0f": pygame.K_F4, "\x07": pygame.K_F5}.get(ch)
+            if menu_key:
+                k, ch = menu_key, ""
             if k == pygame.K_F1:
                 popup = help_popup()
             elif k in (pygame.K_F2, pygame.K_TAB):
