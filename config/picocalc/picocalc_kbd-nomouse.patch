@@ -1,0 +1,43 @@
+--- a/picocalc_kbd.c
++++ b/picocalc_kbd.c
+@@ -38,6 +38,13 @@
+ static uint64_t mouse_fast_move_thr_time = 150000000ull;
+ static int8_t mouse_move_step = 1;
+ 
++/* pico2w-toy: the Right Shift mouse mode (arrows move a pointer, their key-up never comes) is off
++ * unless asked for - Right Shift is then an ordinary Shift. Writable at runtime:
++ * /sys/module/picocalc_kbd/parameters/mouse */
++static bool mouse;
++module_param(mouse, bool, 0644);
++MODULE_PARM_DESC(mouse, "Right Shift toggles a mouse mode (arrows move a pointer); 0 = off (default)");
++
+ // From keyboard firmware source
+ enum pico_key_state
+ {
+@@ -221,7 +228,7 @@
+ 	}
+ 
+         /* right shift */
+-        if (ev->scancode == 0xA3)
++        if (ev->scancode == 0xA3 && mouse)
+         {
+             if (ev->state == KEY_STATE_PRESSED)
+             {
+@@ -230,7 +237,7 @@
+             return;
+         }
+ 
+-        if (ctx->mouse_mode)
++        if (ctx->mouse_mode && mouse)
+         {
+             switch(ev->scancode)
+             {
+@@ -401,7 +408,7 @@
+ 		key_report_event(ctx, &ctx->key_fifo_data[fifo_idx]);
+ 	}
+ 
+-	if (ctx->mouse_mode)
++	if (ctx->mouse_mode && mouse)
+         {
+             uint64_t press_time = ktime_get_boottime_ns() - ctx->last_keypress_at;
+             if (press_time <= mouse_fast_move_thr_time)

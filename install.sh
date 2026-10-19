@@ -121,12 +121,40 @@ install_hat() {
     sudo sed -i '/^FONT="Uni2-Fixed5x7.psf.gz"/d' /etc/default/console-setup
 }
 
+# The keyboard driver's Right Shift switches it to a mouse mode (arrows move a pointer and their
+# key-up never comes) - useless on the LCD and it makes the arrows "die". The patch adds a
+# parameter, mouse=0 by default (/sys/module/picocalc_kbd/parameters/mouse, writable).
+patch_keyboard() {
+    echo "== PicoCalc keyboard: no Right Shift mouse mode"
+    src=${PICOCALC_TRIXIE:-$HOME/picocalc_trixie}/picocalc_kbd
+    ko=/lib/modules/$(uname -r)/extra/picocalc_kbd.ko
+    if [ -e /sys/module/picocalc_kbd/parameters/mouse ]; then
+        echo "already patched"
+    elif [ -f "$src/picocalc_kbd.c" ] && [ -f "$ko" ] && [ -d "/lib/modules/$(uname -r)/build" ]; then
+        tmp=$(mktemp -d)
+        cp "$src"/Makefile "$src"/*.c "$src"/*.h "$tmp"/
+        if patch -s -d "$tmp" -p1 < "$REPO/config/picocalc/picocalc_kbd-nomouse.patch" \
+                && make -s -C "$tmp" >/dev/null 2>&1; then
+            [ -f "$ko.orig" ] || sudo cp -p "$ko" "$ko.orig"
+            sudo install -m644 "$tmp/picocalc_kbd.ko" "$ko"
+            sudo depmod -a
+            echo "patched (old module: $ko.orig) - after a reboot"
+        else
+            echo "warning: could not patch / build the keyboard driver - Right Shift still toggles the mouse mode"
+        fi
+        rm -rf "$tmp"
+    else
+        echo "skipped: no picocalc_trixie source or kernel headers"
+    fi
+}
+
 install_picocalc() {
     echo "== checking the PicoCalc display and keyboard"
     grep -qs mipi /sys/class/graphics/fb*/name || {
         echo "LCD framebuffer not found: install the display first (picocalc_trixie, Step 4)"; exit 1; }
     grep -qs picocalc_kbd /sys/class/input/event*/device/name || \
         echo "warning: picocalc_kbd keyboard not found (picocalc_trixie, Step 5) - a USB keyboard still works"
+    patch_keyboard
 
     echo "== sound: PWM audio on GPIO 12/13"
     grep -q "^dtparam=audio=on" "$CONFIG" || add_config "dtparam=audio=on"
