@@ -520,6 +520,12 @@ def draw(t, popup):
         if fs:
             text("F/S " + fs, (126, y + 1), DIM, f_mono, right=True)
         y += 9
+        # the rest: plugin fields (e.g. TBL / ST3215), pins, overrides - not the buffer or the offsets
+        extra = ["%s:%s" % (k, v) for k, v in kv.items() if k not in ("MPos", "WPos", "FS", "F", "Bf", "WCO", "Ln")
+                 and not (k == "Ov" and v == "100,100,100")]
+        if extra:
+            text(fit("  ".join(extra), f_mono, 124), (2, y), (170, 170, 120), f_mono)
+            y += LH
     job = t.job
     if job:
         n = len(job.lines)
