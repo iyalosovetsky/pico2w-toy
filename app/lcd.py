@@ -110,6 +110,7 @@ CHARS = {
     98: ("/", "/"), 117: ("=", "="), 179: ("(", "("), 180: (")", ")"),
 }
 SHIFT_CODES = (42, 54)
+CTRL_CODES = (29, 97)
 # key debugging: with this file present every key code from the kernel goes to /tmp/lcd-keys.log
 KEYLOG_FLAG = os.path.expanduser("~/.config/lcdtoy/keylog")
 KEYLOG = os.path.exists(KEYLOG_FLAG)
@@ -129,6 +130,7 @@ _hat_fds = set()      # HAT buttons (gpio-key), as opposed to keyboards
 _sounds = {}
 _held_arrows = set()  # pygame arrow keys currently held on a keyboard
 _shift = set()        # Shift keys held (evdev codes)
+_ctrl = set()         # Ctrl keys held
 _caps = False         # Caps Lock toggled
 _sound_ok = False
 
@@ -445,6 +447,8 @@ def _pump_buttons():
                     pass
             if etype == 1 and code in SHIFT_CODES:
                 (_shift.add if value else _shift.discard)(code)
+            elif etype == 1 and code in CTRL_CODES:
+                (_ctrl.add if value else _ctrl.discard)(code)
             elif etype == 1 and code == CAPSLOCK and value == 1:
                 _caps = not _caps
             elif etype == 1 and code in KEYMAP and value in (0, 1):  # EV_KEY, no autorepeat
@@ -459,7 +463,9 @@ def _pump_buttons():
                     char = shifted if _shift else normal
                     if _caps and normal.isalpha():
                         char = char.swapcase()
-                mod = pygame.KMOD_SHIFT if _shift and not hat else 0
+                    if _ctrl and normal.isalpha():          # Ctrl+letter: the control character (^X = 0x18)
+                        char = chr(ord(normal) & 0x1F)
+                mod = (pygame.KMOD_SHIFT if _shift and not hat else 0) | (pygame.KMOD_CTRL if _ctrl and not hat else 0)
                 pygame.event.post(pygame.event.Event(kind, key=key, mod=mod, unicode=char,
                                                      scancode=code, hat=hat))
 

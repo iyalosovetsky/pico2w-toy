@@ -364,6 +364,8 @@ class Term:
             return False
         self.port.write(line if realtime else line + self.eol)
         shown = {"\x18": "Ctrl-X (скидання)", "\x85": "jog cancel"}.get(line, line)
+        if len(shown) == 1 and ord(shown) < 32:
+            shown = "Ctrl-" + chr(ord(shown) + 64)
         self.full.append(("tx", "> " + shown))
         if log:
             self.say("in", shown)
@@ -628,7 +630,8 @@ class Popup:
 HELP = ["Введення + Enter - надіслати рядок", "↑/↓ - історія, PgUp/PgDn - прокрутка",
         "F2 / Tab - сховати / показати повний вивід", "F3 - порт, швидкість, кінець рядка, minicom",
         "F4 - файл G-code: відкрити, весь, кроками, пауза, стоп", "F5 - grbl: опитування ?, скидання, $X, $H",
-        "? ! ~ на порожньому рядку - одразу (grbl)", "Esc - очистити рядок / вихід"]
+        "? ! ~ на порожньому рядку - одразу (grbl)", "Ctrl+X - скидання, Ctrl+C / D - байт",
+        "Esc - очистити рядок / вихід"]
 
 
 def file_list(path):
@@ -860,6 +863,12 @@ def main():
                 t.scroll += 6
             elif k == pygame.K_PAGEDOWN:
                 t.scroll = max(0, t.scroll - 6)
+            elif ch and len(ch) == 1 and ord(ch) < 32:     # Ctrl+letter: that control byte, at once
+                if ch == "\x18" and t.job and t.job.mode:
+                    t.stop_job()                           # Ctrl-X: grbl's soft reset - the job is over
+                else:
+                    t.send(ch, log=True, realtime=True)
+                    t.pending = None
             elif ch and ch.isprintable():
                 if not t.input and ch in "?!~":       # grbl real-time commands
                     t.send(ch, log=ch != "?", realtime=True)
