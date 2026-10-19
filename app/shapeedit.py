@@ -26,15 +26,15 @@ AUTOSAVE_S = 1.0
 GRID_STEPS = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
 SIDES = ["по лінії", "зовні", "всередині", "карман"]     # карман (a pocket): all the inside cleared
 POCKET = SIDES[3]
-TOOLS = {"c": "circle", "e": "ellipse", "r": "rect", "a": "arc", "l": "line", "t": "text", "T": "textc"}
+TOOLS = {"c": "circle", "e": "ellipse", "r": "rect", "a": "arc", "l": "line", "t": "text", "T": "textc", "m": "holes"}
 NAMES = {"circle": "коло", "ellipse": "еліпс", "rect": "прямокутник", "arc": "дуга", "line": "лінія",
          "poly": "контур",           # poly: a polyline imported from an SVG (curves as chords)
-         "text": "текст", "textc": "текст у колі"}
+         "text": "текст", "textc": "текст по дузі", "holes": "масив отворів"}
 # the points each tool asks for, in order
 STEPS = {"circle": ["центр", "точка на колі"], "ellipse": ["центр", "кут рамки (rx, ry)"],
          "rect": ["перший кут", "протилежний кут"], "arc": ["центр", "початок", "кінець"],
          "line": ["початок", "кінець"], "text": ["перший кут рамки", "протилежний кут"],
-         "textc": ["центр кола", "точка на колі"]}
+         "textc": ["центр кола", "точка на колі"], "holes": ["центр першого (лівого нижнього) отвору"]}
 # the fields of each shape in the numbers form: (key, label)
 FIELDS = {"circle": [("cx", "Центр X"), ("cy", "Центр Y"), ("r", "Радіус"), ("side", "Сторона")],
           "ellipse": [("cx", "Центр X"), ("cy", "Центр Y"), ("rx", "Піввісь X"), ("ry", "Піввісь Y"),
@@ -60,6 +60,13 @@ HELP = [
     "c - коло: центр, точка на колі. e - еліпс: центр, кут рамки.",
     "r - прямокутник: два кути (радіус кутів - у числах).",
     "a - дуга: центр, початок, кінець; d - напрям. l - лінія: два кінці.",
+    "m - масив отворів: центр першого (лівого нижнього), далі числа - діаметр, скільки по X / Y і крок;",
+    "  отвори - карманом (вибрані повністю). Масив є в числах будь-якої фігури: «Масив: по X / по Y, крок».",
+    "X (Shift+x) - очистити все креслення (з підтвердженням; u - повернути).",
+    "Масив у редагуванні точок (Enter): стрілки ходять по копіях, Del - прибрати копію під хрестиком / повернути",
+    "  (прибрані - пунктиром); Tab - точки: центр (перенести весь масив), радіус, крок X і крок Y (наступна копія",
+    "  праворуч / вгору - тягніть). У числах: «Без кутових» - чотири кутові копії, «Без крайніх рядів» - N рядів",
+    "  і стовпців по краях.",
     "t - текст у прямокутнику (два кути), T - текст по дузі / колу (центр, точка на лінії літер): далі одразу",
     "  набір - Tab - EN / UA, | - новий рядок, Enter - готово. У прямокутнику літери вписуються в рамку, по дузі -",
     "  ідуть по колу: середина тексту (90° - верх), дуга в градусах (360 - коло, 0 - за висотою літер), напрям",
@@ -204,9 +211,66 @@ def points(sh, n=48):
     return out
 
 
+def translate(sh, dx, dy):
+    """The figure moved by dx, dy (a copy)."""
+    s = dict(sh)
+    for kx, ky in (("cx", "cy"), ("x", "y"), ("x0", "y0"), ("x1", "y1")):
+        if kx in s:
+            s[kx] += dx
+            s[ky] += dy
+    if s["type"] == "poly":
+        s["pts"] = [[x + dx, y + dy] for x, y in sh["pts"]]
+    return s
+
+
+def arrayed(sh):
+    """(columns, rows, pitch X, pitch Y) of a figure's array; (1, 1, 0, 0) for a single one."""
+    return max(1, int(sh.get("nx", 1) or 1)), max(1, int(sh.get("ny", 1) or 1)), sh.get("px", 0.0) or 0.0, \
+        sh.get("py", 0.0) or 0.0
+
+
+ARRAY_KEYS = ("nx", "ny", "px", "py", "skip", "edge", "corners")
+YES_NO = ["ні", "так"]
+
+
+def skipped(sh):
+    """The array cells left out: the ones taken away one by one, and "edge" rows / columns round the border."""
+    nx, ny, _, _ = arrayed(sh)
+    e = max(0, int(sh.get("edge", 0) or 0))
+    out = {(i, j) for i, j in (tuple(c) for c in sh.get("skip", [])) if i < nx and j < ny}
+    if e:
+        out |= {(i, j) for i in range(nx) for j in range(ny) if i < e or j < e or i >= nx - e or j >= ny - e}
+    if sh.get("corners"):                               # the four corner cells (inside the edge rows if any)
+        a, b, c, d = e, e, nx - 1 - e, ny - 1 - e
+        out |= {(a, b), (c, b), (a, d), (c, d)}
+    return out
+
+
+def cells(sh):
+    """[(column, row, copy)] of an array (the figure itself is cell 0, 0), every cell, left-out ones too."""
+    nx, ny, px, py = arrayed(sh)
+    base = {k: v for k, v in sh.items() if k not in ARRAY_KEYS}
+    return [(i, j, translate(base, i * px, j * py)) for j in range(ny) for i in range(nx)]
+
+
+def copies(sh):
+    """The figure and its array copies (it is the bottom left one) without the left-out cells, row by row,
+    every other row backwards - the shortest way through them."""
+    nx, ny, px, py = arrayed(sh)
+    if nx == 1 and ny == 1:
+        return [sh]
+    base = {k: v for k, v in sh.items() if k not in ARRAY_KEYS}
+    gone = skipped(sh)
+    out = []
+    for j in range(ny):
+        cols = range(nx) if j % 2 == 0 else range(nx - 1, -1, -1)
+        out += [translate(base, i * px, j * py) for i in cols if (i, j) not in gone]
+    return out
+
+
 def bounds(shapes):
     xs, ys = [], []
-    for sh in shapes:
+    for sh in [c for s in shapes for c in copies(s)]:
         for x, y in points(sh, 24):
             xs.append(x)
             ys.append(y)
@@ -321,7 +385,7 @@ def gcode(shapes, p, title="shapes"):
     if p["spindle"] > 0:
         out.append("M3 S%d" % p["spindle"])
         out.append("G4 P2")
-    for i, sh in enumerate(shapes):
+    for i, sh in [(i, c) for i, s in enumerate(shapes) for c in copies(s)]:     # an array: each copy in turn
         depth = abs(sh.get("depth") or 0.0) or abs(p["depth"])
         n = max(1, int(math.ceil(depth / step - 1e-9)))
         levels = [min(depth, step * (j + 1)) for j in range(n)]
@@ -409,42 +473,64 @@ def svg_text(shapes, params):
            '<svg xmlns="http://www.w3.org/2000/svg" width="%smm" height="%smm" viewBox="0 0 %s %s">' % (f(w), f(h), f(w), f(h)),
            '<metadata id="pico2w-toy">%s</metadata>' % json.dumps(params, ensure_ascii=False).replace("&", "&amp;").replace("<", "&lt;"),
            '<g id="shapes" transform="translate(0,%s) scale(1,-1)" fill="none" stroke="#0080ff" stroke-width="0.3">' % f(h)]
+    def write(sh):
+            t = sh["type"]
+            side = ' data-side="%s"' % sh.get("side", SIDES[0]) if closed(sh) else ""
+            if sh.get("depth"):
+                side += ' data-depth="%s"' % f(sh["depth"])
+            if t == "circle":
+                out.append('<circle cx="%s" cy="%s" r="%s"%s/>' % (f(sh["cx"]), f(sh["cy"]), f(sh["r"]), side))
+            elif t == "ellipse":
+                out.append('<ellipse cx="%s" cy="%s" rx="%s" ry="%s"%s/>' % (f(sh["cx"]), f(sh["cy"]), f(sh["rx"]),
+                                                                             f(sh["ry"]), side))
+            elif t == "rect":
+                rad = min(sh.get("rad", 0.0), sh["w"] / 2, sh["h"] / 2)
+                out.append('<rect x="%s" y="%s" width="%s" height="%s" rx="%s" ry="%s"%s/>' % (
+                    f(sh["x"]), f(sh["y"]), f(sh["w"]), f(sh["h"]), f(rad), f(rad), side))
+            elif t == "text":
+                data = json.dumps({k: v for k, v in sh.items() if k != "type"}, ensure_ascii=False)
+                out.append("<g data-text='%s'>" % data.replace("&", "&amp;").replace("'", "&#39;").replace("<", "&lt;"))
+                for poly in textcut.placed(sh):
+                    out.append('<polygon points="%s"/>' % " ".join("%s,%s" % (f(x), f(y)) for x, y in poly))
+                out.append("</g>")
+            elif t == "poly":
+                pts = sh["pts"][:-1] if sh.get("closed") and len(sh["pts"]) > 2 and sh["pts"][0] == sh["pts"][-1] else sh["pts"]
+                out.append('<%s points="%s"%s/>' % ("polygon" if sh.get("closed") else "polyline",
+                                                    " ".join("%s,%s" % (f(x), f(y)) for x, y in pts), side))
+            elif t == "line":
+                out.append('<line x1="%s" y1="%s" x2="%s" y2="%s"%s/>' % (f(sh["x0"]), f(sh["y0"]), f(sh["x1"]), f(sh["y1"]),
+                                                                        side))
+            else:
+                a0, sw = arc_sweep(sh)
+                cx, cy, r = sh["cx"], sh["cy"], sh["r"]
+                p0 = (cx + r * math.cos(a0), cy + r * math.sin(a0))
+                p1 = (cx + r * math.cos(a0 + sw), cy + r * math.sin(a0 + sw))
+                data = json.dumps({k: sh[k] for k in ("cx", "cy", "r", "a0", "a1", "ccw")}, ensure_ascii=False)
+                out.append('<path d="M %s %s A %s %s 0 %d %d %s %s" data-arc=\'%s\'%s/>' % (
+                    f(p0[0]), f(p0[1]), f(r), f(r), 1 if abs(sw) > math.pi else 0, 1 if sw > 0 else 0,
+                    f(p1[0]), f(p1[1]), data, side))
+
     for sh in shapes:
-        t = sh["type"]
-        side = ' data-side="%s"' % sh.get("side", SIDES[0]) if closed(sh) else ""
-        if sh.get("depth"):
-            side += ' data-depth="%s"' % f(sh["depth"])
-        if t == "circle":
-            out.append('<circle cx="%s" cy="%s" r="%s"%s/>' % (f(sh["cx"]), f(sh["cy"]), f(sh["r"]), side))
-        elif t == "ellipse":
-            out.append('<ellipse cx="%s" cy="%s" rx="%s" ry="%s"%s/>' % (f(sh["cx"]), f(sh["cy"]), f(sh["rx"]),
-                                                                         f(sh["ry"]), side))
-        elif t == "rect":
-            rad = min(sh.get("rad", 0.0), sh["w"] / 2, sh["h"] / 2)
-            out.append('<rect x="%s" y="%s" width="%s" height="%s" rx="%s" ry="%s"%s/>' % (
-                f(sh["x"]), f(sh["y"]), f(sh["w"]), f(sh["h"]), f(rad), f(rad), side))
-        elif t == "text":
-            data = json.dumps({k: v for k, v in sh.items() if k != "type"}, ensure_ascii=False)
-            out.append("<g data-text='%s'>" % data.replace("&", "&amp;").replace("'", "&#39;").replace("<", "&lt;"))
-            for poly in textcut.placed(sh):
-                out.append('<polygon points="%s"/>' % " ".join("%s,%s" % (f(x), f(y)) for x, y in poly))
-            out.append("</g>")
-        elif t == "poly":
-            pts = sh["pts"][:-1] if sh.get("closed") and len(sh["pts"]) > 2 and sh["pts"][0] == sh["pts"][-1] else sh["pts"]
-            out.append('<%s points="%s"%s/>' % ("polygon" if sh.get("closed") else "polyline",
-                                                " ".join("%s,%s" % (f(x), f(y)) for x, y in pts), side))
-        elif t == "line":
-            out.append('<line x1="%s" y1="%s" x2="%s" y2="%s"%s/>' % (f(sh["x0"]), f(sh["y0"]), f(sh["x1"]), f(sh["y1"]),
-                                                                    side))
-        else:
-            a0, sw = arc_sweep(sh)
-            cx, cy, r = sh["cx"], sh["cy"], sh["r"]
-            p0 = (cx + r * math.cos(a0), cy + r * math.sin(a0))
-            p1 = (cx + r * math.cos(a0 + sw), cy + r * math.sin(a0 + sw))
-            data = json.dumps({k: sh[k] for k in ("cx", "cy", "r", "a0", "a1", "ccw")}, ensure_ascii=False)
-            out.append('<path d="M %s %s A %s %s 0 %d %d %s %s" data-arc=\'%s\'%s/>' % (
-                f(p0[0]), f(p0[1]), f(r), f(r), 1 if abs(sw) > math.pi else 0, 1 if sw > 0 else 0,
-                f(p1[0]), f(p1[1]), data, side))
+        cs = copies(sh)
+        if len(cs) == 1:
+            write(sh)
+            continue
+        nx, ny, px, py = arrayed(sh)                    # an array: the figure, then its copies (a view only)
+        info = {"nx": nx, "ny": ny, "px": px, "py": py}
+        if sh.get("skip"):
+            info["skip"] = [list(c) for c in sh["skip"]]
+        if sh.get("edge"):
+            info["edge"] = int(sh["edge"])
+        if sh.get("corners"):
+            info["corners"] = True
+        out.append("<g data-array='%s'>" % json.dumps(info))
+        base = {k: v for k, v in sh.items() if k not in ARRAY_KEYS}
+        write(base)                                     # the bottom left one: the figure itself
+        out.append("<g data-copies='1'>")
+        for c in cs:
+            if c != base:
+                write(c)
+        out.append("</g></g>")
     out += ["</g>", "</svg>"]
     return "\n".join(out) + "\n"
 
@@ -490,16 +576,26 @@ def load(path):
     num = lambda el, k, d=0.0: float(re.sub(r"[^\d.eE+-]", "", el.get(k, str(d))) or d)
     shapes = []
     skip = set()
+    array = None                                        # a data-array group: for the next figure read
     for el in root.iter():
         if el in skip:
             continue
         tag = el.tag.replace(ns, "")
+        if tag == "g" and el.get("data-array"):
+            array = json.loads(el.get("data-array"))
+            continue
+        if tag == "g" and el.get("data-copies"):        # the copies are only a view
+            skip.update(el.iter())
+            continue
         side = el.get("data-side", SIDES[0])
         if tag == "g" and el.get("data-text"):          # a text: its settings; the outlines inside are a view
             d = json.loads(el.get("data-text"))
             d["type"] = "text"
             if d.get("frame") == "коло":                 # the old "fitted in a circle": now along its arc
                 d.update(frame=textcut.FRAMES[1], angle=90.0, span=160.0, dir=textcut.DIRS[0])
+            if array:
+                d.update(array)
+                array = None
             shapes.append(d)
             skip.update(el.iter())
             continue
@@ -529,6 +625,9 @@ def load(path):
             continue
         if el.get("data-depth"):
             shapes[-1]["depth"] = float(el.get("data-depth"))
+        if array:
+            shapes[-1].update(array)
+            array = None
     return shapes, params
 
 
@@ -586,12 +685,53 @@ def seg_dist(p, a, b):
     return math.hypot(p[0] - ax - t * dx, p[1] - ay - t * dy)
 
 
+def near_copies(sh, p):
+    """The copies of an array around point p (its cell and the neighbours) - not all thousand of them."""
+    nx, ny, px, py = arrayed(sh)
+    if nx * ny <= 9:
+        return copies(sh)
+    mx, my = dict(_handles({k: v for k, v in sh.items() if k not in ARRAY_KEYS}))["move"]
+    ci = round((p[0] - mx) / px) if px else 0
+    cj = round((p[1] - my) / py) if py else 0
+    gone = skipped(sh)
+    base = {k: v for k, v in sh.items() if k not in ARRAY_KEYS}
+    return [translate(base, i * px, j * py) for i in range(ci - 1, ci + 2) for j in range(cj - 1, cj + 2)
+            if 0 <= i < nx and 0 <= j < ny and (i, j) not in gone]
+
+
 def shape_dist(sh, p):
-    pts = points(sh, 72)
-    return min(seg_dist(p, pts[i], pts[i + 1]) for i in range(len(pts) - 1))
+    best = float("inf")
+    for c in near_copies(sh, p):
+        pts = points(c, 72)
+        best = min(best, min(seg_dist(p, pts[i], pts[i + 1]) for i in range(len(pts) - 1)))
+    return best
 
 
 def handles(sh):
+    """A figure's points, and for an array the two pitch points: the next copy right (pitch X) and up (pitch Y)."""
+    hs = _handles(sh)
+    nx, ny, px, py = arrayed(sh)
+    mx, my = dict(hs)["move"]
+    if nx > 1:
+        hs.append(("px", (mx + px, my)))
+    if ny > 1:
+        hs.append(("py", (mx, my + py)))
+    return hs
+
+
+def set_handle(orig, name, p):
+    if name in ("px", "py"):                            # a pitch: from the figure's middle to the next copy
+        mx, my = dict(_handles(orig))["move"]
+        sh = dict(orig)
+        if name == "px":
+            sh["px"] = round(p[0] - mx, 4)
+        else:
+            sh["py"] = round(p[1] - my, 4)
+        return sh
+    return _set_handle(orig, name, p)
+
+
+def _handles(sh):
     """The points that shape a figure: (name, (x, y)); "move" drags the whole figure."""
     t = sh["type"]
     if t == "text":
@@ -616,7 +756,7 @@ def handles(sh):
             ("move", ((sh["x0"] + sh["x1"]) / 2, (sh["y0"] + sh["y1"]) / 2))]
 
 
-def set_handle(orig, name, p):
+def _set_handle(orig, name, p):
     """The figure with one of its points (from handles()) moved to p; orig - as it was when grabbed."""
     if orig["type"] == "text":                          # its frame changes, the letters follow
         fr = set_handle(frame(orig), name, p)
@@ -658,7 +798,41 @@ def set_handle(orig, name, p):
     return sh
 
 
+ARRAY_ROWS = [("nx", "Масив: по X, шт"), ("ny", "Масив: по Y, шт"), ("px", "Крок по X, мм"), ("py", "Крок по Y, мм"),
+              ("edge", "Без крайніх рядів, шт"), ("corners", "Без кутових")]
+
+
 def shape_rows(sh, anchor):
+    """The numbers form: the figure's own rows, then its array."""
+    nx, ny, px, py = arrayed(sh)
+    vals = (nx, ny, px, py, int(sh.get("edge", 0) or 0), YES_NO[1] if sh.get("corners") else YES_NO[0])
+    return _shape_rows(sh, anchor) + [[k, label, v, YES_NO if k == "corners" else None]
+                                      for (k, label), v in zip(ARRAY_ROWS, vals)]
+
+
+def rows_shape(sh, vals):
+    out = _rows_shape(sh, vals)
+    for k in ("nx", "ny"):
+        if k in vals:
+            out[k] = max(1, int(round(abs(vals[k]))))
+    if "edge" in vals:
+        out["edge"] = max(0, int(round(abs(vals["edge"]))))
+    if "corners" in vals:
+        out["corners"] = vals["corners"] == YES_NO[1]
+    for k in ("px", "py"):
+        if k in vals:
+            out[k] = float(vals[k])
+    if out.get("nx", 1) == 1 and out.get("ny", 1) == 1:   # no array: no leftovers in the file
+        for k in ARRAY_KEYS:
+            out.pop(k, None)
+    else:
+        for k in ("edge", "corners"):
+            if not out.get(k):
+                out.pop(k, None)
+    return out
+
+
+def _shape_rows(sh, anchor):
     """The numbers form of a figure: [key, label, value, choices]; X / Y by the anchor (corner / centre)."""
     t = sh["type"]
     if t == "text":
@@ -677,7 +851,7 @@ def shape_rows(sh, anchor):
                            ["dir", "Напрям", sh.get("dir", textcut.DIRS[0]), textcut.DIRS]]
         rows.append(["angle", "Кут нахилу, °", sh.get("angle", 0.0), None])
         fr = frame(sh)
-        return rows + [r for r in shape_rows(fr, anchor) if r[0] not in ("depth", "side", "rad")]   # the frame
+        return rows + [r for r in _shape_rows(fr, anchor) if r[0] not in ("depth", "side", "rad")]   # the frame
     if t == "poly":
         xs, ys = [p[0] for p in sh["pts"]], [p[1] for p in sh["pts"]]
         w, h = max(xs) - min(xs), max(ys) - min(ys)
@@ -718,7 +892,7 @@ def shape_rows(sh, anchor):
             ["x1", "Кінець X", sh["x1"], None], ["y1", "Кінець Y", sh["y1"], None]]
 
 
-def rows_shape(sh, vals):
+def _rows_shape(sh, vals):
     """The figure from the form's values (the inverse of shape_rows)."""
     out = dict(sh)
     t = sh["type"]
@@ -942,6 +1116,7 @@ class Editor:
         self.files = None         # the open / import list: ([(name, path)], index)
         self.files_mode = "open"
         self.esc_t = 0.0          # the first Esc of the two that leave
+        self.confirm_clear = False
         self.mod = 0
         self.hold = None          # a held arrow: {"key", "t0", "next"}
         self.help = None
@@ -988,6 +1163,10 @@ class Editor:
     def make(self, kind, pts, c):
         """The shape from its placed points and the cross-hair (the last point, live)."""
         p = pts + [tuple(c)]
+        if kind == "holes":                              # an array of holes, cleared (a pocket) by default
+            nx, ny, px, py = self.t.prof.get("last_array", [3, 4, 20.0, 35.0])
+            return {"type": "circle", "cx": p[-1][0], "cy": p[-1][1], "r": self.t.prof.get("last_hole_d", 12.0) / 2,
+                    "side": POCKET, "nx": nx, "ny": ny, "px": px, "py": py}
         if kind in ("text", "textc"):                    # a frame for the letters
             fr = self.make("rect" if kind == "text" else "circle", pts, c)
             sh = {"type": "text", "text": self.t.prof.get("last_text", "Текст"),
@@ -1047,6 +1226,38 @@ class Editor:
         self.follow()
         self.tick_grab()
 
+    def array_cell(self, sh):
+        """(columns, rows) for an array, None for a single figure."""
+        nx, ny, _, _ = arrayed(sh)
+        return (nx, ny) if nx * ny > 1 else None
+
+    def cell_at(self, sh):
+        """The array cell nearest the cross-hair (by its middle point)."""
+        nx, ny, px, py = arrayed(sh)
+        mx, my = dict(_handles(sh))["move"]
+        i = min(nx - 1, max(0, round((self.cur[0] - mx) / px))) if px else 0
+        j = min(ny - 1, max(0, round((self.cur[1] - my) / py))) if py else 0
+        return int(i), int(j), (mx + i * px, my + j * py)
+
+    def cell_under(self, sh):
+        i, j, c = self.cell_at(sh)
+        return (i, j) if math.dist(c, self.cur) <= HIT_PX / self.scale else None
+
+    def cell_step(self, k):
+        """The cross-hair to the next copy left / right / down / up (onto the nearest one first)."""
+        sh = self.shapes[self.edit["i"]]
+        nx, ny, px, py = arrayed(sh)
+        i, j, c = self.cell_at(sh)
+        if math.dist(c, self.cur) <= HIT_PX / self.scale:
+            di, dj = {pygame.K_LEFT: (-1, 0), pygame.K_RIGHT: (1, 0), pygame.K_UP: (0, 1), pygame.K_DOWN: (0, -1)}[k]
+            if px < 0:
+                di = -di
+            if py < 0:
+                dj = -dj
+            i, j = min(nx - 1, max(0, i + di)), min(ny - 1, max(0, j + dj))
+        mx, my = dict(_handles(sh))["move"]
+        self.jump((mx + i * px, my + j * py))
+
     def start_edit(self, i):
         self.edit = {"i": i, "grab": None, "h": 0}
         sh = self.shapes[i]
@@ -1104,6 +1315,10 @@ class Editor:
                 self.msg = "фреза Ø%s завелика для цього карману" % fmt(self.params["tool"])
             if base["type"] == "rect":
                 self.t.prof["rect_rad"] = self.shapes[i].get("rad", 0.0)
+            new = self.shapes[i]
+            if new["type"] == "circle" and "nx" in new:     # the next array of holes starts like this one
+                self.t.prof["last_array"] = list(arrayed(new))
+                self.t.prof["last_hole_d"] = 2 * new["r"]
             if base["type"] == "text":
                 self.t.prof["last_text"] = self.shapes[i].get("text", "")
                 self.t.prof["last_font"] = self.shapes[i].get("font", textcut.FONTS[0])
@@ -1209,6 +1424,14 @@ class Editor:
         if k == pygame.K_F1:
             self.help = self.ui.TextPopup("Редактор фігур", HELP)
             return None
+        if self.confirm_clear:                          # "clear it all?": Enter - yes, anything else - no
+            self.confirm_clear = False
+            if k in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                self.push_undo()
+                n = len(self.shapes)
+                self.shapes, self.edit = [], None
+                self.msg = "очищено %d фігур (u - повернути)" % n
+            return None
         if self.form:
             r = self.form.key(k, ch)
             if r in ("done", "cancel"):
@@ -1296,6 +1519,9 @@ class Editor:
             elif k == pygame.K_2:
                 ch = " "
         if k in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN):
+            if self.edit and not self.edit["grab"] and self.array_cell(self.shapes[self.edit["i"]]) is not None:
+                self.cell_step(k)                       # an array: the arrows go from copy to copy
+                return None
             self.move(k)
             self.hold = {"key": k, "t0": time.monotonic(), "next": time.monotonic() + 0.35}
             return None
@@ -1325,6 +1551,28 @@ class Editor:
                 self.jump(hs[e["h"]][1])
             elif ch in (" ", "n") and not e["grab"]:
                 self.shape_form(e["i"])
+            elif k in (pygame.K_DELETE, pygame.K_BACKSPACE) and not e["grab"] and self.array_cell(sh) is not None:
+                cell = self.cell_under(sh)              # an array: take one copy away / bring it back
+                if cell is None:
+                    self.msg = "хрестик на центр копії (стрілки ходять по них)"
+                else:
+                    nx, ny, _, _ = arrayed(sh)
+                    e_ = int(sh.get("edge", 0) or 0)
+                    i, j = cell
+                    if (e_ and (i < e_ or j < e_ or i >= nx - e_ or j >= ny - e_)) or \
+                            (sh.get("corners") and cell in skipped(dict(sh, skip=[]))):
+                        self.msg = "це край / кут: його прибирає поле в числах"
+                    else:
+                        self.push_undo()
+                        skip = {tuple(c) for c in sh.get("skip", [])}
+                        skip ^= {cell}
+                        sh = dict(sh)
+                        if skip:
+                            sh["skip"] = sorted([list(c) for c in skip])
+                        else:
+                            sh.pop("skip", None)
+                        self.shapes[e["i"]] = sh
+                        self.msg = ("прибрано" if cell in skip else "повернуто") + " %d,%d" % (i + 1, j + 1)
             elif k in (pygame.K_DELETE, pygame.K_BACKSPACE) and not e["grab"]:
                 self.push_undo()
                 del self.shapes[e["i"]]
@@ -1348,6 +1596,10 @@ class Editor:
                         self.shape_form(len(self.shapes) - 1)
                         self.form.sel = 1
                         self.form.typing = ""
+                    elif "nx" in sh:                        # the array: its numbers, at the diameter
+                        self.tool = None
+                        self.shape_form(len(self.shapes) - 1)
+                        self.form.sel = [r[0] for r in self.form.rows].index("d")
                 else:
                     self.msg = "нульовий розмір - не додано"
                 self.pts = []                           # the same tool again
@@ -1386,6 +1638,8 @@ class Editor:
             self.tab = (getattr(self, "tab", -1) + (-1 if self.mod & pygame.KMOD_SHIFT else 1)) % len(self.shapes)
             self.tool, self.pts = None, []
             self.jump(points(self.shapes[self.tab], 8)[0])
+        elif ch == "X" and self.shapes:                  # clear it all - asked first
+            self.confirm_clear = True
         elif ch in TOOLS:
             self.tool, self.pts = TOOLS[ch], []
         elif ch == "d" and self.tool == "arc":
@@ -1437,9 +1691,29 @@ class Editor:
                      self.preview, json.dumps(self.shapes)[-200:], len(self.shapes), self.undo[-1:], self.scale, self.vx,
                      self.vy, self.grid_i, self.msg, self.ask, self.files and self.files[1], self.arc_dir,
                      f and (f.sel, f.typing, [r[2] for r in f.rows]), self.params,
-                     self.help and self.help.top, self.sig() == self.saved, self.name))
+                     self.help and self.help.top, self.sig() == self.saved, self.name, self.confirm_clear))
 
     # -- drawing
+    def draw_copy(self, sh, col, quick=False):
+        """One copy of an array: its outline (a text - its letters), a pocket's rings dim (not for big arrays)."""
+        screen = self.ui.screen
+        ax, ay, aw, ah = self.AREA
+        cx, cy = self.px(*dict(_handles(sh))["move"])
+        if not (ax - 40 <= cx <= ax + aw + 40 and ay - 40 <= cy <= ay + ah + 40):
+            return                                      # off the canvas
+        if sh["type"] == "text":
+            for poly in textcut.placed(sh):
+                q = [self.px(*p) for p in poly]
+                if len(q) > 1:
+                    pygame.draw.lines(screen, col, True, q)
+            return
+        pts = [self.px(*p) for p in points(sh, 10 if quick else 24)]
+        if len(pts) > 1:
+            pygame.draw.lines(screen, col, False, pts)
+        if closed(sh) and sh.get("side") == POCKET and not quick:
+            for ring in pocket(sh, self.params["tool"], self.params.get("stepover", 40.0))[1]:
+                pygame.draw.lines(screen, (40, 95, 60), False, [self.px(*p) for p in points(ring, 24)])
+
     def draw(self):
         ui = self.ui
         screen, text, fit = ui.screen, ui.text, ui.fit
@@ -1481,6 +1755,11 @@ class Editor:
                 pygame.draw.lines(screen, (70, 90, 90), False, pts)
                 sh = self.preview[1]
             col = ui.ACCENT if i == cur_i else ui.CYAN
+            if self.array_cell(sh):                     # an array: every copy left in (the figure may be one left out)
+                many = arrayed(sh)[0] * arrayed(sh)[1] > 120
+                for c in copies(sh):
+                    self.draw_copy(c, col, quick=many)
+                continue
             pts = [self.px(*p) for p in points(sh)]
             if sh["type"] == "text":                    # the frame dim, the letters bright
                 if len(pts) > 1:
@@ -1521,14 +1800,26 @@ class Editor:
             ly = y1 - 5 if y1 - 5 >= ay0 else max(y1, ay0) + 1   # above the frame, or just inside it
             text(label, (lx, ly), (230, 220, 120) if own else (120, 120, 100), ui.f_small)
         if self.tool:                                   # the shape being placed, live
-            if self.pts:
+            if self.pts or self.tool == "holes":
                 sh = self.make(self.tool, self.pts, self.cur)
-                pts = [self.px(*p) for p in points(sh)]
-                if len(pts) > 1:
-                    pygame.draw.lines(screen, ui.GREEN, False, pts)
+                for c in copies(sh):
+                    pts = [self.px(*p) for p in points(c, 24)]
+                    if len(pts) > 1:
+                        pygame.draw.lines(screen, ui.GREEN, False, pts)
                 for p in self.pts:
                     sx, sy = self.px(*p)
                     pygame.draw.circle(screen, ui.GREEN, (sx, sy), 1.2)
+        if self.edit and self.array_cell(self.shapes[self.edit["i"]]):   # an array: its cells
+            sh = self.shapes[self.edit["i"]]
+            gone = skipped(sh)
+            under = self.cell_under(sh)
+            for i, j, c in cells(sh):
+                if (i, j) in gone:                      # left out: dotted
+                    for q in [self.px(*p) for p in points(c, 16)][::2]:
+                        pygame.draw.rect(screen, (110, 70, 70), (q[0] - 0.4, q[1] - 0.4, 0.8, 0.8))
+                if (i, j) == under:
+                    pygame.draw.lines(screen, ui.ORANGE if (i, j) in gone else (255, 255, 255), False,
+                                      [self.px(*p) for p in points(c, 24)], 2)
         if self.edit:                                   # its points: squares; the one under the cross-hair bigger
             sh = self.shapes[self.edit["i"]]
             near = self.near_handle(sh)
@@ -1548,6 +1839,13 @@ class Editor:
             step = STEPS[self.tool][min(len(self.pts), len(STEPS[self.tool]) - 1)]
             extra = (" (%s, d)" % self.arc_dir) if self.tool == "arc" else ""
             text(fit("%s: %s%s" % (NAMES[self.tool], step, extra), ui.f_bold, 124), (2, 0), ui.GREEN, ui.f_bold)
+        elif self.edit and self.array_cell(self.shapes[self.edit["i"]]) and not self.edit["grab"]:
+            sh = self.shapes[self.edit["i"]]
+            nx, ny, _, _ = arrayed(sh)
+            cell = self.cell_under(sh)
+            where = " %d,%d" % (cell[0] + 1, cell[1] + 1) if cell else ""
+            s = "масив %d×%d (-%d)%s: стрілки, Del, Tab - точки" % (nx, ny, len(skipped(sh)), where)
+            text(fit(s, ui.f_small, 124), (2, 1), ui.ACCENT, ui.f_small)
         elif self.edit:
             sh = self.shapes[self.edit["i"]]
             s = ("%s: тягніть, Enter - покласти, Esc - назад" if self.edit["grab"] else
@@ -1557,6 +1855,9 @@ class Editor:
             sh = self.shapes[hov]
             d = abs(sh.get("depth") or 0.0) or self.params["depth"]
             kind = NAMES[sh["type"]] + (" (карман)" if sh.get("side") == POCKET else "")
+            nx, ny, _, _ = arrayed(sh)
+            if nx * ny > 1:
+                kind += " %d×%d" % (nx, ny)
             text(fit("%s ↓%s: Enter - точки, пробіл - числа, Del" % (kind, fmt(d)), ui.f_small, 124),
                  (2, 1), ui.ACCENT, ui.f_small)
         else:
@@ -1576,6 +1877,7 @@ class Editor:
                             "line": lambda: "L%s" % fmt(round(math.dist((sh["x0"], sh["y0"]), (sh["x1"], sh["y1"])), 3)),
                             "text": lambda: "%s×%s" % (fmt(round(sh["w"], 3)), fmt(round(sh["h"], 3))),
                             "textc": lambda: "R%s" % fmt(round(sh["r"], 3)),
+                            "holes": lambda: "%d×%d Ø%s" % (sh["nx"], sh["ny"], fmt(2 * sh["r"])),
                             }.get(self.tool, lambda: "")()
         text(fit(self.msg or info, ui.f_small, 124), (2, 119), ui.ACCENT if self.msg else ui.FG, ui.f_small)
         if self.form:
@@ -1585,6 +1887,12 @@ class Editor:
             text("зберегти як (~/gcode/shapes/…svg + .nc)", (2, 101), ui.ACCENT, ui.f_small)
             s = self.ask + "▏"
             text(fit(s, ui.f_mono, 124), (2, 112), ui.FG, ui.f_mono)
+        if self.confirm_clear:
+            pygame.draw.rect(screen, (40, 10, 10), (8, 44, 112, 34), border_radius=3)
+            pygame.draw.rect(screen, ui.RED, (8, 44, 112, 34), 1, border_radius=3)
+            text("Очистити все креслення?", (64, 47), ui.RED, ui.f_bold, center=True)
+            text("%d фігур · Enter - так, Esc - ні" % len(self.shapes), (64, 58), ui.FG, ui.f_small, center=True)
+            text("(u потім поверне)", (64, 67), ui.DIM, ui.f_small, center=True)
         if self.help:
             self.help.draw()
         if self.files is not None:

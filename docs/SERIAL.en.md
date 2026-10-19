@@ -189,6 +189,7 @@ green ticks — X and Y), its size from the machine's travel.
 | `l` | line | two ends |
 | `t` | text in a rectangle | see [section 8](#8-text-to-engrave) |
 | `T` | text along an arc / circle | see [section 8](#8-text-to-engrave) |
+| `m` | **an array of holes** | the first (bottom left) hole's centre; then the numbers |
 
 The figure is drawn live while placing, its size at the bottom. Backspace removes the last point, Esc ends the
 tool.
@@ -205,6 +206,33 @@ figure.
   from the **bottom left corner** (a circle's / ellipse's bounding box) **or the centre**, sizes, corner radius,
   arc angles, the cut. Live; after a number `s` (done) or Enter (next), Esc — cancel.
 * **Del / Backspace** — delete, **`u`** — undo.
+* **`X`** (Shift+x) — **clear the whole drawing**: asked first (Enter — yes, Esc — no), and `u` brings it all
+  back.
+
+### Arrays
+
+The numbers of **any** figure have "Масив: по X, шт", "по Y, шт", "Крок по X, мм", "Крок по Y, мм" (columns,
+rows, pitches). The figure is the bottom left copy, the rest repeat to the right and up; they are cut row by
+row in a zigzag (the shortest way). Two more fields: **"Без кутових"** (no corners: yes / no) leaves the four
+corner copies out, **"Без крайніх рядів, шт"** — N rows and columns all round the edge. Del outside editing
+deletes the whole array.
+
+**Editing an array (Enter on it):**
+
+* **the arrows go from copy to copy** — centre to centre, its number shown at the top ("4,3");
+* **Del — leave the copy under the cross-hair out**, Del again — bring it back; left-out ones are dotted;
+* **Tab — the array's points:** the centre (moves all of it), the radius (the size), **pitch X** and **pitch Y**
+  — the next copy right and up: Enter, arrows, Enter — and all copies spread.
+
+Example — a spoilboard: 20×50 holes at a 20 mm pitch without the four corner ones (clamps there): `m`, Enter,
+the diameter, `20`, `50`, `20`, `20`, "Без кутових" → так, `s`. Single holes not wanted — Enter on the array,
+arrows to the copy, Del.
+
+**`m` — an array of holes** — the quickest: place the first (bottom left) hole's centre and its numbers open
+with the cursor on the diameter. The holes are **pockets** (cleared fully), the tool moved in by itself. Example:
+holes 3×4, diameter 12, pitch 20 mm in X and 35 mm in Y, a tool of 8 — `m`, Enter, `12`, then `3`, `4`, `20`,
+`35` in the array fields, `s`. The next array starts with the same numbers. A hole no bigger than the tool is
+just plunged at its centre (drilling).
 
 ### The cut and the depth
 
@@ -328,6 +356,8 @@ Esc — close.
 | `l` | line |
 | `t` | text in a rectangle |
 | `T` (Shift+t) | text along an arc / circle |
+| `m` | an array of holes |
+| `X` (Shift+x) | clear it all (asked first) |
 | Enter | place a point; on a figure — edit its points |
 | Space (or `n`) | the figure's exact numbers |
 | Tab | the cross-hair to the next figure |
