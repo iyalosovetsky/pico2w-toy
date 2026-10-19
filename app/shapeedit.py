@@ -16,6 +16,7 @@ import time
 import xml.etree.ElementTree as ET
 
 import svgimport
+import textcut
 
 import pygame
 
@@ -25,13 +26,15 @@ AUTOSAVE_S = 1.0
 GRID_STEPS = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
 SIDES = ["по лінії", "зовні", "всередині", "карман"]     # карман (a pocket): all the inside cleared
 POCKET = SIDES[3]
-TOOLS = {"c": "circle", "e": "ellipse", "r": "rect", "a": "arc", "l": "line"}
+TOOLS = {"c": "circle", "e": "ellipse", "r": "rect", "a": "arc", "l": "line", "t": "text", "T": "textc"}
 NAMES = {"circle": "коло", "ellipse": "еліпс", "rect": "прямокутник", "arc": "дуга", "line": "лінія",
-         "poly": "контур"}           # poly: a polyline imported from an SVG (curves as chords)
+         "poly": "контур",           # poly: a polyline imported from an SVG (curves as chords)
+         "text": "текст", "textc": "текст у колі"}
 # the points each tool asks for, in order
 STEPS = {"circle": ["центр", "точка на колі"], "ellipse": ["центр", "кут рамки (rx, ry)"],
          "rect": ["перший кут", "протилежний кут"], "arc": ["центр", "початок", "кінець"],
-         "line": ["початок", "кінець"]}
+         "line": ["початок", "кінець"], "text": ["перший кут рамки", "протилежний кут"],
+         "textc": ["центр кола", "точка на колі"]}
 # the fields of each shape in the numbers form: (key, label)
 FIELDS = {"circle": [("cx", "Центр X"), ("cy", "Центр Y"), ("r", "Радіус"), ("side", "Сторона")],
           "ellipse": [("cx", "Центр X"), ("cy", "Центр Y"), ("rx", "Піввісь X"), ("ry", "Піввісь Y"),
@@ -57,6 +60,9 @@ HELP = [
     "c - коло: центр, точка на колі. e - еліпс: центр, кут рамки.",
     "r - прямокутник: два кути (радіус кутів - у числах).",
     "a - дуга: центр, початок, кінець; d - напрям. l - лінія: два кінці.",
+    "t - текст у прямокутнику (два кути), T - текст у колі (центр, точка): далі одразу набір тексту -",
+    "  Tab - EN / UA, | - новий рядок, Enter - готово. Літери вписуються в рамку; у числах - шрифт, кут нахилу,",
+    "  обробка (заливка - кільцями всередину від краю літер, контур - по лінії), рамка, розміри.",
     "Enter - поставити точку, Backspace - прибрати останню, Esc - кінець інструмента.",
     "# Готова фігура",
     "Наведіть хрестик на лінію фігури (вона жовтіє) або Tab - хрестик на наступну фігуру (Shift+Tab - попередню).",
@@ -67,7 +73,8 @@ HELP = [
     "  розміри, радіус кутів, кути дуги; фігура змінюється наживо, s або Enter на останньому - готово, Esc - ні.",
     "  Обробка (замкнені фігури): по лінії / зовні / всередині (фреза зсунута на радіус) / карман - вибрати все всередині:",
     "  кільця від центру назовні з кроком «Карман: крок, % фрези» (p), останнє - по стінці.",
-    "  Глибина - перше поле: своя для фігури (0 - загальна з p); на кресленні біля фігури видно ↓глибину.",
+    "  Глибина - перше поле: своя для фігури (0 - загальна з p); на кресленні біля фігури видно ↓глибину",
+    "  (жовта - своя; у тексту завжди, сіра - загальна).",
     "  У полі: цифри, потім Enter (далі) або s (готово одразу).",
     "Del / Backspace - видалити фігуру, u - скасувати останню зміну.",
     "# Файл",
@@ -91,6 +98,39 @@ def fmt(v):
 
 def closed(sh):
     return sh["type"] in ("circle", "ellipse", "rect")
+
+
+def has_side(sh):
+    """Figures that have an inside: the tool can go outside / inside / clear it (a pocket)."""
+    return closed(sh) or (sh["type"] == "poly" and sh.get("closed"))
+
+
+def frame(sh):
+    """A text's frame as a rect / circle figure."""
+    if sh.get("frame") == textcut.FRAMES[1]:
+        return {"type": "circle", "cx": sh["cx"], "cy": sh["cy"], "r": sh["r"]}
+    return {"type": "rect", "x": sh["x"], "y": sh["y"], "w": sh["w"], "h": sh["h"], "rad": 0.0}
+
+
+def poly_rings(sh, tool, stepover):
+    """A closed outline's paths by its side: one offset ring (outside / inside) or the pocket's rings."""
+    side, r = sh.get("side", SIDES[0]), tool / 2
+    pts = [tuple(p) for p in sh["pts"]]
+    if side == SIDES[1]:
+        return textcut.offset_poly(pts, r)
+    if side == SIDES[2]:
+        return textcut.offset_poly(pts, -r)
+    if side == POCKET:
+        step = max(0.05, tool * min(max(stepover, 5.0), 100.0) / 100.0)
+        rings, k = [], r
+        while k < 1000:
+            got = textcut.offset_poly(pts, -k)
+            if not got:
+                break
+            rings += got
+            k += step
+        return rings[::-1]                              # inside out, the wall last
+    return [pts]
 
 
 def offset(sh, tool):
@@ -133,6 +173,8 @@ def points(sh, n=48):
     t = sh["type"]
     if t == "poly":
         return [tuple(p) for p in sh["pts"]]
+    if t == "text":
+        return points(frame(sh), n)
     if t == "circle":
         return [(sh["cx"] + sh["r"] * math.cos(2 * math.pi * k / n), sh["cy"] + sh["r"] * math.sin(2 * math.pi * k / n))
                 for k in range(n + 1)]
@@ -280,8 +322,26 @@ def gcode(shapes, p, title="shapes"):
         depth = abs(sh.get("depth") or 0.0) or abs(p["depth"])
         n = max(1, int(math.ceil(depth / step - 1e-9)))
         levels = [min(depth, step * (j + 1)) for j in range(n)]
-        out.append("(%d: %s, depth %s%s)" % (i + 1, NAMES[sh["type"]], fmt(depth),
-                                            ", pocket" if sh.get("side") == POCKET else ""))
+        what = NAMES[sh["type"]]
+        if sh["type"] == "text":
+            what += " " + re.sub(r"[()]", "", sh.get("text", ""))[:40]
+        out.append("(%d: %s, depth %s%s)" % (i + 1, what, fmt(depth), ", pocket" if sh.get("side") == POCKET else ""))
+        rings = None
+        if sh["type"] == "text":
+            rings = textcut.toolpaths(sh, p["tool"], p.get("stepover", 40.0))
+        elif sh["type"] == "poly" and has_side(sh) and sh.get("side", SIDES[0]) != SIDES[0]:
+            rings = poly_rings(sh, p["tool"], p.get("stepover", 40.0))
+        if rings is not None:                           # closed paths, each its own: hop over between them
+            hop = min(p["safe_z"], 1.0)
+            for z in levels:
+                for ring in rings:
+                    out.append("G0 Z%s" % (f % hop))
+                    out.append("G0 X%s Y%s" % (f % ring[0][0], f % ring[0][1]))
+                    out.append("G1 Z%s F%d" % (f % -z, p["plunge"]))
+                    out.append("G1 X%s Y%s F%d" % (f % ring[1][0], f % ring[1][1], p["feed"]))
+                    out += ["G1 X%s Y%s" % (f % x, f % y) for x, y in ring[2:]]
+            out.append("G0 Z%s" % (f % p["safe_z"]))
+            continue
         if sh.get("side") == POCKET and closed(sh):
             centre, rings = pocket(sh, p["tool"], p.get("stepover", 40.0))
             a = (centre["x0"], centre["y0"])
@@ -360,6 +420,12 @@ def svg_text(shapes, params):
             rad = min(sh.get("rad", 0.0), sh["w"] / 2, sh["h"] / 2)
             out.append('<rect x="%s" y="%s" width="%s" height="%s" rx="%s" ry="%s"%s/>' % (
                 f(sh["x"]), f(sh["y"]), f(sh["w"]), f(sh["h"]), f(rad), f(rad), side))
+        elif t == "text":
+            data = json.dumps({k: v for k, v in sh.items() if k != "type"}, ensure_ascii=False)
+            out.append("<g data-text='%s'>" % data.replace("&", "&amp;").replace("'", "&#39;").replace("<", "&lt;"))
+            for poly in textcut.placed(sh):
+                out.append('<polygon points="%s"/>' % " ".join("%s,%s" % (f(x), f(y)) for x, y in poly))
+            out.append("</g>")
         elif t == "poly":
             pts = sh["pts"][:-1] if sh.get("closed") and len(sh["pts"]) > 2 and sh["pts"][0] == sh["pts"][-1] else sh["pts"]
             out.append('<%s points="%s"%s/>' % ("polygon" if sh.get("closed") else "polyline",
@@ -420,9 +486,18 @@ def load(path):
     flip = (lambda y: y) if ours else (lambda y: height - y)   # a foreign SVG has y going down
     num = lambda el, k, d=0.0: float(re.sub(r"[^\d.eE+-]", "", el.get(k, str(d))) or d)
     shapes = []
+    skip = set()
     for el in root.iter():
+        if el in skip:
+            continue
         tag = el.tag.replace(ns, "")
         side = el.get("data-side", SIDES[0])
+        if tag == "g" and el.get("data-text"):          # a text: its settings; the outlines inside are a view
+            d = json.loads(el.get("data-text"))
+            d["type"] = "text"
+            shapes.append(d)
+            skip.update(el.iter())
+            continue
         if tag == "circle":
             shapes.append({"type": "circle", "cx": num(el, "cx"), "cy": flip(num(el, "cy")), "r": num(el, "r"), "side": side})
         elif tag == "ellipse":
@@ -514,6 +589,8 @@ def shape_dist(sh, p):
 def handles(sh):
     """The points that shape a figure: (name, (x, y)); "move" drags the whole figure."""
     t = sh["type"]
+    if t == "text":
+        return handles(frame(sh))
     if t == "poly":                                     # the middle moves it, the top right corner scales it
         xs, ys = [p[0] for p in sh["pts"]], [p[1] for p in sh["pts"]]
         return [("move", ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2)), ("scale", (max(xs), max(ys)))]
@@ -536,6 +613,11 @@ def handles(sh):
 
 def set_handle(orig, name, p):
     """The figure with one of its points (from handles()) moved to p; orig - as it was when grabbed."""
+    if orig["type"] == "text":                          # its frame changes, the letters follow
+        fr = set_handle(frame(orig), name, p)
+        sh = dict(orig)
+        sh.update({k: v for k, v in fr.items() if k in ("x", "y", "w", "h", "cx", "cy", "r")})
+        return sh
     sh = dict(orig)
     t = sh["type"]
     if name == "move":
@@ -574,13 +656,23 @@ def set_handle(orig, name, p):
 def shape_rows(sh, anchor):
     """The numbers form of a figure: [key, label, value, choices]; X / Y by the anchor (corner / centre)."""
     t = sh["type"]
+    if t == "text":
+        rows = [["depth", "Глибина (0 - загальна)", sh.get("depth", 0.0), None],
+                ["text", "Текст (| - новий рядок)", sh.get("text", ""), "str"],
+                ["font", "Шрифт", sh.get("font", textcut.FONTS[0]), textcut.FONTS],
+                ["fill", "Обробка", sh.get("fill", textcut.FILLS[0]), textcut.FILLS],
+                ["angle", "Кут, °", sh.get("angle", 0.0), None],
+                ["frame", "Рамка", sh.get("frame", textcut.FRAMES[0]), textcut.FRAMES]]
+        fr = frame(sh)
+        return rows + [r for r in shape_rows(fr, anchor) if r[0] not in ("depth", "side", "rad")]   # the frame
     if t == "poly":
         xs, ys = [p[0] for p in sh["pts"]], [p[1] for p in sh["pts"]]
         w, h = max(xs) - min(xs), max(ys) - min(ys)
         x, y = ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2) if anchor == ANCHORS[1] else (min(xs), min(ys))
         return [["depth", "Глибина (0 - загальна)", sh.get("depth", 0.0), None],
                 ["anchor", "Прив'язка X / Y", anchor, ANCHORS], ["X", "X", round(x, 4), None],
-                ["Y", "Y", round(y, 4), None], ["w", "Ширина", round(w, 4), None], ["h", "Висота", round(h, 4), None]]
+                ["Y", "Y", round(y, 4), None], ["w", "Ширина", round(w, 4), None], ["h", "Висота", round(h, 4), None]] + \
+            ([["side", "Обробка", sh.get("side", SIDES[0]), SIDES]] if sh.get("closed") else [])
     if t in ("rect", "circle", "ellipse"):
         if t == "rect":
             w, h = sh["w"], sh["h"]
@@ -617,6 +709,22 @@ def rows_shape(sh, vals):
     """The figure from the form's values (the inverse of shape_rows)."""
     out = dict(sh)
     t = sh["type"]
+    if t == "text":
+        for k in ("text", "font", "fill", "angle", "frame"):
+            if k in vals:
+                out[k] = vals[k]
+        out["depth"] = abs(vals.get("depth", 0.0))
+        fr = frame(sh)
+        if "d" in vals or "rad" in vals or "w" in vals:
+            v = dict(vals)
+            v.setdefault("side", SIDES[0])
+            v.setdefault("rad", 0.0)
+            fr = rows_shape(dict(fr, side=SIDES[0]), v)
+        if fr["type"] == "circle":
+            out.update(cx=fr["cx"], cy=fr["cy"], r=fr["r"])
+        else:
+            out.update(x=fr["x"], y=fr["y"], w=fr["w"], h=fr["h"])
+        return out
     if t == "poly":                                     # moved and scaled to the new box
         xs, ys = [p[0] for p in sh["pts"]], [p[1] for p in sh["pts"]]
         x0, y0, w0, h0 = min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
@@ -625,6 +733,8 @@ def rows_shape(sh, vals):
         kx, ky = (w / w0 if w0 else 1.0), (h / h0 if h0 else 1.0)
         out["pts"] = [[nx + (x - x0) * kx, ny + (y - y0) * ky] for x, y in sh["pts"]]
         out["depth"] = abs(vals.get("depth", 0.0))
+        if "side" in vals:
+            out["side"] = vals["side"]
         return out
     if t in ("rect", "circle", "ellipse"):
         w = abs(vals.get("d", vals.get("w", 0.0)))
@@ -643,6 +753,10 @@ def rows_shape(sh, vals):
     return out
 
 
+def UA_MAP(ch):
+    return textcut.UA.get(ch, ch)
+
+
 class Form:
     """A list of (label, value) to edit: ↑↓ - field, digits - type a number, ←→ / Enter - a choice."""
 
@@ -650,6 +764,7 @@ class Form:
         self.title, self.rows, self.on_done = title, rows, on_done   # rows: [key, label, value, choices or None]
         self.on_change, self.bottom = on_change, bottom             # on_change(form, row index, old value)
         self.sel, self.top, self.typing = 0, 0, None
+        self.ua = False                  # a text field: Tab switches the layout US / UA
 
     def changed(self, i, old):
         if self.on_change and self.rows[i][2] != old:
@@ -657,6 +772,31 @@ class Form:
 
     def key(self, k, ch):
         row = self.rows[self.sel]
+        if row[3] == "str":                              # a text field: typed as it is
+            if self.typing is None:
+                if k in (pygame.K_RETURN, pygame.K_KP_ENTER) or (ch and ch.isprintable() and ch not in "sS"):
+                    self.typing = str(row[2]) if k in (pygame.K_RETURN, pygame.K_KP_ENTER) else ""
+                    if ch and ch.isprintable() and k not in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        self.typing = (UA_MAP(ch) if self.ua else ch)
+                    return None
+            else:
+                if k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_UP, pygame.K_DOWN):
+                    old, row[2], self.typing = row[2], self.typing, None
+                    self.changed(self.sel, old)
+                    if k == pygame.K_UP:
+                        self.sel = (self.sel - 1) % len(self.rows)
+                    elif k == pygame.K_DOWN or self.sel < len(self.rows) - 1:
+                        self.sel = (self.sel + 1) % len(self.rows)
+                    return None
+                if k == pygame.K_ESCAPE:
+                    self.typing = None
+                elif k == pygame.K_TAB:
+                    self.ua = not self.ua
+                elif k == pygame.K_BACKSPACE:
+                    self.typing = self.typing[:-1]
+                elif ch and ch.isprintable():
+                    self.typing += UA_MAP(ch) if self.ua else ch
+                return None
         if self.typing is not None:
             if k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_UP, pygame.K_DOWN, pygame.K_TAB) or ch in ("s", "S"):
                 old = row[2]
@@ -725,9 +865,18 @@ class Form:
             vs = fmt(val)
             if i == self.sel and self.typing is not None:
                 vs = self.typing + "▏"
+            if choices == "str":                         # a text: the end of it shows while typing
+                text(fit(label, ui.f_small, 56), (8, y), ui.FG, ui.f_small)
+                while vs and ui.f_small.size(vs)[0] > 60:
+                    vs = vs[1:] if i == self.sel and self.typing is not None else vs[:-2] + "…"
+                text(vs or "—", (120, y), ui.CYAN, ui.f_small, right=True)
+                continue
             text(fit(label, ui.f_small, 70), (8, y), ui.FG, ui.f_small)
             text(fit(vs, ui.f_small, 46), (120, y), ui.CYAN, ui.f_small, right=True)
-        text("цифри - число, ←→ - вибір, s - готово", (64, y0 + h - 10), ui.DIM, ui.f_small, center=True)
+        row = self.rows[self.sel]
+        hint = (("%s · Tab - EN / UA · Enter" % ("UA" if self.ua else "EN")) if self.typing is not None
+                else "Enter - змінити текст") if row[3] == "str" else "цифри - число, ←→ - вибір, s - готово"
+        text(hint, (64, y0 + h - 10), ui.DIM, ui.f_small, center=True)
 
 
 class Editor:
@@ -821,6 +970,13 @@ class Editor:
     def make(self, kind, pts, c):
         """The shape from its placed points and the cross-hair (the last point, live)."""
         p = pts + [tuple(c)]
+        if kind in ("text", "textc"):                    # a frame for the letters
+            fr = self.make("rect" if kind == "text" else "circle", pts, c)
+            sh = {"type": "text", "text": self.t.prof.get("last_text", "Текст"),
+                  "font": self.t.prof.get("last_font", textcut.FONTS[0]), "fill": textcut.FILLS[0], "angle": 0.0,
+                  "frame": textcut.FRAMES[0] if kind == "text" else textcut.FRAMES[1]}
+            sh.update({k: v for k, v in fr.items() if k in ("x", "y", "w", "h", "cx", "cy", "r")})
+            return sh
         if kind == "circle":
             return {"type": kind, "cx": p[0][0], "cy": p[0][1], "r": math.dist(p[0], p[1]) if len(p) > 1 else 0.0,
                     "side": SIDES[0]}
@@ -845,6 +1001,8 @@ class Editor:
         return {"circle": lambda: sh["r"] > 0, "ellipse": lambda: sh["rx"] > 0 and sh["ry"] > 0,
                 "rect": lambda: sh["w"] > 0 and sh["h"] > 0, "arc": lambda: sh["r"] > 0 and sh["a0"] != sh["a1"],
                 "line": lambda: (sh["x0"], sh["y0"]) != (sh["x1"], sh["y1"]),
+                "text": lambda: (sh.get("r", 0) > 0) if sh.get("frame") == textcut.FRAMES[1] else
+                (sh.get("w", 0) > 0 and sh.get("h", 0) > 0),
                 "poly": lambda: len(sh["pts"]) > 1}[t]()
 
     def hover(self):
@@ -879,7 +1037,7 @@ class Editor:
 
     def shape_form(self, i):
         """The figure's numbers (Space): exact position, sizes; previewed live, applied on s / the last Enter."""
-        base = self.shapes[i]
+        base = dict(self.shapes[i])                     # a copy: Esc leaves the figure as it was
         anchor = self.t.prof.get("anchor", ANCHORS[0])
         if anchor not in ANCHORS:
             anchor = ANCHORS[0]
@@ -890,6 +1048,20 @@ class Editor:
 
         def change(form, idx, old):
             row = form.rows[idx]
+            if row[0] == "frame":                     # rectangle <-> circle: the same middle, the size kept
+                v = vals(form)
+                v["frame"] = old
+                fig = rows_shape(base, v)
+                if row[2] == textcut.FRAMES[1]:
+                    cx, cy = fig["x"] + fig["w"] / 2, fig["y"] + fig["h"] / 2
+                    fig.update(frame=row[2], cx=cx, cy=cy, r=min(fig["w"], fig["h"]) / 2)
+                else:
+                    fig.update(frame=row[2], x=fig["cx"] - fig["r"], y=fig["cy"] - fig["r"], w=2 * fig["r"],
+                               h=2 * fig["r"])
+                sel = form.sel
+                form.rows = shape_rows(fig, self.t.prof.get("anchor", ANCHORS[0]))
+                form.sel = sel
+                base.update({k: fig[k] for k in ("frame", "x", "y", "w", "h", "cx", "cy", "r") if k in fig})
             if row[0] == "anchor":                    # the same figure, X / Y told the other way
                 v = vals(form)
                 v["anchor"] = old
@@ -909,6 +1081,9 @@ class Editor:
                 self.msg = "фреза Ø%s завелика для цього карману" % fmt(self.params["tool"])
             if base["type"] == "rect":
                 self.t.prof["rect_rad"] = self.shapes[i].get("rad", 0.0)
+            if base["type"] == "text":
+                self.t.prof["last_text"] = self.shapes[i].get("text", "")
+                self.t.prof["last_font"] = self.shapes[i].get("font", textcut.FONTS[0])
         self.form = Form("%d: %s" % (i + 1, NAMES[base["type"]]), shape_rows(base, anchor), done, change, bottom=True)
 
     def param_form(self):
@@ -1139,10 +1314,17 @@ class Editor:
             self.pts.append(tuple(self.cur))
             if len(self.pts) == len(STEPS[self.tool]):
                 sh = self.make(self.tool, self.pts[:-1], self.pts[-1])
-                if self.valid(sh):
+                if self.valid(sh) and sh["type"] == "text" and not textcut.AVAILABLE:
+                    self.msg = "немає python3-fonttools / python3-pyclipper (install.sh)"
+                elif self.valid(sh):
                     self.push_undo()
                     self.shapes.append(sh)
                     self.msg = "%s готово (пробіл - числа)" % NAMES[self.tool]
+                    if sh["type"] == "text":                # straight to typing the text
+                        self.tool = None
+                        self.shape_form(len(self.shapes) - 1)
+                        self.form.sel = 1
+                        self.form.typing = ""
                 else:
                     self.msg = "нульовий розмір - не додано"
                 self.pts = []                           # the same tool again
@@ -1277,8 +1459,19 @@ class Editor:
                 sh = self.preview[1]
             col = ui.ACCENT if i == cur_i else ui.CYAN
             pts = [self.px(*p) for p in points(sh)]
+            if sh["type"] == "text":                    # the frame dim, the letters bright
+                if len(pts) > 1:
+                    pygame.draw.lines(screen, col if i == cur_i else (60, 80, 100), False, pts)
+                for poly in textcut.placed(sh):
+                    q = [self.px(*p) for p in poly]
+                    if len(q) > 1:
+                        pygame.draw.lines(screen, col, True, q)
+                continue
             if len(pts) > 1:
                 pygame.draw.lines(screen, col, False, pts, 2 if i == cur_i else 1)
+            if sh["type"] == "poly" and has_side(sh) and sh.get("side", SIDES[0]) != SIDES[0]:
+                for ring in poly_rings(sh, self.params["tool"], self.params.get("stepover", 40.0)):
+                    pygame.draw.lines(screen, (40, 95, 60), False, [self.px(*p) for p in ring])
             if closed(sh) and sh.get("side") == POCKET:   # a pocket: its rings, dim
                 centre, rings = pocket(sh, self.params["tool"], self.params.get("stepover", 40.0))
                 for ring in rings:
@@ -1289,13 +1482,21 @@ class Editor:
                 off = [self.px(*p) for p in points(offset(sh, self.params["tool"]))]
                 for a in off[::2]:
                     pygame.draw.rect(screen, (110, 170, 110), (a[0] - 0.4, a[1] - 0.4, 0.8, 0.8))
-        for sh in self.shapes:                          # a figure's own depth, at its top left
-            if sh.get("depth"):
-                b = bounds([sh])
-                lx, ly = self.px(b[0], b[3])
-                ax0, ay0, aw0, ah0 = self.AREA
-                if ax0 <= lx <= ax0 + aw0 - 8 and ay0 + 4 <= ly <= ay0 + ah0:
-                    text("↓" + fmt(sh["depth"]), (lx, ly - 5), (200, 200, 120), ui.f_small)
+        ax0, ay0, aw0, ah0 = self.AREA
+        for i, sh in enumerate(self.shapes):           # the depth at a figure's top left (own - yellow)
+            own = abs(sh.get("depth") or 0.0)
+            if not own and sh["type"] != "text":
+                continue
+            b = bounds([sh])
+            x0, y1 = self.px(b[0], b[3])
+            x1, y0 = self.px(b[2], b[1])
+            if x1 < ax0 or x0 > ax0 + aw0 or y0 < ay0 or y1 > ay0 + ah0:
+                continue                                # off the canvas
+            label = "↓" + fmt(own or self.params["depth"])
+            lw = ui.f_small.size(label)[0]
+            lx = min(max(x0, ax0 + 1), ax0 + aw0 - lw - 1)
+            ly = y1 - 5 if y1 - 5 >= ay0 else max(y1, ay0) + 1   # above the frame, or just inside it
+            text(label, (lx, ly), (230, 220, 120) if own else (120, 120, 100), ui.f_small)
         if self.tool:                                   # the shape being placed, live
             if self.pts:
                 sh = self.make(self.tool, self.pts, self.cur)
@@ -1349,8 +1550,10 @@ class Editor:
                             "ellipse": lambda: "%s×%s" % (fmt(round(sh["rx"], 3)), fmt(round(sh["ry"], 3))),
                             "rect": lambda: "%s×%s" % (fmt(round(sh["w"], 3)), fmt(round(sh["h"], 3))),
                             "arc": lambda: "R%s" % fmt(round(sh["r"], 3)),
-                            "line": lambda: "L%s" % fmt(round(math.dist((sh["x0"], sh["y0"]), (sh["x1"], sh["y1"])), 3))
-                            }[self.tool]()
+                            "line": lambda: "L%s" % fmt(round(math.dist((sh["x0"], sh["y0"]), (sh["x1"], sh["y1"])), 3)),
+                            "text": lambda: "%s×%s" % (fmt(round(sh["w"], 3)), fmt(round(sh["h"], 3))),
+                            "textc": lambda: "R%s" % fmt(round(sh["r"], 3)),
+                            }.get(self.tool, lambda: "")()
         text(fit(self.msg or info, ui.f_small, 124), (2, 119), ui.ACCENT if self.msg else ui.FG, ui.f_small)
         if self.form:
             self.form.draw(ui)
