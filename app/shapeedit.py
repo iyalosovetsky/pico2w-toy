@@ -21,7 +21,8 @@ SHAPES_DIR = os.path.expanduser("~/gcode/shapes")
 DEFAULT = "shape"           # a new drawing's name until "Зберегти як" (then shape-2, shape-3 ... if taken)
 AUTOSAVE_S = 1.0
 GRID_STEPS = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
-SIDES = ["по лінії", "зовні", "всередині"]
+SIDES = ["по лінії", "зовні", "всередині", "карман"]     # карман (a pocket): all the inside cleared
+POCKET = SIDES[3]
 TOOLS = {"c": "circle", "e": "ellipse", "r": "rect", "a": "arc", "l": "line"}
 NAMES = {"circle": "коло", "ellipse": "еліпс", "rect": "прямокутник", "arc": "дуга", "line": "лінія"}
 # the points each tool asks for, in order
@@ -39,7 +40,8 @@ FIELDS = {"circle": [("cx", "Центр X"), ("cy", "Центр Y"), ("r", "Ра
           "line": [("x0", "Початок X"), ("y0", "Початок Y"), ("x1", "Кінець X"), ("y1", "Кінець Y")]}
 PARAMS = [("safe_z", "Безпечна висота Z", 5.0), ("depth", "Глибина, мм", 1.0), ("step", "Крок по глибині", 0.5),
           ("feed", "Подача XY, мм/хв", 600.0), ("plunge", "Подача Z, мм/хв", 200.0),
-          ("tool", "Діаметр фрези", 3.175), ("spindle", "Оберти S (0 - без M3)", 12000.0),
+          ("tool", "Діаметр фрези", 3.175), ("stepover", "Карман: крок, % фрези", 40.0),
+          ("spindle", "Оберти S (0 - без M3)", 12000.0),
           ("width", "Поле, ширина X", 200.0), ("height", "Поле, висота Y", 200.0)]
 
 
@@ -59,10 +61,13 @@ HELP = [
     "  хрестик на точку (Tab - наступна), Enter - взяти, стрілки - тягнути, Enter - покласти, Esc - повернути як було.",
     "  Центр (або середина) переносить усю фігуру. Esc - вийти з редагування.",
     "Пробіл (або n) - числа: прив'язка X / Y - лівий нижній кут (описаного прямокутника для кола й еліпса) або центр,",
-    "  розміри, радіус кутів, кути дуги, сторона фрези; фігура змінюється наживо, s або Enter на останньому - готово, Esc - ні.",
+    "  розміри, радіус кутів, кути дуги; фігура змінюється наживо, s або Enter на останньому - готово, Esc - ні.",
+    "  Обробка (замкнені фігури): по лінії / зовні / всередині (фреза зсунута на радіус) / карман - вибрати все всередині:",
+    "  кільця від центру назовні з кроком «Карман: крок, % фрези» (p), останнє - по стінці.",
+    "  Глибина - своя для фігури (0 - загальна з p); над фігурою вгорі видно ↓глибину.",
     "Del / Backspace - видалити фігуру, u - скасувати останню зміну.",
     "# Файл",
-    "p - обробка: безпечна Z, глибина, крок по глибині, подачі, фреза, оберти, поле.",
+    "p - обробка: безпечна Z, загальна глибина, крок по глибині, подачі, діаметр фрези (Ø угорі), крок карману, оберти, поле.",
     "Креслення - ~/gcode/shapes/НАЗВА.svg (відкривається будь-де, напр. в Inkscape) і поруч НАЗВА.nc (G-code).",
     "Зберігається саме за секунду після кожної зміни: ● - ще ні, ✓ - збережено. Нове креслення - shape (shape-2 …).",
     "s - зберегти як: нова назва (робоче shape просто перейменовується). o - відкрити: список креслень, «+ нове».",
@@ -86,7 +91,7 @@ def offset(sh, tool):
     side = sh.get("side", SIDES[0])
     if not closed(sh) or side == SIDES[0] or tool <= 0:
         return dict(sh)
-    o = tool / 2 if side == SIDES[1] else -tool / 2
+    o = tool / 2 if side == SIDES[1] else -tool / 2     # inside / a pocket: its last ring
     s = dict(sh)
     if sh["type"] == "circle":
         s["r"] = max(0.01, sh["r"] + o)
@@ -197,20 +202,89 @@ def path_moves(sh, reverse=False):
     return (x, y + rad), m
 
 
+def inset(sh, k):
+    """The closed shape shrunk by k all round, or None when nothing is left."""
+    t = sh["type"]
+    s = dict(sh)
+    if t == "circle":
+        if sh["r"] - k <= 1e-6:
+            return None
+        s["r"] = sh["r"] - k
+    elif t == "ellipse":
+        if min(sh["rx"], sh["ry"]) - k <= 1e-6:
+            return None
+        s["rx"], s["ry"] = sh["rx"] - k, sh["ry"] - k
+    else:
+        if min(sh["w"], sh["h"]) - 2 * k <= 1e-6:
+            return None
+        s.update(x=sh["x"] + k, y=sh["y"] + k, w=sh["w"] - 2 * k, h=sh["h"] - 2 * k, rad=max(0.0, sh.get("rad", 0.0) - k))
+    s["side"] = SIDES[0]
+    return s
+
+
+def pocket(sh, tool, stepover):
+    """A pocket's passes, inside out: [the centre line (a "line" shape) or None, rings...]; the last ring is
+    the wall (half the tool in from the line). The centre line clears what the innermost ring leaves."""
+    r = tool / 2
+    step = max(0.05, tool * min(max(stepover, 5.0), 100.0) / 100.0)
+    rings, k = [], r
+    while True:
+        ring = inset(sh, k)
+        if ring is None:
+            break
+        rings.append(ring)
+        k += step
+    t = sh["type"]
+    # the centre: what the tool reaches when the shape is shrunk by the tool's radius to a line / a point
+    if t == "rect":
+        w, h = sh["w"] - 2 * r, sh["h"] - 2 * r
+        cx, cy = sh["x"] + sh["w"] / 2, sh["y"] + sh["h"] / 2
+    elif t == "ellipse":
+        w, h = 2 * (sh["rx"] - r), 2 * (sh["ry"] - r)
+        cx, cy = sh["cx"], sh["cy"]
+    else:
+        w = h = 2 * (sh["r"] - r)
+        cx, cy = sh["cx"], sh["cy"]
+    half = max(0.0, (max(w, h) - min(w, h)) / 2) if min(w, h) >= 0 else 0.0
+    if w >= h:
+        centre = {"type": "line", "x0": cx - half, "y0": cy, "x1": cx + half, "y1": cy}
+    else:
+        centre = {"type": "line", "x0": cx, "y0": cy - half, "x1": cx, "y1": cy + half}
+    return centre, rings[::-1]
+
+
 def gcode(shapes, p, title="shapes"):
-    """The whole job: each shape cut in passes down to the depth, lifting to the safe height between."""
+    """The whole job: each shape cut in passes down to its depth (its own, else the common one), lifting to
+    the safe height between shapes; a pocket clears its inside ring by ring, from the centre out."""
     f = "%.3f"
-    depth, step = abs(p["depth"]), max(0.01, abs(p["step"]))
-    n = max(1, int(math.ceil(depth / step - 1e-9)))
-    levels = [min(depth, step * (i + 1)) for i in range(n)]
-    out = ["(pico2w-toy shape editor: %s, %d shapes, depth %s in %d passes, tool %s)" %
-           (title, len(shapes), fmt(depth), n, fmt(p["tool"])), "G21 G90 G17", "G0 Z%s" % (f % p["safe_z"])]
+    step = max(0.01, abs(p["step"]))
+    out = ["(pico2w-toy shape editor: %s, %d shapes, depth %s, step %s, tool %s)" %
+           (title, len(shapes), fmt(abs(p["depth"])), fmt(step), fmt(p["tool"])), "G21 G90 G17",
+           "G0 Z%s" % (f % p["safe_z"])]
     if p["spindle"] > 0:
         out.append("M3 S%d" % p["spindle"])
         out.append("G4 P2")
     for i, sh in enumerate(shapes):
+        depth = abs(sh.get("depth") or 0.0) or abs(p["depth"])
+        n = max(1, int(math.ceil(depth / step - 1e-9)))
+        levels = [min(depth, step * (j + 1)) for j in range(n)]
+        out.append("(%d: %s, depth %s%s)" % (i + 1, NAMES[sh["type"]], fmt(depth),
+                                            ", pocket" if sh.get("side") == POCKET else ""))
+        if sh.get("side") == POCKET and closed(sh):
+            centre, rings = pocket(sh, p["tool"], p.get("stepover", 40.0))
+            a = (centre["x0"], centre["y0"])
+            out.append("G0 X%s Y%s" % (f % a[0], f % a[1]))
+            for z in levels:
+                out.append("G1 X%s Y%s F%d" % (f % a[0], f % a[1], p["feed"]))   # back over the cleared floor
+                out.append("G1 Z%s F%d" % (f % -z, p["plunge"]))
+                out.append("G1 X%s Y%s F%d" % (f % centre["x1"], f % centre["y1"], p["feed"]))
+                for ring in rings:
+                    start, moves = path_moves(ring)
+                    out.append("G1 X%s Y%s" % (f % start[0], f % start[1]))
+                    out += moves
+            out.append("G0 Z%s" % (f % p["safe_z"]))
+            continue
         geo = offset(sh, p["tool"])
-        out.append("(%d: %s)" % (i + 1, NAMES[sh["type"]]))
         start, _ = path_moves(geo)
         out.append("G0 X%s Y%s" % (f % start[0], f % start[1]))
         for k, z in enumerate(levels):
@@ -263,6 +337,8 @@ def svg_text(shapes, params):
     for sh in shapes:
         t = sh["type"]
         side = ' data-side="%s"' % sh.get("side", SIDES[0]) if closed(sh) else ""
+        if sh.get("depth"):
+            side += ' data-depth="%s"' % f(sh["depth"])
         if t == "circle":
             out.append('<circle cx="%s" cy="%s" r="%s"%s/>' % (f(sh["cx"]), f(sh["cy"]), f(sh["r"]), side))
         elif t == "ellipse":
@@ -273,16 +349,17 @@ def svg_text(shapes, params):
             out.append('<rect x="%s" y="%s" width="%s" height="%s" rx="%s" ry="%s"%s/>' % (
                 f(sh["x"]), f(sh["y"]), f(sh["w"]), f(sh["h"]), f(rad), f(rad), side))
         elif t == "line":
-            out.append('<line x1="%s" y1="%s" x2="%s" y2="%s"/>' % (f(sh["x0"]), f(sh["y0"]), f(sh["x1"]), f(sh["y1"])))
+            out.append('<line x1="%s" y1="%s" x2="%s" y2="%s"%s/>' % (f(sh["x0"]), f(sh["y0"]), f(sh["x1"]), f(sh["y1"]),
+                                                                    side))
         else:
             a0, sw = arc_sweep(sh)
             cx, cy, r = sh["cx"], sh["cy"], sh["r"]
             p0 = (cx + r * math.cos(a0), cy + r * math.sin(a0))
             p1 = (cx + r * math.cos(a0 + sw), cy + r * math.sin(a0 + sw))
             data = json.dumps({k: sh[k] for k in ("cx", "cy", "r", "a0", "a1", "ccw")}, ensure_ascii=False)
-            out.append('<path d="M %s %s A %s %s 0 %d %d %s %s" data-arc=\'%s\'/>' % (
+            out.append('<path d="M %s %s A %s %s 0 %d %d %s %s" data-arc=\'%s\'%s/>' % (
                 f(p0[0]), f(p0[1]), f(r), f(r), 1 if abs(sw) > math.pi else 0, 1 if sw > 0 else 0,
-                f(p1[0]), f(p1[1]), data))
+                f(p1[0]), f(p1[1]), data, side))
     out += ["</g>", "</svg>"]
     return "\n".join(out) + "\n"
 
@@ -344,6 +421,10 @@ def load(path):
             d = json.loads(el.get("data-arc"))
             d["type"] = "arc"
             shapes.append(d)
+        else:
+            continue
+        if el.get("data-depth"):
+            shapes[-1]["depth"] = float(el.get("data-depth"))
     return shapes, params
 
 
@@ -454,14 +535,17 @@ def shape_rows(sh, anchor):
             rows += [["w", "Ширина", round(w, 4), None], ["h", "Висота", round(h, 4), None]]
         if t == "rect":
             rows.append(["rad", "Радіус кутів", sh.get("rad", 0.0), None])
-        rows.append(["side", "Сторона фрези", sh.get("side", SIDES[0]), SIDES])
+        rows.append(["side", "Обробка", sh.get("side", SIDES[0]), SIDES])
+        rows.append(["depth", "Глибина (0 - загальна)", sh.get("depth", 0.0), None])
         return rows
     if t == "arc":
         return [["cx", "Центр X", sh["cx"], None], ["cy", "Центр Y", sh["cy"], None], ["r", "Радіус", sh["r"], None],
                 ["a0", "Початок, °", sh["a0"], None], ["a1", "Кінець, °", sh["a1"], None],
-                ["ccw", "Напрям", sh.get("ccw", "проти год."), ["проти год.", "за год."]]]
+                ["ccw", "Напрям", sh.get("ccw", "проти год."), ["проти год.", "за год."]],
+                ["depth", "Глибина (0 - загальна)", sh.get("depth", 0.0), None]]
     return [["x0", "Початок X", sh["x0"], None], ["y0", "Початок Y", sh["y0"], None],
-            ["x1", "Кінець X", sh["x1"], None], ["y1", "Кінець Y", sh["y1"], None]]
+            ["x1", "Кінець X", sh["x1"], None], ["y1", "Кінець Y", sh["y1"], None],
+            ["depth", "Глибина (0 - загальна)", sh.get("depth", 0.0), None]]
 
 
 def rows_shape(sh, vals):
@@ -479,6 +563,7 @@ def rows_shape(sh, vals):
         else:
             out.update(cx=cx, cy=cy, rx=w / 2, ry=h / 2)
         out["side"] = vals["side"]
+        out["depth"] = abs(vals.get("depth", 0.0))
         return out
     out.update({k: v for k, v in vals.items()})
     return out
@@ -735,6 +820,9 @@ class Editor:
         def done(v):
             self.push_undo()
             self.shapes[i] = rows_shape(base, v)
+            sh = self.shapes[i]
+            if sh.get("side") == POCKET and not pocket(sh, self.params["tool"], self.params.get("stepover", 40.0))[1]:
+                self.msg = "фреза Ø%s завелика для цього карману" % fmt(self.params["tool"])
             if base["type"] == "rect":
                 self.t.prof["rect_rad"] = self.shapes[i].get("rad", 0.0)
         self.form = Form("%d: %s" % (i + 1, NAMES[base["type"]]), shape_rows(base, anchor), done, change, bottom=True)
@@ -1070,7 +1158,13 @@ class Editor:
             pts = [self.px(*p) for p in points(sh)]
             if len(pts) > 1:
                 pygame.draw.lines(screen, col, False, pts, 2 if i == cur_i else 1)
-            if closed(sh) and sh.get("side", SIDES[0]) != SIDES[0]:
+            if closed(sh) and sh.get("side") == POCKET:   # a pocket: its rings, dim
+                centre, rings = pocket(sh, self.params["tool"], self.params.get("stepover", 40.0))
+                for ring in rings:
+                    pygame.draw.lines(screen, (40, 95, 60), False, [self.px(*p) for p in points(ring, 36)])
+                pygame.draw.line(screen, (40, 95, 60), self.px(centre["x0"], centre["y0"]),
+                                 self.px(centre["x1"], centre["y1"]))
+            elif closed(sh) and sh.get("side", SIDES[0]) != SIDES[0]:
                 off = [self.px(*p) for p in points(offset(sh, self.params["tool"]))]
                 for a in off[::2]:
                     pygame.draw.rect(screen, (110, 170, 110), (a[0] - 0.4, a[1] - 0.4, 0.8, 0.8))
@@ -1108,13 +1202,17 @@ class Editor:
                  "%s: Enter на точці - взяти, Tab, пробіл, Esc") % NAMES[sh["type"]]
             text(fit(s, ui.f_small, 124), (2, 1), ui.ACCENT, ui.f_small)
         elif hov is not None:
-            text(fit("%s: Enter - точки, пробіл - числа, Del" % NAMES[self.shapes[hov]["type"]], ui.f_small, 124),
+            sh = self.shapes[hov]
+            d = abs(sh.get("depth") or 0.0) or self.params["depth"]
+            kind = NAMES[sh["type"]] + (" (карман)" if sh.get("side") == POCKET else "")
+            text(fit("%s ↓%s: Enter - точки, пробіл - числа, Del" % (kind, fmt(d)), ui.f_small, 124),
                  (2, 1), ui.ACCENT, ui.f_small)
         else:
             mark = "✓" if self.sig() == self.saved else "●"     # saved / to be saved in a second
-            text(fit("%s %s · %d фіг." % (self.name, mark, len(self.shapes)), ui.f_bold, 90), (2, 0), ui.ACCENT,
+            text(fit("%s %s · %d" % (self.name, mark, len(self.shapes)), ui.f_bold, 70), (2, 0), ui.ACCENT,
                  ui.f_bold)
-            text("F1 довідка", (126, 1), ui.DIM, ui.f_small, right=True)
+            text("Ø%s ↓%s F1" % (fmt(self.params["tool"]), fmt(self.params["depth"])), (126, 1), ui.DIM,
+                 ui.f_small, right=True)
         # bottom: the cross-hair, the grid, a live size
         info = "X%s Y%s  крок %s" % (fmt(round(self.cur[0], 3)), fmt(round(self.cur[1], 3)), fmt(self.grid()))
         if self.tool and self.pts:
