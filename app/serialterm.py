@@ -1298,7 +1298,7 @@ def draw_pendant(t, popup):
     if lcd.DEVICE == "hat144":
         hints = ["джойст. X/Y  KEY1/2 Z  натиск - крок", "KEY3 - СТОП (ще раз - вихід)"]
     else:
-        hints = hint_page([["←→ X  ↑↓ Y  PgUp/Dn Z  +- крок", "ПРОБІЛ - СТОП   F1 меню   Esc - вихід"],
+        hints = hint_page([["←→ X  ↑↓ Y  / \\ Z  +- крок", "ПРОБІЛ - СТОП  F1 довідка  Esc - вихід"],
                            ["x y z - нуль осі   0 - усіх", "s шпиндель (двічі)   , . оберти"],
                            ["F2 / F3 подача ±10%   F4 - 100%", "F5 - швидкі 100 / 50 / 25%   e - помилка"]])
     for i, h in enumerate(hints):
@@ -1953,7 +1953,7 @@ def draw_scanner(t, popup):
     if lcd.DEVICE == "hat144":
         pages = [["джойст. ↑↓ Y  ←→ стіл  KEY1/2 серво", "натиск - крок Y   KEY3 - СТОП"]]
     else:
-        pages = [["↑↓ Y  ←→ стіл  PgUp/Dn серво", "ПРОБІЛ - СТОП   F1 меню   Esc - вихід"],
+        pages = [["↑↓ Y  ←→ стіл  / \\ серво", "ПРОБІЛ - СТОП  F1 довідка  Esc - вихід"],
                  ["+- крок Y  t крок столу  v крок серво", "r / l - крутити  o - стоп столу"],
                  ["y - нуль Y   w - майстер сканування", "F2/F3 подача  F4 100%  Enter - далі (M0)"]]
     for i, h in enumerate(hint_page(pages)):
@@ -1973,6 +1973,36 @@ HELP = ["Введення + Enter - надіслати рядок", "↑/↓ - �
         "telnet <IP> [порт] + Enter - профіль через мережу",
         "Esc - очистити рядок, закрити меню", "quit + Enter або F1 → Вихід - вийти",
         "HAT: KEY3 - меню, джойстик - вибір"]
+
+
+PENDANT_HELP = [
+    "# Переміщення",
+    "←/→ - X, ↑/↓ - Y, / і \\ (або PgUp / PgDn) - Z. Натиск - крок, утримання - безперервно, відпустили - стоп.",
+    "+ / - - крок 0,01 / 0,1 / 1 / 10 / 100 мм (подача під крок).",
+    "# Нуль і шпиндель",
+    "x / y / z - нуль осі (G10 L20 P0), 0 - усіх.",
+    "s - шпиндель: увімкнути - двічі за 2 с, вимкнути - одразу; , / . - оберти.",
+    "# Корекції",
+    "F2 / F3 - подача -/+10 %, F4 - подача 100 %, F5 - швидкі 100 / 50 / 25 %.",
+    "# Інше",
+    "ПРОБІЛ або Ctrl+X - АВАРІЙНА ЗУПИНКА (програмна; далі $X).",
+    "e - пояснення помилки / аварії. Esc - назад у термінал (там F1 - меню).",
+    "HAT: джойстик - X / Y, KEY1 / KEY2 - Z, натиск - крок, KEY3 - стоп (двічі - вихід).",
+]
+SCANNER_HELP = [
+    "# Рух",
+    "↑/↓ - Y (крок + / -, утримання - безперервно).",
+    "←/→ - стіл на крок (M104); t / T - крок 1 5 10 15 30 45 90°.",
+    "r / l - крутити стіл за / проти год. (M102), o - зупинити (M103).",
+    "/ і \\ (або PgUp / PgDn) - серво на крок (M101, у межах $451 / $452); v / V - крок 1 / 5 / 15°.",
+    "# Інше",
+    "y - нуль Y, 0 - нуль усіх осей.",
+    "w - майстер сканування. Enter - продовжити після M0.",
+    "F2 / F3 - подача -/+10 %, F4 - 100 %, F5 - швидкі 100 / 50 / 25 %.",
+    "ПРОБІЛ або Ctrl+X - АВАРІЙНА ЗУПИНКА (зупиняє і стіл).",
+    "e - пояснення помилки. Esc - назад у термінал (там F1 - меню).",
+    "HAT: джойстик ↑/↓ - Y, ←/→ - стіл, KEY1 / KEY2 - серво, натиск - крок Y, KEY3 - стоп (двічі - вихід).",
+]
 
 
 def file_list(path):
@@ -2370,8 +2400,10 @@ def main():
         return Popup("Меню", items, pick)
 
     hat_stop = {"t": 0.0}
+    # Z: PgUp / PgDn, or / and \ (the PicoCalc keyboard has no PgUp / PgDn)
     JOG_KEYS = {pygame.K_LEFT: ("X", -1), pygame.K_RIGHT: ("X", 1), pygame.K_UP: ("Y", 1),
-                pygame.K_DOWN: ("Y", -1), pygame.K_PAGEUP: ("Z", 1), pygame.K_PAGEDOWN: ("Z", -1)}
+                pygame.K_DOWN: ("Y", -1), pygame.K_PAGEUP: ("Z", 1), pygame.K_PAGEDOWN: ("Z", -1),
+                pygame.K_SLASH: ("Z", 1), pygame.K_BACKSLASH: ("Z", -1)}
 
     def pendant_key(k, ch, hat):
         """The pendant's keys; returns "menu" to open the main menu."""
@@ -2404,7 +2436,7 @@ def main():
                 t.jog_stop(t.jog["key"])
             t.pendant = False
         elif k == pygame.K_F1:
-            return "menu"
+            return "help"
         elif k in JOG_KEYS:
             if not t.jog and JOG_KEYS[k][0] in t.axes:
                 axis, sign = JOG_KEYS[k]
@@ -2460,15 +2492,15 @@ def main():
                 t.jog_stop(t.jog["key"])
             t.pendant = False
         elif k == pygame.K_F1:
-            return "menu"
+            return "help"
         elif k in (pygame.K_UP, pygame.K_DOWN):
             ax = "Y" if "Y" in t.axes else t.axes[0]
             if not t.jog:
                 t.jog_start(k, ax, 1 if k == pygame.K_UP else -1)
         elif k in (pygame.K_LEFT, pygame.K_RIGHT):
             t.table_turn(TABLE_STEPS[t.tbl_i] * (1 if k == pygame.K_RIGHT else -1))
-        elif k in (pygame.K_PAGEUP, pygame.K_PAGEDOWN):
-            t.servo_move(SERVO_STEPS[t.srv_i] * (1 if k == pygame.K_PAGEUP else -1))
+        elif k in (pygame.K_PAGEUP, pygame.K_PAGEDOWN, pygame.K_SLASH, pygame.K_BACKSLASH):
+            t.servo_move(SERVO_STEPS[t.srv_i] * (1 if k in (pygame.K_PAGEUP, pygame.K_SLASH) else -1))
         elif k in (pygame.K_RETURN, pygame.K_KP_ENTER):
             if t.status and t.status[0].startswith("Hold"):
                 t.send("~", log=False, realtime=True)   # M0 / feed hold: go on
@@ -2550,8 +2582,9 @@ def main():
             ch = getattr(ev, "unicode", "") if not hat else ""
             if t.pendant and not popup:
                 r = pendant_key(k, ch, hat)
-                if r == "menu":
-                    popup = main_menu()
+                if r == "help":
+                    popup = TextPopup("Пульт сканера" if t.scanner() else "Пульт",
+                                      SCANNER_HELP if t.scanner() else PENDANT_HELP)
                 elif r == "explain":
                     popup = TextPopup("Помилки й аварії", explain_lines(t))
                 elif r == "scan":
