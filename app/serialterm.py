@@ -293,6 +293,8 @@ class Term:
         self.status_in_full = self.cfg.get("status_in_full", True)
         self.status = None       # (state, rest)
         self.wco = None          # the work coordinate offset (from reports that carry WCO)
+        self.status_n = 0        # status reports received (the pendant's indicator blinks on each)
+        self.status_t = 0.0
         self.pendant = False
         self.step_i = 2
         self.jog = None          # {"key", "axis", "sign", "t0", "cont", "next"}
@@ -396,6 +398,8 @@ class Term:
             if is_status:
                 body = line.strip()[1:-1].split("|")
                 self.status = (body[0].split(":")[0], body[1:])
+                self.status_n += 1
+                self.status_t = time.monotonic()
                 for part in body[1:]:
                     if part.startswith("WCO:"):
                         try:
@@ -694,6 +698,13 @@ def draw_pendant(t, popup):
     screen.fill(BG)
     state = t.status[0] if t.status else "?"
     text("ПУЛЬТ", (2, 0), ACCENT, f_bold)
+    # the "?" indicator: blinks on every status report; red when none came for a second
+    x = 4 + f_bold.size("ПУЛЬТ")[0] + 4
+    stale = time.monotonic() - t.status_t > 1.0
+    color = RED if stale else ((120, 255, 140) if t.status_n % 2 else (30, 110, 50))
+    pygame.draw.circle(screen, color, (x, 4.5), 2.5)
+    if stale:
+        text("немає ?", (x + 5, 0), RED, f_small)
     text(state, (126, 0), STATE_COLORS.get(state.split(":")[0], FG) if t.status else DIM, f_bold, right=True)
     wpos, mpos = t.positions()
     text("робочі", (60, 10), DIM, f_small, right=True)
@@ -1131,7 +1142,8 @@ def main():
         key = (len(t.cmd), t.cmd[-1] if t.cmd else None, len(t.full), t.full[-1] if t.full else None, t.input,
                t.status, t.scroll, t.show_full, t.poll, popup and (popup.sel, id(popup)), t.port is not None,
                t.job and (t.job.pos, t.job.mode, t.job.paused), t.note, int(time.monotonic() * 2),
-               t.pendant, t.step_i, t.spindle, t.jog and t.jog["axis"], str(t.wco))
+               t.pendant, t.step_i, t.spindle, t.jog and t.jog["axis"], str(t.wco),
+               t.pendant and (t.status_n, time.monotonic() - t.status_t > 1.0))
         if key != shown_key:
             (draw_pendant if t.pendant else draw)(t, popup)
             shown_key = key
