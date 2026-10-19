@@ -10,8 +10,8 @@ runs G-code with progress, and has a shape and text editor that turns a drawing 
 |:---:|:---:|
 | ![editor](gif-picocalc/serial-editor.gif) | ![toolpath](gif-picocalc/serial-toolpath.gif) |
 
-*A circle, a pocketed rectangle and the text "PicoCalc Привіт" → G-code → the view, a run, its progress.
-Recorded from the PicoCalc's screen.*
+*A circle with text along its arc, a pocketed rectangle and the text "PicoCalc Привіт" → G-code → the view, a
+run from a line (the pocket), its progress. Recorded from the PicoCalc's screen.*
 
 ## Contents
 

@@ -11,8 +11,8 @@ G-code.
 |:---:|:---:|
 | ![editor](gif-picocalc/serial-editor.gif) | ![toolpath](gif-picocalc/serial-toolpath.gif) |
 
-*Коло, прямокутник-карман і текст «PicoCalc Привіт» → G-code → перегляд, запуск, хід виконання. Записано з
-екрана PicoCalc.*
+*Коло з написом по дузі, прямокутник-карман і текст «PicoCalc Привіт» → G-code → перегляд, запуск з рядка
+(з кармана), хід виконання. Записано з екрана PicoCalc.*
 
 ## Зміст
 

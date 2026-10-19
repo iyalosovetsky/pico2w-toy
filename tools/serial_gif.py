@@ -41,7 +41,10 @@ def mark(name): S.append((0, "mark:" + name))
 wait(1.0); mark("ed")
 key(K.K_F1, t=0.4); key(K.K_DOWN, t=0.5); key(K.K_RETURN, t=0.4); wait(0.8)
 key(0, "c"); taps(K.K_RIGHT, 12); taps(K.K_UP, 15); key(K.K_RETURN); taps(K.K_RIGHT, 6, 0.09); key(K.K_RETURN); key(K.K_ESCAPE, t=0.5)
-key(0, "r"); taps(K.K_RIGHT, 13); taps(K.K_DOWN, 7); key(K.K_RETURN); taps(K.K_RIGHT, 20, 0.05); taps(K.K_UP, 15, 0.05)
+# text along an arc round the circle
+key(0, "T"); taps(K.K_LEFT, 6); key(K.K_RETURN); taps(K.K_RIGHT, 8, 0.09); key(K.K_RETURN, t=0.4); wait(0.4)
+typ("PICO2W TOY"); wait(0.5); key(K.K_RETURN); wait(0.5); key(0, "s"); wait(1.2)
+key(0, "r"); taps(K.K_RIGHT, 11); taps(K.K_DOWN, 7); key(K.K_RETURN); taps(K.K_RIGHT, 20, 0.05); taps(K.K_UP, 15, 0.05)
 key(K.K_RETURN); key(K.K_ESCAPE, t=0.4)
 key(0, " ", t=0.5); taps(K.K_DOWN, 6, 0.15); typ("5"); key(K.K_DOWN, t=0.3)
 taps(K.K_RIGHT, 3, 0.4); wait(0.6); key(0, "s", t=0.3); wait(1.2)
@@ -52,8 +55,8 @@ key(K.K_ESCAPE); key(K.K_ESCAPE, t=0.4); wait(1.5); mark("ed_end")
 # --- the toolpath view, a run
 mark("tp")
 key(K.K_F4, t=0.4); taps(K.K_DOWN, 6, 0.15); key(K.K_RETURN, t=0.3); wait(1.2)
-taps(K.K_LEFT, 10, 0.08); taps(K.K_DOWN, 4, 0.08); wait(0.8); key(K.K_TAB, "\t", t=0.4); taps(K.K_DOWN, 6, 0.25); wait(1.0)
-key(0, "r", t=0.5); wait(1.2); key(K.K_DOWN, t=0.4); key(K.K_RETURN, t=0.4); wait(9.0)
+taps(K.K_RIGHT, 24, 0.07); wait(0.8); key(K.K_TAB, "\t", t=0.4); taps(K.K_DOWN, 3, 0.25); wait(1.0)
+key(K.K_RETURN, t=0.5); wait(2.0); key(K.K_DOWN, t=0.4); key(K.K_RETURN, t=0.4); wait(9.0)   # run from this line
 key(0, " ", t=0.2); wait(1.5); key(0, " ", t=0.2); wait(2.0); mark("tp_end")
 orig = pygame.event.get
 t0 = [time.monotonic()]; idx = [0]
