@@ -38,7 +38,7 @@ joystick and buttons or with a small USB keyboard.
 | ![chess](docs/gif-picocalc/chess.gif) | ![preferans](docs/gif-picocalc/preferans.gif) | ![doom](docs/gif-picocalc/doom.gif) | ![aichat](docs/gif-picocalc/aichat.gif) |
 | **Books** | **PDF** | **GENERATOR** | **Voltmeter** |
 | ![reader](docs/gif-picocalc/reader.gif) | ![pdf](docs/gif-picocalc/pdf.gif) | ![generator](docs/gif-picocalc/generator.gif) | ![voltmeter](docs/gif-picocalc/voltmeter.gif) |
-| **Oscilloscope** | **Logic analyzer** | **Calculator** | **SERIAL** | A terminal for serial devices, made for grblHAL: ttyACM / ttyUSB / a choice, two panes (commands with 1-2 answer lines, and the full output - hideable), the grbl status line, real-time commands, explained error / alarm codes, G-code from ~/gcode - all at once or step by step, pause / stop; a pendant mode: work and machine coordinates, jogging by step or held, zeroing axes, spindle, a software emergency stop; hands the port to minicom |
+| **Oscilloscope** | **Logic analyzer** | **Calculator** | **SERIAL** | A terminal for serial devices, made for grblHAL: ttyACM / ttyUSB / a choice, two panes (commands with 1-2 answer lines, and the full output - hideable), the grbl status line, real-time commands, explained error / alarm codes, G-code from ~/gcode - all at once or step by step, pause / stop; a pendant mode: work and machine coordinates, jogging by step or held, zeroing axes, spindle, a software emergency stop, feed / rapid / spindle overrides, the active inputs (limits, probe, door); profiles "3D scanner" (USB: a pendant for Y + the rotary table M102-M104 + the ST3215 servo M101, a scan wizard that writes G-code) and "CNC" (grblHAL telnet); the toolpath (XY / XZ, the done part green), the file's bounds and whether they fit the travel, an outline, progress with the time left; the $-settings with the firmware's names and descriptions, save / restore; hands the port to minicom |
 | **RADIO** | Internet radio (PicoCalc, speaker): stations from radio-browser.info - favourites, popular Ukrainian ones, genres, search; the song title from the stream (ICY), ffmpeg decodes MP3 / AAC / OGG / HLS, reconnects, volume |
 | **SYNTH** | Synthesizer (PicoCalc, speaker): piano, electric piano, organ, violin, strings, trumpet, flute, clarinet, xylophone, marimba, bells, guitar, bass, synth, drums - sounds synthesized with numpy; polyphonic, tracker-style keys (z..m, q..u), a rhythm machine (rock, disco, hip-hop, funk, bossa nova, reggae, waltz, march) |
 | **SDR** |
@@ -56,6 +56,10 @@ The same apps on a PicoCalc with a Zero 2 W running Raspberry Pi OS **Trixie** L
   digits. On-screen hints say "Enter / 2 / Esc" instead of "PRESS / KEY2 / KEY3".
   **CapsLock switches the layout US ↔ UA** in the console and the AI chat (Caps LED = UA,
   Shift+CapsLock is the real Caps Lock).
+  The driver's mouse mode (Right Shift - the arrows move a pointer and "die" for programs) is turned
+  off by `install.sh`: the patch [`picocalc_kbd-nomouse.patch`](config/picocalc/picocalc_kbd-nomouse.patch)
+  adds a `mouse` parameter (0 by default; `echo 1 | sudo tee /sys/module/picocalc_kbd/parameters/mouse`
+  brings it back), and Right Shift becomes an ordinary Shift.
   **Right Shift** toggles the PicoCalc driver's mouse mode: arrows then move a pointer and don't reach
   the games (the games and Doom release held arrows so nothing gets stuck). If the arrows stop
   working, press right Shift again. Run in Doom with left Shift.
@@ -162,7 +166,8 @@ How the pieces fit together:
 | `app/reader.py`, `app/books.py`, `app/pdfdoc.py` | The reader: UI, EPUB / FB2 / TXT / ZIP parsing (FB2 and TXT in any encoding), PDF pages via `pdftoppm` |
 | `app/prefgame/` | [Python Pref](https://sourceforge.net/projects/python-pref/) 2.34 engine and AI, ported to Python 3 (GPL-3.0) |
 | `app/siggen.py`, `app/uartproto.py` | GENERATOR: generator, voltmeter, oscilloscope, logic analyzer, decoder, UART tester (protocols and checksums - `uartproto.py`), display tester; the board's firmware - `tools/siggen/` |
-| `app/serialterm.py` | SERIAL: the serial port (termios), grblHAL answers and status reports, G-code streaming "a line - ok" |
+| `app/serialterm.py` | SERIAL: the serial port (termios) or grblHAL telnet, profiles, answers and status reports, G-code streaming "a line - ok", the CNC and scanner pendants, the $-settings, the scan wizard |
+| `app/gcodeinfo.py` | SERIAL: G-code analysis - toolpath segments (G2 / G3 arcs as chords), bounds, length, an estimated time, does it fit the travel ($130-$132) |
 | `app/radio.py` | RADIO: the radio-browser.info API, reading the stream with ICY metadata, ffmpeg -> ALSA, volume through `amixer` |
 | `app/synth.py` | SYNTH: instrument and drum synthesis (additive, FM, Karplus-Strong, noise), pygame mixer, the rhythm machine on its own thread |
 | `app/sdr.py` | SDR: `rtl_tcp` in the background, numpy DSP (filters, WFM / NFM / AM / SSB demodulators), spectrum and waterfall, sound through `aplay` |
