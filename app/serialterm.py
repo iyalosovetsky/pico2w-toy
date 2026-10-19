@@ -319,6 +319,7 @@ class Term:
         self.alert = None        # the one shown on the bar (or None)
         self.codes = {"error": {}, "alarm": {}}   # the device's own texts ($EE / $EA)
         self.codes_asked = False
+        self.swallow_ok = 0      # "ok"s of our own empty lines (clearing grblHAL's error lock)
         self.status_n = 0        # status reports received (the pendant's indicator blinks on each)
         self.status_t = 0.0
         self.pendant = False
@@ -404,6 +405,8 @@ class Term:
             self.flash("порт не під'єднано (F3)")
             return False
         self.port.write(line if realtime else line + self.eol)
+        if line == "\x18":
+            self.swallow_ok = 0                   # a soft reset: no answer to our empty line will come
         shown = {"\x18": "Ctrl-X (скидання)", "\x85": "jog cancel"}.get(line, line)
         if len(shown) == 1 and ord(shown) < 32:
             shown = "Ctrl-" + chr(ord(shown) + 64)
@@ -464,6 +467,15 @@ class Term:
         if m:                                     # $EE / $EA lines
             self.codes["error" if m.group(1) == "ERROR" else "alarm"][int(m.group(2))] = (m.group(4) or m.group(3)).strip()
             return
+        if line == "ok" and self.swallow_ok:           # the answer to our lock-clearing empty line
+            self.swallow_ok -= 1
+            return
+        if line.startswith("error:") and self.port:
+            # grblHAL (COMPATIBILITY_LEVEL 0) refuses every following G-code line with the same error
+            # until an empty line, a $-command or a soft reset: send the empty line ourselves
+            self.port.write(self.eol)
+            self.swallow_ok += 1
+            self.full.append(("tx", "> (порожній рядок - зняти блокування grblHAL після помилки)"))
         if line.startswith(("error:", "ALARM:")):
             ctx = ""
             if self.job and self.job.waiting and self.job.pos:
@@ -633,6 +645,7 @@ class Term:
 
     def estop(self):
         """Software emergency stop: jog cancel + grbl's soft reset - motion, spindle and coolant stop."""
+        self.swallow_ok = 0
         if self.port:
             self.port.write(b"\x85\x18")
             self.full.append(("tx", "> АВАРІЙНА ЗУПИНКА (jog cancel + Ctrl-X)"))
