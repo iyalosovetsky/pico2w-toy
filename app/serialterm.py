@@ -1346,8 +1346,9 @@ def draw_pendant(t, popup):
 class Popup:
     """A list to choose from: UP / DOWN, Enter, Esc."""
 
-    def __init__(self, title, items, on_pick, sel=0):
+    def __init__(self, title, items, on_pick, sel=0, under=None):
         self.title, self.items, self.on_pick, self.sel, self.top = title, items, on_pick, sel, 0
+        self.under = under               # a window drawn beneath (the toolpath view under its "run?" question)
 
     def key(self, k, hat=False, ch=""):
         if hat and k == pygame.K_3:          # HAT KEY3: close
@@ -1367,6 +1368,8 @@ class Popup:
         return None
 
     def draw(self):
+        if self.under:
+            self.under.draw()
         lh = f_small.get_linesize()
         n = min(len(self.items), 10)
         h = 12 + n * lh + 3
@@ -2514,7 +2517,7 @@ def main():
                 popup = back
                 return None
             return None
-        return Popup(title, items, pick)
+        return Popup(title, items, pick, under=back)
 
     def confirm_outline():
         info = t.job.info
