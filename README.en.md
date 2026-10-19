@@ -59,9 +59,8 @@ The same apps on a PicoCalc with a Zero 2 W running Raspberry Pi OS **Trixie** L
   off by `install.sh`: the patch [`picocalc_kbd-nomouse.patch`](config/picocalc/picocalc_kbd-nomouse.patch)
   adds a `mouse` parameter (0 by default; `echo 1 | sudo tee /sys/module/picocalc_kbd/parameters/mouse`
   brings it back), and Right Shift becomes an ordinary Shift.
-  **Right Shift** toggles the PicoCalc driver's mouse mode: arrows then move a pointer and don't reach
-  the games (the games and Doom release held arrows so nothing gets stuck). If the arrows stop
-  working, press right Shift again. Run in Doom with left Shift.
+  Without the patch (the old driver) Right Shift turns the mouse mode on and the arrows stop reaching
+  programs - press it again then. Run in Doom with left Shift.
 - **Sound** - PWM on GPIO 12/13 (`dtoverlay=audremap,pins_12_13`) to the PicoCalc speakers: effects
   in Pong, Tetris, poker, chess, Preferans and the menu; the **SOUND** menu item turns them on/off,
   volume is `LCD_VOLUME` in `/etc/default/lcd-toy`. Doom is built with sound via SDL2_mixer.
