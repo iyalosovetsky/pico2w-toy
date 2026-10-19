@@ -17,6 +17,7 @@ signals (Pn:), the $-settings with the firmware's own names and descriptions.
 """
 import glob
 import json
+import math
 import os
 import re
 import select
@@ -1424,16 +1425,27 @@ def bounds_lines(t, job):
 
 
 class PathView:
-    """The file's toolpath: XY (or XZ) to scale; done lines green, the machine's position a cross."""
+    """The file's toolpath: XY (or XZ) to scale; done lines green, the machine's position a cross. A cross-hair
+    walks the path (the nearest move is lit, and its G-code line in the window below); Tab - into the
+    G-code window: the arrows go line by line and light their moves on the path."""
 
-    AREA = (0, 10, 128, 107)            # x, y, w, h (logical)
+    AREA = (0, 10, 128, 76)             # x, y, w, h (logical); the G-code window under it
+    CODE_Y = 87
 
     def __init__(self, t, job):
         self.t, self.job = t, job
         self.view = "XY"
         self.cache_key, self.cache = None, None
         self.sel = 0
+        self.focus = "path"             # path / code
+        self.line = None                # the G-code line (an index into job.lines) lit
+        self.hold = None
+        self.mod = 0
+        self.by_line = {}
+        for i, sg in enumerate(job.info.segs):
+            self.by_line.setdefault(sg[7], []).append(i)
         self.fit()
+        self.cur = [self.cx, self.cy]
 
     def axes(self):
         return (0, 1) if self.view == "XY" else (0, 2)
@@ -1452,29 +1464,104 @@ class PathView:
         ax, ay, aw, ah = self.AREA
         return ax + aw / 2 + (x - self.cx) * self.scale, ay + ah / 2 - (y - self.cy) * self.scale
 
-    def key(self, k, hat=False, ch=""):
+    def follow(self):
         ax, ay, aw, ah = self.AREA
-        step = min(aw, ah) * 0.2 / self.scale
-        if k == pygame.K_LEFT:
-            self.cx -= step
-        elif k == pygame.K_RIGHT:
-            self.cx += step
-        elif k == pygame.K_UP:
-            self.cy += step
-        elif k == pygame.K_DOWN:
-            self.cy -= step
+        x, y = self.to_px(*self.cur)
+        if not (ax + 3 <= x <= ax + aw - 3):
+            self.cx = self.cur[0]
+        if not (ay + 3 <= y <= ay + ah - 3):
+            self.cy = self.cur[1]
+
+    def nearest(self):
+        """The G-code line of the move nearest the cross-hair, within 5 px."""
+        a, b = self.axes()
+        best, line = 5.0 / self.scale, None
+        px, py = self.cur
+        for sg in self.job.info.segs:
+            x0, y0, x1, y1 = sg[a], sg[b], sg[3 + a], sg[3 + b]
+            dx, dy = x1 - x0, y1 - y0
+            L = dx * dx + dy * dy
+            u = 0.0 if L == 0 else max(0.0, min(1.0, ((px - x0) * dx + (py - y0) * dy) / L))
+            dist = math.hypot(px - x0 - u * dx, py - y0 - u * dy)
+            if dist <= best:
+                best, line = dist, sg[7]
+        return line
+
+    def to_line(self, i):
+        """Light G-code line i; the cross-hair to the end of its moves."""
+        n = len(self.job.lines)
+        if not n:
+            return
+        self.line = max(0, min(n - 1, i))
+        segs = self.by_line.get(self.line)
+        if segs:
+            a, b = self.axes()
+            sg = self.job.info.segs[segs[-1]]
+            self.cur = [sg[3 + a], sg[3 + b]]
+            self.follow()
+
+    def step(self, k, n=1):
+        d = n * 2.0 / self.scale                       # 2 px a step
+        dx, dy = {pygame.K_LEFT: (-d, 0), pygame.K_RIGHT: (d, 0), pygame.K_UP: (0, d), pygame.K_DOWN: (0, -d)}[k]
+        self.cur = [self.cur[0] + dx, self.cur[1] + dy]
+        self.follow()
+        line = self.nearest()
+        if line is not None:
+            self.line = line
+
+    def keyup(self, k):
+        if self.hold and self.hold["key"] == k:
+            self.hold = None
+
+    def tick(self):
+        h = self.hold
+        now = time.monotonic()
+        if not h or now < h["next"]:
+            return
+        if self.focus == "path":
+            self.step(h["key"], 3 if now - h["t0"] > 1.5 else 1)
+        else:
+            self.to_line((self.line or 0) + (1 if h["key"] == pygame.K_DOWN else -1))
+        h["next"] = now + (0.06 if self.focus == "path" else 0.08)
+
+    def key(self, k, hat=False, ch=""):
+        arrows = (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN)
+        if hat and k == pygame.K_3:
+            return "close"
+        if (hat and k == pygame.K_RETURN) or k == pygame.K_TAB:
+            self.focus = "code" if self.focus == "path" else "path"
+            if self.focus == "code" and self.line is None:
+                self.to_line(0)
+        elif k == pygame.K_ESCAPE or k in (pygame.K_F1, pygame.K_F2, pygame.K_F3, pygame.K_F4, pygame.K_F5):
+            return "close"
+        elif k in arrows and self.focus == "path":
+            self.step(k)
+            self.hold = {"key": k, "t0": time.monotonic(), "next": time.monotonic() + 0.35}
+        elif k in (pygame.K_UP, pygame.K_DOWN):
+            self.to_line((self.line or 0) + (1 if k == pygame.K_DOWN else -1))
+            self.hold = {"key": k, "t0": time.monotonic(), "next": time.monotonic() + 0.4}
+        elif k in (pygame.K_PAGEUP, pygame.K_PAGEDOWN) or (self.focus == "code" and k in (pygame.K_LEFT, pygame.K_RIGHT)):
+            self.to_line((self.line or 0) + (5 if k in (pygame.K_PAGEDOWN, pygame.K_RIGHT) else -5))
         elif ch in ("+", "=") or k in (pygame.K_KP_PLUS,) or (hat and k == pygame.K_1):
             self.scale *= 1.5
+            self.cx, self.cy = self.cur
         elif ch in ("-", "_") or k in (pygame.K_KP_MINUS,) or (hat and k == pygame.K_2):
             self.scale /= 1.5
         elif ch == "0" or k == pygame.K_HOME:
             self.fit()
-        elif ch in ("v", "V") or (hat and k == pygame.K_RETURN):
+        elif ch in ("v", "V"):
+            a, b = self.axes()
             self.view = "XZ" if self.view == "XY" else "XY"
             self.fit()
-        else:
-            return "close"
+            if self.line is not None:
+                self.to_line(self.line)
+            else:
+                self.cur = [self.cx, self.cy]
         return None
+
+    def state(self):
+        return repr((self.focus, self.line, [round(v, 4) for v in self.cur], self.scale, self.cx, self.cy, self.view,
+                     self.job.pos))
 
     def render(self, done):
         """The toolpath on a native surface (redrawn when the view or the done part changes)."""
@@ -1512,8 +1599,8 @@ class PathView:
         t, job = self.t, self.job
         info = job.info
         screen.fill(BG)
-        text(fit(job.name, f_bold, 96), (2, 0), ACCENT, f_bold)
-        text(self.view, (126, 0), CYAN, f_bold, right=True)
+        text(fit(job.name, f_bold, 80), (2, 0), ACCENT, f_bold)
+        text(("Tab ↔  " if info.segs else "") + self.view, (126, 0), CYAN, f_bold, right=True)
         done = job.pos if job.mode or job.pos else 0
         n = max(1, len(info.segs))
         bucket = 0
@@ -1526,21 +1613,48 @@ class PathView:
             self.cache, self.cache_key = self.render(done), key
         ax, ay, aw, ah = self.AREA
         screen.blit(self.cache, (ax, ay))
-        pygame.draw.rect(screen, (50, 50, 50), (ax, ay, aw, ah), 1)
-        wpos, _ = t.positions()
         a, b = self.axes()
-        if wpos and len(wpos) > b:
+        if self.line is not None:                 # the lit line's moves, white and thick
+            for i in self.by_line.get(self.line, []):
+                sg = info.segs[i]
+                pygame.draw.line(screen, (255, 255, 255), self.to_px(sg[a], sg[b]), self.to_px(sg[3 + a], sg[3 + b]), 2)
+        pygame.draw.rect(screen, ACCENT if self.focus == "path" else (50, 50, 50), (ax, ay, aw, ah), 1)
+        wpos, _ = t.positions()
+        if wpos and len(wpos) > b:                # the machine
             px, py = self.to_px(wpos[a], wpos[b])
             if ax <= px <= ax + aw and ay <= py <= ay + ah:
-                pygame.draw.line(screen, ACCENT, (px - 3, py), (px + 3, py))
-                pygame.draw.line(screen, ACCENT, (px, py - 3), (px, py + 3))
-        if not info.segs:
-            text("немає рухів X/Y з відомим початком", (64, 60), DIM, f_small, center=True)
-        sz = info.size()
-        dims = "  ".join("%s %.1f" % (c, v) for c, v in zip("XYZ", sz) if v is not None)
-        text(fit(dims + "  ≈" + hhmm(info.time_s), f_small, 124), (2, 119), FG, f_small)
-        hint = "KEY1/2 ± натиск XZ" if lcd.DEVICE == "hat144" else "стрілки +- 0 v(XZ) Esc"
-        text(hint, (126, 111), (90, 90, 90), f_small, right=True)
+                pygame.draw.circle(screen, ACCENT, (px, py), 2, 1)
+        if info.segs:                             # the cross-hair
+            px, py = self.to_px(*self.cur)
+            pygame.draw.line(screen, ORANGE, (px - 4, py), (px + 4, py))
+            pygame.draw.line(screen, ORANGE, (px, py - 4), (px, py + 4))
+        else:
+            text("немає рухів X/Y з відомим початком", (64, 45), DIM, f_small, center=True)
+        # the G-code window
+        y0 = self.CODE_Y
+        h = 118 - y0
+        pygame.draw.rect(screen, (12, 12, 20), (0, y0, 128, h))
+        pygame.draw.rect(screen, ACCENT if self.focus == "code" else (50, 50, 50), (0, y0, 128, h), 1)
+        rows = max(1, int((h - 2) // LH))
+        lines = job.lines
+        cur = self.line if self.line is not None else 0
+        top = max(0, min(cur - rows // 2, len(lines) - rows))
+        nw = len(str(lines[-1][0])) if lines else 1
+        for j in range(top, min(len(lines), top + rows)):
+            y = y0 + 1 + (j - top) * LH
+            if j == self.line:
+                pygame.draw.rect(screen, (70, 60, 15), (1, y, 126, LH))
+            num, src = lines[j]
+            color = (110, 170, 110) if j < done else FG if j in self.by_line else (150, 150, 150)
+            text(fit("%*d %s" % (nw, num, src), f_mono, 124), (2, y), color, f_mono)
+        # the bottom: the cross-hair's coordinates, or the sizes
+        if self.line is not None and info.segs:
+            info_s = "%s%.2f %s%.2f · рядок %d/%d" % ("XYZ"[a], self.cur[0], "XYZ"[b], self.cur[1],
+                                                      lines[self.line][0] if lines else 0, len(lines))
+        else:
+            sz = info.size()
+            info_s = "  ".join("%s %.1f" % (c, v) for c, v in zip("XYZ", sz) if v is not None) + "  ≈" + hhmm(info.time_s)
+        text(fit(info_s, f_small, 124), (2, 119), FG, f_small)
 
 
 class SettingsView:
