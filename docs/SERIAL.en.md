@@ -187,7 +187,8 @@ green ticks — X and Y), its size from the machine's travel.
 | `r` | rectangle | two corners (corner radius in the numbers) |
 | `a` | arc | centre, start, end; `d` — direction |
 | `l` | line | two ends |
-| `t` / `T` | text in a rectangle / circle | see [section 8](#8-text-to-engrave) |
+| `t` | text in a rectangle | see [section 8](#8-text-to-engrave) |
+| `T` | text along an arc / circle | see [section 8](#8-text-to-engrave) |
 
 The figure is drawn live while placing, its size at the bottom. Backspace removes the last point, Esc ends the
 tool.
@@ -316,9 +317,29 @@ start buttons, E — E-stop. Press a limit switch by hand and its letter shows: 
 from the start · Space — pause · Ctrl+X — stop · `f` — follow · `v` — XY / XZ · `+` `-` `0` — zoom · F1 — help ·
 Esc — close.
 
-**Shape editor**: `c e r a l t T` — figures · Enter — a point / edit points · Space — numbers · Tab — the next
-figure · Del — delete · `u` — undo · `p` — parameters · `s` — save as · `o` — open · `i` — import SVG · `g` —
-grid · `+ - 0 h` — the view · F1 — help · Esc Esc — leave.
+**Shape editor**
+
+| Key | Does |
+|---|---|
+| `c` | circle |
+| `e` | ellipse |
+| `r` | rectangle |
+| `a` | arc (`d` — direction) |
+| `l` | line |
+| `t` | text in a rectangle |
+| `T` (Shift+t) | text along an arc / circle |
+| Enter | place a point; on a figure — edit its points |
+| Space (or `n`) | the figure's exact numbers |
+| Tab | the cross-hair to the next figure |
+| Del / Backspace | delete the figure |
+| `u` | undo |
+| `p` | machining parameters (tool, depth, feeds…) |
+| `s` / `o` | save as / open |
+| `i` | import SVG |
+| `g` / `G` | grid step |
+| `+` `-` `0` `h` | zoom, the whole field, the cross-hair to zero |
+| F1 | help |
+| Esc Esc | leave |
 
 ## 13. Where things are
 
