@@ -235,13 +235,22 @@ diameter** (shown top right: "Ø3.175 ↓1"), the pocket stepover, the spindle s
 
 ## 8. Text to engrave
 
-* **`t`** — text in a rectangle (two corners), **`T`** — in a circle (centre and a point).
+* **`t`** — text **in a rectangle** (two corners): the letters fill the frame as much as they can, undistorted,
+  at a tilt angle.
+* **`T`** — text **along an arc or a circle** (the centre and a point on the letters' baseline), as on a seal.
 * The text field opens at once: type, **Tab — EN / UA** (the standard Ukrainian layout), **`|` — a new line**,
   Enter — done.
-* The letters fill the frame as much as they can, undistorted; in a circle the turned text fits inside.
 
-In the text's numbers (Space on its frame): depth, text, **font** (DejaVu Sans / Serif / Mono, regular and bold),
-**the cut**, **the angle**, the frame (rectangle / circle), its position and size.
+In the text's numbers (Space): depth, text, **font** (DejaVu Sans / Serif / Mono, regular and bold), **the cut**,
+**placement** (in a rectangle / along an arc), then:
+
+* in a rectangle — the tilt, the anchor, X, Y, the frame's width and height;
+* along an arc — centre X / Y, the baseline radius, **the text's middle** (an angle: 90° — top, −90° — bottom),
+  **the arc in degrees** (the letters stretch over it; **360 — a full circle**; 0 — sized by "letter height"),
+  the letter height, **the direction**: "зверху, за год." (top, clockwise) — letters outward, "знизу, проти год."
+  (bottom, counter-clockwise) — letters inward, reading at the bottom.
+
+A top and a bottom line on one circle — a seal — are two texts with the same centre and radius.
 
 | Cut | The tool |
 |---|---|

@@ -13,7 +13,8 @@ FONTS = ["DejaVuSans-Bold", "DejaVuSans", "DejaVuSerif-Bold", "DejaVuSerif", "De
 # filled letters; along the outline (its centre line - a V-bit); outside / inside the letters by the tool's radius
 FILLS = ["заливка", "по контуру", "зовні", "всередині"]
 OLD_FILLS = {"контур": "по контуру"}
-FRAMES = ["прямокутник", "коло"]
+FRAMES = ["прямокутник", "по дузі"]    # fitted into a rectangle / written along an arc (360° - a circle)
+DIRS = ["зверху, за год.", "знизу, проти год."]   # along the arc: letters outward (top) / inward (bottom)
 SCALE = 1000.0                         # pyclipper works in integers: µm
 CHORD = 0.03                           # a curve chord, in em (fine enough for letters a few mm high)
 
@@ -118,32 +119,68 @@ def placed(sh):
     if not AVAILABLE:
         return []
     key = (sh.get("text"), sh.get("font"), sh.get("frame"), sh.get("angle"), sh.get("x"), sh.get("y"), sh.get("w"),
-           sh.get("h"), sh.get("cx"), sh.get("cy"), sh.get("r"))
+           sh.get("h"), sh.get("cx"), sh.get("cy"), sh.get("r"), sh.get("span"), sh.get("size"), sh.get("dir"))
     if key in _cache:
         return _cache[key]
     polys, (x0, y0, x1, y1) = layout(sh.get("text", ""), sh.get("font", FONTS[0]))
     if not polys:
         _cache[key] = []
         return []
+    if sh.get("frame") != FRAMES[0]:                 # along an arc (an old "коло" drawing too)
+        out = along_arc(sh, polys, (x0, y0, x1, y1))
+        if len(_cache) > 64:
+            _cache.clear()
+        _cache[key] = out
+        return out
     a = math.radians(sh.get("angle", 0.0) or 0.0)
     ca, sa = math.cos(a), math.sin(a)
     mx, my = (x0 + x1) / 2, (y0 + y1) / 2
     corners = [((x - mx) * ca - (y - my) * sa, (x - mx) * sa + (y - my) * ca) for x, y in
                ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
-    if sh.get("frame") == FRAMES[1]:                 # a circle: the turned box's corners inside it
-        cx, cy = sh["cx"], sh["cy"]
-        far = max(math.hypot(x, y) for x, y in corners) or 1
-        k = sh["r"] * 0.98 / far
-    else:
-        cx, cy = sh["x"] + sh["w"] / 2, sh["y"] + sh["h"] / 2
-        bw = max(x for x, _ in corners) - min(x for x, _ in corners) or 1
-        bh = max(y for _, y in corners) - min(y for _, y in corners) or 1
-        k = min(sh["w"] / bw, sh["h"] / bh)
+    cx, cy = sh["x"] + sh["w"] / 2, sh["y"] + sh["h"] / 2
+    bw = max(x for x, _ in corners) - min(x for x, _ in corners) or 1
+    bh = max(y for _, y in corners) - min(y for _, y in corners) or 1
+    k = min(sh["w"] / bw, sh["h"] / bh)
     out = [[(cx + k * ((x - mx) * ca - (y - my) * sa), cy + k * ((x - mx) * sa + (y - my) * ca)) for x, y in poly]
            for poly in polys]
     if len(_cache) > 64:
         _cache.clear()
     _cache[key] = out
+    return out
+
+
+def densify(poly, step):
+    """Straight edges cut into pieces (they bend when the text follows an arc)."""
+    out = [poly[0]]
+    for p in poly[1:] + [poly[0]]:
+        a = out[-1]
+        n = max(1, int(math.dist(a, p) / step))
+        out += [(a[0] + (p[0] - a[0]) * j / n, a[1] + (p[1] - a[1]) * j / n) for j in range(1, n + 1)]
+    return out[:-1]
+
+
+def along_arc(sh, polys, box):
+    """The letters on an arc: the baseline on the circle (cx, cy, r), the text's middle at "angle"
+    (90 - the top); "span" degrees > 0 - the letters scaled to fill that much of the arc, else "size" mm high.
+    The top way reads clockwise with the letters outward, the bottom way counter-clockwise, letters inward."""
+    x0, y0, x1, y1 = box
+    cx, cy, r = sh["cx"], sh["cy"], max(0.01, sh["r"])
+    width = max(x1 - x0, 1e-6)
+    span = abs(sh.get("span", 0.0) or 0.0)
+    k = math.radians(min(span, 359.0)) * r / width if span else max(0.01, sh.get("size", r / 4) or r / 4)
+    mid = (x0 + x1) / 2
+    theta = math.radians(sh.get("angle", 90.0) if sh.get("angle") is not None else 90.0)
+    top = sh.get("dir", DIRS[0]) != DIRS[1]
+    out = []
+    for poly in polys:
+        q = []
+        for x, y in densify(poly, 0.04):
+            s_ = (x - mid) * k                       # along the baseline, mm
+            h = y * k                                # above it, mm
+            phi = theta - s_ / r if top else theta + s_ / r
+            rho = r + h if top else r - h
+            q.append((cx + rho * math.cos(phi), cy + rho * math.sin(phi)))
+        out.append(q)
     return out
 
 

@@ -60,8 +60,10 @@ HELP = [
     "c - коло: центр, точка на колі. e - еліпс: центр, кут рамки.",
     "r - прямокутник: два кути (радіус кутів - у числах).",
     "a - дуга: центр, початок, кінець; d - напрям. l - лінія: два кінці.",
-    "t - текст у прямокутнику (два кути), T - текст у колі (центр, точка): далі одразу набір тексту -",
-    "  Tab - EN / UA, | - новий рядок, Enter - готово. Літери вписуються в рамку; у числах - шрифт, кут нахилу,",
+    "t - текст у прямокутнику (два кути), T - текст по дузі / колу (центр, точка на лінії літер): далі одразу",
+    "  набір - Tab - EN / UA, | - новий рядок, Enter - готово. У прямокутнику літери вписуються в рамку, по дузі -",
+    "  ідуть по колу: середина тексту (90° - верх), дуга в градусах (360 - коло, 0 - за висотою літер), напрям",
+    "  (зверху за год. - літери назовні, знизу проти год. - до центру). У числах - шрифт, кут нахилу,",
     "  обробка (заливка - кільцями всередину від краю літер; по контуру - середньою лінією; зовні / всередині -",
     "  фреза зсунута на радіус назовні / всередину літер), рамка, розміри.",
     "Enter - поставити точку, Backspace - прибрати останню, Esc - кінець інструмента.",
@@ -108,7 +110,7 @@ def has_side(sh):
 
 def frame(sh):
     """A text's frame as a rect / circle figure."""
-    if sh.get("frame") == textcut.FRAMES[1]:
+    if sh.get("frame") != textcut.FRAMES[0]:            # along an arc: its circle
         return {"type": "circle", "cx": sh["cx"], "cy": sh["cy"], "r": sh["r"]}
     return {"type": "rect", "x": sh["x"], "y": sh["y"], "w": sh["w"], "h": sh["h"], "rad": 0.0}
 
@@ -496,6 +498,8 @@ def load(path):
         if tag == "g" and el.get("data-text"):          # a text: its settings; the outlines inside are a view
             d = json.loads(el.get("data-text"))
             d["type"] = "text"
+            if d.get("frame") == "коло":                 # the old "fitted in a circle": now along its arc
+                d.update(frame=textcut.FRAMES[1], angle=90.0, span=160.0, dir=textcut.DIRS[0])
             shapes.append(d)
             skip.update(el.iter())
             continue
@@ -663,8 +667,15 @@ def shape_rows(sh, anchor):
                 ["font", "Шрифт", sh.get("font", textcut.FONTS[0]), textcut.FONTS],
                 ["fill", "Обробка", textcut.OLD_FILLS.get(sh.get("fill"), sh.get("fill", textcut.FILLS[0])),
                  textcut.FILLS],
-                ["angle", "Кут, °", sh.get("angle", 0.0), None],
-                ["frame", "Рамка", sh.get("frame", textcut.FRAMES[0]), textcut.FRAMES]]
+                ["frame", "Розміщення", sh.get("frame", textcut.FRAMES[0]), textcut.FRAMES]]
+        if sh.get("frame") != textcut.FRAMES[0]:        # along an arc
+            return rows + [["cx", "Центр X", sh["cx"], None], ["cy", "Центр Y", sh["cy"], None],
+                           ["r", "Радіус (лінія літер)", sh["r"], None],
+                           ["angle", "Середина тексту, ° (90 - верх)", sh.get("angle", 90.0), None],
+                           ["span", "Дуга, ° (360 - коло, 0 - за висотою)", sh.get("span", 0.0), None],
+                           ["size", "Висота літер, мм", sh.get("size", round(sh["r"] / 4, 2)), None],
+                           ["dir", "Напрям", sh.get("dir", textcut.DIRS[0]), textcut.DIRS]]
+        rows.append(["angle", "Кут нахилу, °", sh.get("angle", 0.0), None])
         fr = frame(sh)
         return rows + [r for r in shape_rows(fr, anchor) if r[0] not in ("depth", "side", "rad")]   # the frame
     if t == "poly":
@@ -712,10 +723,15 @@ def rows_shape(sh, vals):
     out = dict(sh)
     t = sh["type"]
     if t == "text":
-        for k in ("text", "font", "fill", "angle", "frame"):
+        for k in ("text", "font", "fill", "angle", "frame", "cx", "cy", "dir"):
             if k in vals:
                 out[k] = vals[k]
         out["depth"] = abs(vals.get("depth", 0.0))
+        if out.get("frame") != textcut.FRAMES[0]:       # along an arc: the numbers are the figure
+            for k in ("r", "span", "size"):
+                if k in vals:
+                    out[k] = abs(vals[k])
+            return out
         fr = frame(sh)
         if "d" in vals or "rad" in vals or "w" in vals:
             v = dict(vals)
@@ -978,6 +994,8 @@ class Editor:
                   "font": self.t.prof.get("last_font", textcut.FONTS[0]), "fill": textcut.FILLS[0], "angle": 0.0,
                   "frame": textcut.FRAMES[0] if kind == "text" else textcut.FRAMES[1]}
             sh.update({k: v for k, v in fr.items() if k in ("x", "y", "w", "h", "cx", "cy", "r")})
+            if kind == "textc":                          # along the arc: over the top, filling 160°
+                sh.update(angle=90.0, span=160.0, size=round(max(fr.get("r", 1.0), 1.0) / 4, 2), dir=textcut.DIRS[0])
             return sh
         if kind == "circle":
             return {"type": kind, "cx": p[0][0], "cy": p[0][1], "r": math.dist(p[0], p[1]) if len(p) > 1 else 0.0,
@@ -1054,16 +1072,19 @@ class Editor:
                 v = vals(form)
                 v["frame"] = old
                 fig = rows_shape(base, v)
-                if row[2] == textcut.FRAMES[1]:
+                if row[2] == textcut.FRAMES[1]:       # -> along an arc over the top
                     cx, cy = fig["x"] + fig["w"] / 2, fig["y"] + fig["h"] / 2
-                    fig.update(frame=row[2], cx=cx, cy=cy, r=min(fig["w"], fig["h"]) / 2)
-                else:
+                    r = min(fig["w"], fig["h"]) / 2
+                    fig.update(frame=row[2], cx=cx, cy=cy, r=r, angle=90.0, span=160.0, size=round(r / 4, 2),
+                               dir=textcut.DIRS[0])
+                else:                                 # -> into the circle's square, level
                     fig.update(frame=row[2], x=fig["cx"] - fig["r"], y=fig["cy"] - fig["r"], w=2 * fig["r"],
-                               h=2 * fig["r"])
+                               h=2 * fig["r"], angle=0.0)
                 sel = form.sel
                 form.rows = shape_rows(fig, self.t.prof.get("anchor", ANCHORS[0]))
                 form.sel = sel
-                base.update({k: fig[k] for k in ("frame", "x", "y", "w", "h", "cx", "cy", "r") if k in fig})
+                base.update({k: fig[k] for k in ("frame", "x", "y", "w", "h", "cx", "cy", "r", "angle", "span", "size",
+                                                 "dir") if k in fig})
             if row[0] == "anchor":                    # the same figure, X / Y told the other way
                 v = vals(form)
                 v["anchor"] = old
