@@ -37,6 +37,12 @@ FULL_MAX = 3000
 CMD_MAX = 400
 SHOW_LINES = 2          # answer lines kept in the upper pane per command
 POLL_S = 0.25
+PENDANT_POLL_S = 0.2
+JOG_STEPS = [0.01, 0.1, 1.0, 10.0, 100.0]               # mm per tap
+JOG_FEEDS = {0.01: 60, 0.1: 200, 1.0: 600, 10.0: 1500, 100.0: 3000}   # mm/min (also while held)
+JOG_HOLD_S = 0.35                                       # held longer: continuous
+JOG_TICK_S = 0.1                                        # continuous jog: a short increment this often
+SPINDLE_SPEEDS = [1000, 3000, 6000, 8000, 10000, 12000, 15000, 18000, 24000]
 
 BG, FG, DIM = (0, 0, 0), (230, 230, 230), (130, 130, 130)
 ACCENT, GREEN, RED, BLUE, CYAN, ORANGE = (255, 200, 0), (90, 220, 110), (240, 90, 80), (110, 170, 255), \
@@ -227,6 +233,7 @@ BIG = lcd.S > 1
 f_mono = font("DejaVuSansMono.ttf", 11 if BIG else 6)
 f_small = font("DejaVuSans.ttf", 11 if BIG else 7)
 f_bold = font("DejaVuSans-Bold.ttf", 12 if BIG else 7)
+f_big = font("DejaVuSansMono-Bold.ttf", 22 if BIG else 9)
 LH = f_mono.get_linesize()
 CW = f_mono.size("0")[0]
 COLS = int(124 / CW)
@@ -285,6 +292,12 @@ class Term:
         self.poll = False
         self.status_in_full = self.cfg.get("status_in_full", True)
         self.status = None       # (state, rest)
+        self.wco = None          # the work coordinate offset (from reports that carry WCO)
+        self.pendant = False
+        self.step_i = 2
+        self.jog = None          # {"key", "axis", "sign", "t0", "cont", "next"}
+        self.spindle = self.cfg.get("spindle", 12000)
+        self.spin_armed = 0.0
         self.last_poll = 0.0
         self.pending = None      # an answer being collected: {"shown", "more", "idx"}
         self.input = ""
@@ -383,6 +396,12 @@ class Term:
             if is_status:
                 body = line.strip()[1:-1].split("|")
                 self.status = (body[0].split(":")[0], body[1:])
+                for part in body[1:]:
+                    if part.startswith("WCO:"):
+                        try:
+                            self.wco = [float(v) for v in part[4:].split(",")]
+                        except ValueError:
+                            pass
                 if self.status_in_full:
                     self.full.append(("status", line))
             else:
@@ -479,6 +498,83 @@ class Term:
         if reset and self.port:
             self.send("\x18", log=False, realtime=True)   # grbl drops its buffers and stops
 
+    # -- the pendant
+    def positions(self):
+        """(work, machine) coordinate lists from the last report (one computed through WCO)."""
+        if not self.status:
+            return None, None
+        kv = dict(p.split(":", 1) for p in self.status[1] if ":" in p)
+        try:
+            mpos = [float(v) for v in kv["MPos"].split(",")] if "MPos" in kv else None
+            wpos = [float(v) for v in kv["WPos"].split(",")] if "WPos" in kv else None
+        except ValueError:
+            return None, None
+        if self.wco:
+            if mpos and not wpos:
+                wpos = [m - o for m, o in zip(mpos, self.wco)]
+            elif wpos and not mpos:
+                mpos = [w + o for w, o in zip(wpos, self.wco)]
+        return wpos, mpos
+
+    def jog_once(self, axis, dist, feed):
+        self.send("$J=G91 G21 %s%.4f F%d" % (axis, dist, feed), log=False)
+
+    def jog_start(self, key, axis, sign):
+        step = JOG_STEPS[self.step_i]
+        self.jog_once(axis, sign * step, JOG_FEEDS[step])
+        now = time.monotonic()
+        self.jog = {"key": key, "axis": axis, "sign": sign, "t0": now, "cont": False, "next": now + JOG_HOLD_S}
+
+    def jog_tick(self, now):
+        """Held: keep a little more motion queued (short increments - no far target past the soft limits)."""
+        j = self.jog
+        if not j or now < j["next"]:
+            return
+        feed = JOG_FEEDS[JOG_STEPS[self.step_i]]
+        dist = feed / 60.0 * JOG_TICK_S * 1.3
+        self.jog_once(j["axis"], j["sign"] * dist, feed)
+        j["cont"], j["next"] = True, now + JOG_TICK_S
+
+    def jog_stop(self, key):
+        j = self.jog
+        if j and j["key"] == key:
+            if j["cont"] and self.port:
+                self.send("\x85", log=False, realtime=True)     # jog cancel: stops at once
+            self.jog = None
+
+    def set_zero(self, axes):
+        self.send("G10 L20 P0 " + " ".join("%s0" % a for a in axes), log=False)
+        self.say("sys", "нуль: " + " ".join(axes))
+
+    def spindle_on(self):
+        st = self.status[1] if self.status else []
+        acc = dict(p.split(":", 1) for p in st if ":" in p).get("A", "")
+        return "S" in acc or "C" in acc
+
+    def toggle_spindle(self):
+        now = time.monotonic()
+        if self.spindle_on():
+            self.send("M5", log=False)
+            self.say("sys", "шпиндель: вимк (M5)")
+            self.spin_armed = 0
+        elif now - self.spin_armed < 2.0:
+            self.send("M3 S%d" % self.spindle, log=False)
+            self.say("sys", "шпиндель: увімк M3 S%d" % self.spindle)
+            self.spin_armed = 0
+        else:
+            self.spin_armed = now
+            self.flash("s ще раз - увімкнути шпиндель S%d" % self.spindle)
+
+    def estop(self):
+        """Software emergency stop: jog cancel + grbl's soft reset - motion, spindle and coolant stop."""
+        if self.port:
+            self.port.write(b"\x85\x18")
+            self.full.append(("tx", "> АВАРІЙНА ЗУПИНКА (jog cancel + Ctrl-X)"))
+        self.jog = None
+        if self.job and self.job.mode:
+            self.job.mode, self.job.waiting, self.job.paused, self.job.pos = None, False, False, 0
+        self.say("err", "■ АВАРІЙНА ЗУПИНКА - далі $X (F5), щоб розблокувати")
+
     def tick(self):
         now = time.monotonic()
         if self.port and not self.port.alive:
@@ -495,6 +591,10 @@ class Term:
             elif not self.dev and default_port():
                 self.connect()
         self.feed()
+        if self.pendant and self.port and now - self.last_poll > PENDANT_POLL_S:
+            self.last_poll = now
+            self.port.write("?")
+        self.jog_tick(now)
         if self.poll and self.port and now - self.last_poll > POLL_S:
             self.last_poll = now
             self.port.write("?")
@@ -585,6 +685,51 @@ def draw(t, popup):
             pygame.draw.rect(screen, ACCENT, (2 + len(s) * CW, in_y, max(1, CW / 3), LH - 1))
         if hint:
             text(hint, (126, in_y + 1), (100, 100, 100), f_small, right=True)
+    if popup:
+        popup.draw()
+    lcd.flip()
+
+
+def draw_pendant(t, popup):
+    screen.fill(BG)
+    state = t.status[0] if t.status else "?"
+    text("ПУЛЬТ", (2, 0), ACCENT, f_bold)
+    text(state, (126, 0), STATE_COLORS.get(state.split(":")[0], FG) if t.status else DIM, f_bold, right=True)
+    wpos, mpos = t.positions()
+    text("робочі", (60, 10), DIM, f_small, right=True)
+    text("машинні", (126, 10), DIM, f_small, right=True)
+    y = 19
+    for i, ax in enumerate("XYZ"):
+        w = "%9.3f" % wpos[i] if wpos and i < len(wpos) else "      —"
+        m = "%9.3f" % mpos[i] if mpos and i < len(mpos) else "      —"
+        jog = t.jog and t.jog["axis"] == ax
+        text(ax, (2, y), ACCENT if jog else BLUE, f_big)
+        text(w, (60, y), FG, f_big, right=True)
+        text(m, (126, y + 4), (160, 160, 160), f_mono, right=True)
+        y += 15
+    kv = dict(p.split(":", 1) for p in (t.status[1] if t.status else []) if ":" in p)
+    fs = (kv.get("FS") or kv.get("F") or "").split(",")
+    spin = t.spindle_on()
+    text("F %s" % (fs[0] if fs and fs[0] else "—"), (2, y), DIM, f_small)
+    text(("шпиндель ON %s" % (fs[1] if len(fs) > 1 else "")) if spin else "шпиндель off", (64, y), RED if spin else DIM,
+         f_small, center=True)
+    text("S %d" % t.spindle, (126, y), DIM, f_small, right=True)
+    y += 10
+    step = JOG_STEPS[t.step_i]
+    pygame.draw.rect(screen, (50, 40, 0), (1, y, 126, 10), border_radius=2)
+    text("крок %g мм   подача %d мм/хв" % (step, JOG_FEEDS[step]), (64, y + 1), ACCENT, f_small, center=True)
+    y += 12
+    if t.note and time.monotonic() < t.note_t:
+        text(fit(t.note, f_small, 124), (64, y), ACCENT, f_small, center=True)
+    elif t.cmd and t.cmd[-1][0] in ("err", "sys"):
+        kind, s = t.cmd[-1]
+        text(fit(s, f_small, 124), (64, y), RED if kind == "err" else CYAN, f_small, center=True)
+    if lcd.DEVICE == "hat144":
+        hints = ["джойст. X/Y  KEY1/2 Z  натиск - крок", "KEY3 - СТОП (ще раз - вихід)"]
+    else:
+        hints = ["←→ X  ↑↓ Y  PgUp/Dn Z  +- крок  x y z 0 нуль", "s шпиндель  , . оберти  ПРОБІЛ - СТОП  Esc"]
+    for i, h in enumerate(hints):
+        text(fit(h, f_small, 126), (64, 128 - (2 - i) * 9), (150, 150, 150), f_small, center=True)
     if popup:
         popup.draw()
     lcd.flip()
@@ -800,11 +945,16 @@ def main():
         return Popup("Довідка", HELP, lambda i: "close")
 
     def main_menu():
-        items = ["Порт…", "Файл G-code…", "grblHAL…",
+        items = ["Пульт (pendant)", "Порт…", "Файл G-code…", "grblHAL…",
                  "Повний вивід: %s" % ("сховати" if t.show_full else "показати"), "Довідка", "Вихід"]
 
         def pick(i):
             nonlocal popup
+            i -= 1
+            if i == -1:
+                t.pendant = True
+                t.wco = None
+                return "close"
             if i == 0:
                 popup = port_menu()
             elif i == 1:
@@ -823,6 +973,60 @@ def main():
             return None
         return Popup("Меню", items, pick)
 
+    hat_stop = {"t": 0.0}
+    JOG_KEYS = {pygame.K_LEFT: ("X", -1), pygame.K_RIGHT: ("X", 1), pygame.K_UP: ("Y", 1),
+                pygame.K_DOWN: ("Y", -1), pygame.K_PAGEUP: ("Z", 1), pygame.K_PAGEDOWN: ("Z", -1)}
+
+    def pendant_key(k, ch, hat):
+        """The pendant's keys; returns "menu" to open the main menu."""
+        if hat and k == pygame.K_3:                  # HAT KEY3: stop; again within 2 s - leave
+            if time.monotonic() - hat_stop["t"] < 2.0:
+                t.pendant = False
+                return None
+            t.estop()
+            hat_stop["t"] = time.monotonic()
+            t.flash("KEY3 ще раз - вийти з пульта")
+            return None
+        if hat and k in (pygame.K_1, pygame.K_2):    # HAT KEY1 / KEY2: Z up / down
+            t.jog_start(k, "Z", 1 if k == pygame.K_1 else -1)
+            return None
+        if hat and k == pygame.K_RETURN:             # HAT press: the next step size
+            t.step_i = (t.step_i + 1) % len(JOG_STEPS)
+            return None
+        if k == pygame.K_SPACE:
+            t.estop()
+        elif k == pygame.K_ESCAPE:
+            if t.jog:
+                t.jog_stop(t.jog["key"])
+            t.pendant = False
+        elif k == pygame.K_F1:
+            return "menu"
+        elif k in JOG_KEYS:
+            if not t.jog:
+                axis, sign = JOG_KEYS[k]
+                t.jog_start(k, axis, sign)
+        elif ch in ("+", "=") or k in (pygame.K_EQUALS, pygame.K_KP_PLUS):
+            t.step_i = min(len(JOG_STEPS) - 1, t.step_i + 1)
+        elif ch in ("-", "_") or k in (pygame.K_MINUS, pygame.K_KP_MINUS):
+            t.step_i = max(0, t.step_i - 1)
+        elif ch in ("x", "y", "z", "X", "Y", "Z"):
+            t.set_zero([ch.upper()])
+        elif ch == "0":
+            t.set_zero(["X", "Y", "Z"])
+        elif ch in ("s", "S"):
+            t.toggle_spindle()
+        elif ch in (",", "<", ".", ">"):
+            i = SPINDLE_SPEEDS.index(t.spindle) if t.spindle in SPINDLE_SPEEDS else 5
+            i = max(0, i - 1) if ch in (",", "<") else min(len(SPINDLE_SPEEDS) - 1, i + 1)
+            t.spindle = SPINDLE_SPEEDS[i]
+            t.cfg["spindle"] = t.spindle
+            t.save_cfg()
+            if t.spindle_on():                       # running: the new speed at once
+                t.send("S%d" % t.spindle, log=False)
+        elif ch == "\x18":                          # Ctrl-X works here too
+            t.estop()
+        return None
+
     running = True
     shown_key = None
     while running:
@@ -830,12 +1034,20 @@ def main():
             if ev.type == pygame.QUIT:
                 running = False
                 break
+            if ev.type == pygame.KEYUP and t.pendant:
+                t.jog_stop(ev.key)                 # a held jog key let go: stop at once
+                continue
             if ev.type != pygame.KEYDOWN:
                 continue
             shown_key = None
             k = ev.key
             hat = getattr(ev, "hat", False)
             ch = getattr(ev, "unicode", "") if not hat else ""
+            if t.pendant and not popup:
+                r = pendant_key(k, ch, hat)
+                if r == "menu":
+                    popup = main_menu()
+                continue
             if popup:
                 r = popup.key(k, hat)
                 if r == "close":
@@ -853,6 +1065,9 @@ def main():
             menu_key = {"\x10": pygame.K_F3, "\x0f": pygame.K_F4, "\x07": pygame.K_F5}.get(ch)
             if menu_key:
                 k, ch = menu_key, ""
+            if ch == "\x14":                       # Ctrl+T: the pendant
+                t.pendant, t.wco = True, None
+                continue
             if k == pygame.K_F1 or (hat and k == pygame.K_3):
                 popup = main_menu()
             elif k in (pygame.K_F2, pygame.K_TAB):
@@ -915,9 +1130,10 @@ def main():
         # redraw at most ~12 times a second, and only when something changed
         key = (len(t.cmd), t.cmd[-1] if t.cmd else None, len(t.full), t.full[-1] if t.full else None, t.input,
                t.status, t.scroll, t.show_full, t.poll, popup and (popup.sel, id(popup)), t.port is not None,
-               t.job and (t.job.pos, t.job.mode, t.job.paused), t.note, int(time.monotonic() * 2))
+               t.job and (t.job.pos, t.job.mode, t.job.paused), t.note, int(time.monotonic() * 2),
+               t.pendant, t.step_i, t.spindle, t.jog and t.jog["axis"], str(t.wco))
         if key != shown_key:
-            draw(t, popup)
+            (draw_pendant if t.pendant else draw)(t, popup)
             shown_key = key
         clock.tick(30)
     t.save_hist()
