@@ -33,6 +33,7 @@ sys.path.insert(0, HERE)
 import pygame  # noqa: E402
 import lcd  # noqa: E402
 import gcodeinfo  # noqa: E402
+import shapeedit  # noqa: E402
 
 CONFIG = os.path.expanduser("~/.config/lcdtoy/serial.json")
 HISTORY_FILE = os.path.expanduser("~/.config/lcdtoy/serial-history")
@@ -898,7 +899,12 @@ class Term:
         self.jog = None
         if self.job and self.job.mode:
             self.job.mode, self.job.waiting, self.job.paused, self.job.pos = None, False, False, 0
-        self.say("err", "■ АВАРІЙНА ЗУПИНКА - далі $X (F5), щоб розблокувати")
+        self.say("err", "■ АВАРІЙНА ЗУПИНКА - далі Backspace ($X), щоб розблокувати")
+
+    def unlock(self):
+        """$X: leave the Alarm state (Backspace in the pendants, or on an empty input line)."""
+        if self.send("$X"):
+            self.flash("$X - зняти блокування")
 
     # -- overrides (grblHAL real-time bytes)
     def override(self, what):
@@ -1070,7 +1076,7 @@ def draw(t, popup):
             if pins:
                 text(pins, (126, y - 1), RED, f_bold, right=True)
             y += LH
-    y += draw_alert(t, y, "^E пояснення")
+    y += draw_alert(t, y, "⌫ $X  ^E" if t.alert and t.alert["kind"] == "alarm" else "^E пояснення")
     job = t.job
     if job:
         frac, mode, tail = job_line(job)
@@ -1259,7 +1265,7 @@ def draw_pendant(t, popup):
     text(state, (126, 0), STATE_COLORS.get(state.split(":")[0], FG) if t.status else DIM, f_bold, right=True)
     wpos, mpos = t.positions()
     if t.alert:                                  # the bar takes the column titles' line
-        draw_alert(t, 9, "e - пояснення")
+        draw_alert(t, 9, "⌫ $X  e" if t.alert["kind"] == "alarm" else "e - пояснення")
     else:
         text("робочі", (60, 10), DIM, f_small, right=True)
         text("машинні", (126, 10), DIM, f_small, right=True)
@@ -1903,7 +1909,7 @@ def draw_scanner(t, popup):
         text("немає ?", (x + 5, 0), RED, f_small)
     text(state, (126, 0), STATE_COLORS.get(state.split(":")[0], FG) if t.status else DIM, f_bold, right=True)
     if t.alert:
-        draw_alert(t, 9, "e - пояснення")
+        draw_alert(t, 9, "⌫ $X  e" if t.alert["kind"] == "alarm" else "e - пояснення")
     else:
         text("робочі", (60, 10), DIM, f_small, right=True)
         text("машинні", (126, 10), DIM, f_small, right=True)
@@ -1969,6 +1975,7 @@ HELP = ["Введення + Enter - надіслати рядок", "↑/↓ - �
         "F4 / Ctrl+O - файл: запуск, кроки, перегляд, межі, обвід",
         "F5 / Ctrl+G - grbl: ?, скидання, $X, $H, налаштування $",
         "Ctrl+T - пульт: F2/F3 подача, F4 100%, F5 швидкі",
+        "Backspace на порожньому рядку в Alarm - $X",
         "? ! ~ на порожньому рядку - одразу (grbl)", "Ctrl+X - скидання, Ctrl+C / D - байт",
         "telnet <IP> [порт] + Enter - профіль через мережу",
         "Esc - очистити рядок, закрити меню", "quit + Enter або F1 → Вихід - вийти",
@@ -1986,6 +1993,7 @@ PENDANT_HELP = [
     "F2 / F3 - подача -/+10 %, F4 - подача 100 %, F5 - швидкі 100 / 50 / 25 %.",
     "# Інше",
     "ПРОБІЛ або Ctrl+X - АВАРІЙНА ЗУПИНКА (програмна; далі $X).",
+    "Backspace - $X, зняти блокування Alarm (і після аварійної зупинки).",
     "e - пояснення помилки / аварії. Esc - назад у термінал (там F1 - меню).",
     "HAT: джойстик - X / Y, KEY1 / KEY2 - Z, натиск - крок, KEY3 - стоп (двічі - вихід).",
 ]
@@ -2000,6 +2008,7 @@ SCANNER_HELP = [
     "w - майстер сканування. Enter - продовжити після M0.",
     "F2 / F3 - подача -/+10 %, F4 - 100 %, F5 - швидкі 100 / 50 / 25 %.",
     "ПРОБІЛ або Ctrl+X - АВАРІЙНА ЗУПИНКА (зупиняє і стіл).",
+    "Backspace - $X, зняти блокування Alarm.",
     "e - пояснення помилки. Esc - назад у термінал (там F1 - меню).",
     "HAT: джойстик ↑/↓ - Y, ←/→ - стіл, KEY1 / KEY2 - серво, натиск - крок Y, KEY3 - стоп (двічі - вихід).",
 ]
@@ -2136,13 +2145,11 @@ def main():
         return Popup("Порт: " + t.prof["name"], items, pick)
 
     def file_menu():
-        items = ["Відкрити файл…"]
+        items = ["Відкрити файл…", "Майстер сканування…" if t.scanner() else "Редактор фігур…"]
         if t.job:
             items += ["Запустити весь", "Покроково (Enter - рядок)", "Пауза / продовжити", "Стоп (скидання)",
                       "Перегляд траєкторії", "Межі й перевірка", "Обвести межі (G0 на поточній Z)",
                       "Корекції подачі…", "Закрити файл"]
-        if t.scanner():
-            items.append("Майстер сканування…")
 
         def pick(i):
             nonlocal popup
@@ -2180,6 +2187,9 @@ def main():
                 return None
             elif what.startswith("Майстер"):
                 popup = ScanForm(t)
+                return None
+            elif what.startswith("Редактор"):
+                popup = editor()
                 return None
             elif what.startswith("Закрити"):
                 t.stop_job(reset=False)
@@ -2344,58 +2354,40 @@ def main():
     def help_popup():
         return Popup("Довідка", HELP, lambda i: "close")
 
+    def editor():
+        return shapeedit.Editor(sys.modules[__name__], t, t.job.path if t.job else None)
+
     def main_menu():
-        items = ["Пульт сканера" if t.scanner() else "Пульт (pendant)", "Порт…", "Файл G-code…", "grblHAL…",
-                 "Повний вивід: %s" % ("сховати" if t.show_full else "показати"), "Довідка",
-                 "Пояснити помилку / аварію", "Вихід", "Профіль: %s…" % t.prof["name"], "Налаштування $…",
-                 "Корекції…"]
+        # a sensible order: the machine, the work, then the rest
+        items = ["Пульт сканера" if t.scanner() else "Пульт (pendant)",
+                 "Майстер сканування…" if t.scanner() else "Редактор фігур…", "Файл G-code…"]
         if t.job:
             items.append("Перегляд траєкторії")
-        if t.scanner():
-            items.append("Майстер сканування…")
+        items += ["Порт…", "grblHAL…", "Налаштування $…", "Корекції…", "Профіль: %s…" % t.prof["name"],
+                  "Повний вивід: %s" % ("сховати" if t.show_full else "показати"), "Пояснити помилку / аварію",
+                  "Довідка", "Вихід"]
 
         def pick(i):
             nonlocal popup
             what = items[i]
-            if what.startswith("Профіль"):
-                popup = profile_menu()
-                return None
-            if what.startswith("Налаштування"):
-                popup = SettingsView(t)
-                return None
-            if what.startswith("Корекції"):
-                popup = ov_menu()
-                return None
-            if what.startswith("Перегляд"):
-                popup = PathView(t, t.job)
-                return None
-            if what.startswith("Майстер"):
-                popup = ScanForm(t)
-                return None
-            i -= 1
-            if i == -1:
+            if what.startswith("Пульт"):
                 t.pendant = True
                 t.wco = None
                 if t.scanner() and 451 not in t.settings and t.port:
                     t.ask_settings()                  # the servo's limits ($451 / $452)
                 return "close"
-            if i == 0:
-                popup = port_menu()
-            elif i == 1:
-                popup = file_menu()
-            elif i == 2:
-                popup = grbl_menu()
-            elif i == 3:
+            if what.startswith("Повний вивід"):
                 t.show_full = not t.show_full
                 t.scroll = 0
                 t.save_cfg()
                 return "close"
-            elif i == 4:
-                popup = help_popup()
-            elif i == 5:
-                popup = TextPopup("Помилки й аварії", explain_lines(t))
-            else:
+            if what == "Вихід":
                 return "quit"
+            popup = {"Редактор": editor, "Майстер": lambda: ScanForm(t), "Файл": file_menu,
+                     "Перегляд": lambda: PathView(t, t.job), "Порт": port_menu, "grblHAL": grbl_menu,
+                     "Налаштування": lambda: SettingsView(t), "Корекції": ov_menu, "Профіль": profile_menu,
+                     "Пояснити": lambda: TextPopup("Помилки й аварії", explain_lines(t)),
+                     "Довідка": help_popup}[what.split()[0].rstrip("…:")]()
             return None
         return Popup("Меню", items, pick)
 
@@ -2437,6 +2429,8 @@ def main():
             t.pendant = False
         elif k == pygame.K_F1:
             return "help"
+        elif k == pygame.K_BACKSPACE:
+            t.unlock()
         elif k in JOG_KEYS:
             if not t.jog and JOG_KEYS[k][0] in t.axes:
                 axis, sign = JOG_KEYS[k]
@@ -2493,6 +2487,8 @@ def main():
             t.pendant = False
         elif k == pygame.K_F1:
             return "help"
+        elif k == pygame.K_BACKSPACE:
+            t.unlock()
         elif k in (pygame.K_UP, pygame.K_DOWN):
             ax = "Y" if "Y" in t.axes else t.axes[0]
             if not t.jog:
@@ -2548,6 +2544,11 @@ def main():
             browse["dir"] = os.path.join(GCODE_DIR, "settings")
             popup = browser()
             t.flash("файл налаштувань: потім F4 → Запустити весь")
+        elif isinstance(r, tuple) and r[0] == "load":       # the shape editor saved its G-code
+            popup = None
+            load_job(r[1])
+            t.say("sys", "креслення %s.svg, G-code .nc - F4: перегляд, межі, запуск" %
+                  r[1][:-3].replace(os.path.expanduser("~"), "~"))
         elif r in ("scan-make", "scan-run"):
             lines, total = scan_gcode(popup.p, float(t.prof.get("table_steps_per_deg", 8.88889)))
             d = os.path.join(GCODE_DIR, "scan")
@@ -2571,6 +2572,9 @@ def main():
             if ev.type == pygame.QUIT:
                 running = False
                 break
+            if ev.type == pygame.KEYUP and popup and hasattr(popup, "keyup"):
+                popup.keyup(ev.key)                # the shape editor: a held arrow let go
+                continue
             if ev.type == pygame.KEYUP and t.pendant:
                 t.jog_stop(ev.key)                 # a held jog key let go: stop at once
                 continue
@@ -2591,6 +2595,7 @@ def main():
                     popup = ScanForm(t)
                 continue
             if popup:
+                popup.mod = getattr(ev, "mod", 0)
                 popup_result(popup.key(k, hat, ch))
                 continue
             if t.ask:                              # the input line asks for a value
@@ -2659,6 +2664,8 @@ def main():
                         t.scroll = 0
 
             elif k == pygame.K_BACKSPACE:
+                if not t.input and t.status and t.status[0].startswith("Alarm"):
+                    t.unlock()                        # an empty line in Alarm: Backspace = $X
                 t.input = t.input[:-1]
             elif k == pygame.K_UP:
                 if t.h > 0:
@@ -2688,16 +2695,19 @@ def main():
                 else:
                     t.input += ch
         t.tick()
+        if popup and hasattr(popup, "tick"):
+            popup.tick()
         # redraw at most ~12 times a second, and only when something changed
         key = (len(t.cmd), t.cmd[-1] if t.cmd else None, len(t.full), t.full[-1] if t.full else None, t.input,
-               t.status, t.scroll, t.show_full, t.poll, popup and (popup.sel, id(popup)), t.port is not None,
+               t.status, t.scroll, t.show_full, t.poll, popup and (getattr(popup, "sel", None), id(popup)), t.port is not None,
                t.job and (t.job.pos, t.job.mode, t.job.paused), t.note, int(time.monotonic() * 2),
                t.pendant, t.step_i, t.spindle, t.jog and t.jog["axis"], str(t.wco),
                t.pendant and (t.status_n, time.monotonic() - t.status_t > 1.0), str(t.alert),
                popup and getattr(popup, "top", 0), t.ov and tuple(t.ov), t.pins, t.ask and t.ask["prompt"],
                len(t.settings), len(t.smeta), len(t.sdescr), t.tbl_i, t.srv_i,
-               popup and str([getattr(popup, a, None) for a in ("level", "edit", "filter", "scale", "cx", "cy",
-                                                                 "view", "msg", "gsel", "p")]))
+               popup and (popup.state() if hasattr(popup, "state") else
+                          str([getattr(popup, a, None) for a in ("level", "edit", "filter", "scale", "cx", "cy",
+                                                                 "view", "msg", "gsel", "p")])))
         if key != shown_key:
             if t.pendant:
                 (draw_scanner if t.scanner() else draw_pendant)(t, popup)
