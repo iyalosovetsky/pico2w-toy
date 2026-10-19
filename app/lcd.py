@@ -81,7 +81,7 @@ KEYMAP = {
     1: pygame.K_ESCAPE, 57: pygame.K_SPACE, 96: pygame.K_RETURN, 15: pygame.K_TAB,
     14: pygame.K_BACKSPACE, 104: pygame.K_PAGEUP, 109: pygame.K_PAGEDOWN,
     102: pygame.K_HOME, 107: pygame.K_END, 12: pygame.K_MINUS, 13: pygame.K_EQUALS,
-    59: pygame.K_F1,
+    59: pygame.K_F1, 60: pygame.K_F2, 61: pygame.K_F3, 62: pygame.K_F4, 63: pygame.K_F5,
     # digits 4-0, "." and k / m (number entry, e.g. 2.5k in the generator)
     5: pygame.K_4, 6: pygame.K_5, 7: pygame.K_6, 8: pygame.K_7, 9: pygame.K_8, 10: pygame.K_9,
     11: pygame.K_0, 52: pygame.K_PERIOD, 37: pygame.K_k, 50: pygame.K_m,

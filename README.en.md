@@ -38,7 +38,8 @@ joystick and buttons or with a small USB keyboard.
 | ![chess](docs/gif-picocalc/chess.gif) | ![preferans](docs/gif-picocalc/preferans.gif) | ![doom](docs/gif-picocalc/doom.gif) | ![aichat](docs/gif-picocalc/aichat.gif) |
 | **Books** | **PDF** | **GENERATOR** | **Voltmeter** |
 | ![reader](docs/gif-picocalc/reader.gif) | ![pdf](docs/gif-picocalc/pdf.gif) | ![generator](docs/gif-picocalc/generator.gif) | ![voltmeter](docs/gif-picocalc/voltmeter.gif) |
-| **Oscilloscope** | **Logic analyzer** | **Calculator** | **RADIO** | Internet radio (PicoCalc, speaker): stations from radio-browser.info - favourites, popular Ukrainian ones, genres, search; the song title from the stream (ICY), ffmpeg decodes MP3 / AAC / OGG / HLS, reconnects, volume |
+| **Oscilloscope** | **Logic analyzer** | **Calculator** | **SERIAL** | A terminal for serial devices, made for grblHAL: ttyACM / ttyUSB / a choice, two panes (commands with 1-2 answer lines, and the full output - hideable), the grbl status line, real-time commands, explained error / alarm codes, G-code from ~/gcode - all at once or step by step, pause / stop; hands the port to minicom |
+| **RADIO** | Internet radio (PicoCalc, speaker): stations from radio-browser.info - favourites, popular Ukrainian ones, genres, search; the song title from the stream (ICY), ffmpeg decodes MP3 / AAC / OGG / HLS, reconnects, volume |
 | **SYNTH** | Synthesizer (PicoCalc, speaker): piano, electric piano, organ, violin, strings, trumpet, flute, clarinet, xylophone, marimba, bells, guitar, bass, synth, drums - sounds synthesized with numpy; polyphonic, tracker-style keys (z..m, q..u), a rhythm machine (rock, disco, hip-hop, funk, bossa nova, reggae, waltz, march) |
 | **SDR** |
 | ![oscilloscope](docs/gif-picocalc/oscilloscope.gif) | ![logic](docs/gif-picocalc/logic.gif) | ![calc](docs/gif-picocalc/calc.gif) | ![sdr](docs/gif-picocalc/sdr.gif) |
@@ -161,6 +162,7 @@ How the pieces fit together:
 | `app/reader.py`, `app/books.py`, `app/pdfdoc.py` | The reader: UI, EPUB / FB2 / TXT / ZIP parsing (FB2 and TXT in any encoding), PDF pages via `pdftoppm` |
 | `app/prefgame/` | [Python Pref](https://sourceforge.net/projects/python-pref/) 2.34 engine and AI, ported to Python 3 (GPL-3.0) |
 | `app/siggen.py`, `app/uartproto.py` | GENERATOR: generator, voltmeter, oscilloscope, logic analyzer, decoder, UART tester (protocols and checksums - `uartproto.py`), display tester; the board's firmware - `tools/siggen/` |
+| `app/serialterm.py` | SERIAL: the serial port (termios), grblHAL answers and status reports, G-code streaming "a line - ok" |
 | `app/radio.py` | RADIO: the radio-browser.info API, reading the stream with ICY metadata, ffmpeg -> ALSA, volume through `amixer` |
 | `app/synth.py` | SYNTH: instrument and drum synthesis (additive, FM, Karplus-Strong, noise), pygame mixer, the rhythm machine on its own thread |
 | `app/sdr.py` | SDR: `rtl_tcp` in the background, numpy DSP (filters, WFM / NFM / AM / SSB demodulators), spectrum and waterfall, sound through `aplay` |
