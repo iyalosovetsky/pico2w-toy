@@ -9,3 +9,7 @@ app/tetris_hi.txt
 app/preferans_save.json
 # FreeCAD backups
 *.FCBak
+
+# MemPalace per-project files (issue #185)
+mempalace.yaml
+entities.json
