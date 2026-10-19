@@ -246,7 +246,9 @@ In the text's numbers (Space on its frame): depth, text, **font** (DejaVu Sans /
 | Cut | The tool |
 |---|---|
 | **заливка** (filled, the default) | rings inwards from each letter's edge: the first half a tool in (the letter keeps its shape), then at the pocket stepover; a 1 mm hop between rings |
-| контур (outline) | exactly on the letters' lines — for a V-bit |
+| по контуру (on the line) | the centre line — the tool's centre exactly on the letters' lines (a V-bit) |
+| зовні (outside) | moved out by the tool's radius — a trace round the letters, the letters keep their size |
+| всередині (inside) | moved in by the tool's radius — a groove along the edge inside each stroke |
 
 > Small text wants a thin tool: a stroke thinner than the tool only gets its outline.
 

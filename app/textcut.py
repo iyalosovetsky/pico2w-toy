@@ -10,7 +10,9 @@ import os
 
 FONT_DIR = "/usr/share/fonts/truetype/dejavu/"
 FONTS = ["DejaVuSans-Bold", "DejaVuSans", "DejaVuSerif-Bold", "DejaVuSerif", "DejaVuSansMono-Bold", "DejaVuSansMono"]
-FILLS = ["заливка", "контур"]          # filled letters / along the outline (a V-bit)
+# filled letters; along the outline (its centre line - a V-bit); outside / inside the letters by the tool's radius
+FILLS = ["заливка", "по контуру", "зовні", "всередині"]
+OLD_FILLS = {"контур": "по контуру"}
 FRAMES = ["прямокутник", "коло"]
 SCALE = 1000.0                         # pyclipper works in integers: µm
 CHORD = 0.03                           # a curve chord, in em (fine enough for letters a few mm high)
@@ -171,8 +173,18 @@ def _toolpaths(sh, tool, stepover):
     pc.AddPaths([[(round(x * SCALE), round(y * SCALE)) for x, y in p] for p in polys], pyclipper.PT_SUBJECT, True)
     shape = pc.Execute(pyclipper.CT_UNION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
     rings = []
-    if sh.get("fill", FILLS[0]) == FILLS[1] or tool <= 0:
+    fill = OLD_FILLS.get(sh.get("fill"), sh.get("fill", FILLS[0]))
+
+    def offset(d):
+        off = pyclipper.PyclipperOffset()
+        off.AddPaths(shape, pyclipper.JT_ROUND, pyclipper.ET_CLOSEDPOLYGON)
+        return off.Execute(d * SCALE)
+    if fill == FILLS[1] or tool <= 0:                # on the line
         rings = _paths(shape)
+    elif fill == FILLS[2]:                           # outside: the letters keep their size
+        rings = _paths(offset(tool / 2))
+    elif fill == FILLS[3]:                           # inside: the tool stays within the strokes
+        rings = _paths(offset(-tool / 2)) or _paths(shape)
     else:
         step = max(0.02, tool * min(max(stepover, 5.0), 100.0) / 100.0)
         k = tool / 2
