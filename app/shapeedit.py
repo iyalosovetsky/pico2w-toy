@@ -15,6 +15,8 @@ import re
 import time
 import xml.etree.ElementTree as ET
 
+import svgimport
+
 import pygame
 
 SHAPES_DIR = os.path.expanduser("~/gcode/shapes")
@@ -24,7 +26,8 @@ GRID_STEPS = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
 SIDES = ["по лінії", "зовні", "всередині", "карман"]     # карман (a pocket): all the inside cleared
 POCKET = SIDES[3]
 TOOLS = {"c": "circle", "e": "ellipse", "r": "rect", "a": "arc", "l": "line"}
-NAMES = {"circle": "коло", "ellipse": "еліпс", "rect": "прямокутник", "arc": "дуга", "line": "лінія"}
+NAMES = {"circle": "коло", "ellipse": "еліпс", "rect": "прямокутник", "arc": "дуга", "line": "лінія",
+         "poly": "контур"}           # poly: a polyline imported from an SVG (curves as chords)
 # the points each tool asks for, in order
 STEPS = {"circle": ["центр", "точка на колі"], "ellipse": ["центр", "кут рамки (rx, ry)"],
          "rect": ["перший кут", "протилежний кут"], "arc": ["центр", "початок", "кінець"],
@@ -71,7 +74,10 @@ HELP = [
     "Креслення - ~/gcode/shapes/НАЗВА.svg (відкривається будь-де, напр. в Inkscape) і поруч НАЗВА.nc (G-code).",
     "Зберігається саме за секунду після кожної зміни: ● - ще ні, ✓ - збережено. Нове креслення - shape (shape-2 …).",
     "s - зберегти як: нова назва (робоче shape просто перейменовується). o - відкрити: список креслень, «+ нове».",
-    "Esc - вийти: креслення збережене, його G-code відкривається в SERIAL (F4 - перегляд, межі, запуск).",
+    "i - імпорт SVG (з Inkscape тощо; ~/gcode, ~/Downloads, ~): фігури додаються лівим нижнім кутом у хрестик,",
+    "  у справжніх мм (одиниці й viewBox файлу); криві й складні фігури стають контурами (ламана, хорди ~0,3 мм).",
+    "  Контур: Enter - точки (середина - перенести, правий верхній кут - масштаб), пробіл - X / Y, ширина, висота.",
+    "Esc двічі (за 2 с) - вийти: креслення збережене, його G-code відкривається в SERIAL (F4 - перегляд, межі, запуск).",
     "Редактор відкриває креслення відкритого в SERIAL файлу, інакше останнє.",
 ]
 
@@ -124,6 +130,8 @@ def arc_sweep(sh):
 def points(sh, n=48):
     """The shape as a polyline (for drawing)."""
     t = sh["type"]
+    if t == "poly":
+        return [tuple(p) for p in sh["pts"]]
     if t == "circle":
         return [(sh["cx"] + sh["r"] * math.cos(2 * math.pi * k / n), sh["cy"] + sh["r"] * math.sin(2 * math.pi * k / n))
                 for k in range(n + 1)]
@@ -165,6 +173,9 @@ def path_moves(sh, reverse=False):
     """(start point, [G-code moves]) of one pass along a shape; open shapes can go backwards."""
     t = sh["type"]
     f = "%.3f"
+    if t == "poly":
+        pts = sh["pts"][::-1] if reverse and not sh.get("closed") else sh["pts"]
+        return tuple(pts[0]), ["G1 X%s Y%s" % (f % x, f % y) for x, y in pts[1:]]
     if t == "circle":
         cx, cy, r = sh["cx"], sh["cy"], sh["r"]
         return (cx - r, cy), ["G2 X%s Y%s I%s J0" % (f % (cx - r), f % cy, f % r)]
@@ -348,6 +359,10 @@ def svg_text(shapes, params):
             rad = min(sh.get("rad", 0.0), sh["w"] / 2, sh["h"] / 2)
             out.append('<rect x="%s" y="%s" width="%s" height="%s" rx="%s" ry="%s"%s/>' % (
                 f(sh["x"]), f(sh["y"]), f(sh["w"]), f(sh["h"]), f(rad), f(rad), side))
+        elif t == "poly":
+            pts = sh["pts"][:-1] if sh.get("closed") and len(sh["pts"]) > 2 and sh["pts"][0] == sh["pts"][-1] else sh["pts"]
+            out.append('<%s points="%s"%s/>' % ("polygon" if sh.get("closed") else "polyline",
+                                                " ".join("%s,%s" % (f(x), f(y)) for x, y in pts), side))
         elif t == "line":
             out.append('<line x1="%s" y1="%s" x2="%s" y2="%s"%s/>' % (f(sh["x0"]), f(sh["y0"]), f(sh["x1"]), f(sh["y1"]),
                                                                     side))
@@ -397,6 +412,8 @@ def load(path):
     for el in root.iter(ns + "metadata"):
         if el.get("id") == "pico2w-toy" and el.text:
             params, ours = json.loads(el.text), True
+    if not ours:                                        # drawn elsewhere: units, transforms, curves
+        return svgimport.import_svg(path), {}
     vb = (root.get("viewBox") or "").split()
     height = float(vb[3]) if len(vb) == 4 else float(re.sub(r"[^\d.]", "", root.get("height", "200")) or 200)
     flip = (lambda y: y) if ours else (lambda y: height - y)   # a foreign SVG has y going down
@@ -421,11 +438,41 @@ def load(path):
             d = json.loads(el.get("data-arc"))
             d["type"] = "arc"
             shapes.append(d)
+        elif tag in ("polyline", "polygon"):
+            v = [float(x) for x in re.findall(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?", el.get("points") or "")]
+            pts = [[x, y] for x, y in zip(v[0::2], v[1::2])]
+            if tag == "polygon" and pts:
+                pts.append(list(pts[0]))
+            shapes.append({"type": "poly", "pts": pts, "closed": tag == "polygon"})
         else:
             continue
         if el.get("data-depth"):
             shapes[-1]["depth"] = float(el.get("data-depth"))
     return shapes, params
+
+
+def import_sources():
+    """SVG files to import from: ~/gcode (and its folders), ~/Downloads, home - newest first."""
+    home = os.path.expanduser("~")
+    found = {}
+    for d in (os.path.join(home, "gcode"), os.path.join(home, "Downloads"), home):
+        try:
+            entries = os.listdir(d)
+        except OSError:
+            continue
+        for f in entries:
+            full = os.path.join(d, f)
+            if f.lower().endswith(".svg"):
+                found[full] = full
+            elif d.endswith("gcode") and os.path.isdir(full) and not f.startswith("."):
+                try:
+                    for g in os.listdir(full):
+                        if g.lower().endswith(".svg"):
+                            found[os.path.join(full, g)] = os.path.join(full, g)
+                except OSError:
+                    pass
+    items = [(p.replace(home, "~"), p) for p in found]
+    return sorted(items, key=lambda kv: os.path.getmtime(kv[1]), reverse=True)
 
 
 def drawings():
@@ -466,6 +513,9 @@ def shape_dist(sh, p):
 def handles(sh):
     """The points that shape a figure: (name, (x, y)); "move" drags the whole figure."""
     t = sh["type"]
+    if t == "poly":                                     # the middle moves it, the top right corner scales it
+        xs, ys = [p[0] for p in sh["pts"]], [p[1] for p in sh["pts"]]
+        return [("move", ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2)), ("scale", (max(xs), max(ys)))]
     if t == "circle":
         return [("move", (sh["cx"], sh["cy"])), ("r", (sh["cx"] + sh["r"], sh["cy"]))]
     if t == "ellipse":
@@ -494,6 +544,13 @@ def set_handle(orig, name, p):
             if kx in sh:
                 sh[kx] += dx
                 sh[ky] += dy
+        if t == "poly":
+            sh["pts"] = [[x + dx, y + dy] for x, y in orig["pts"]]
+    elif name == "scale":                               # evenly, from the bottom left corner
+        xs, ys = [q[0] for q in orig["pts"]], [q[1] for q in orig["pts"]]
+        x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
+        k = max(0.01, max((p[0] - x0) / max(x1 - x0, 1e-9), (p[1] - y0) / max(y1 - y0, 1e-9)))
+        sh["pts"] = [[x0 + (x - x0) * k, y0 + (y - y0) * k] for x, y in orig["pts"]]
     elif name == "r":
         sh["r"] = math.dist((sh["cx"], sh["cy"]), p)
     elif name == "size":
@@ -516,6 +573,13 @@ def set_handle(orig, name, p):
 def shape_rows(sh, anchor):
     """The numbers form of a figure: [key, label, value, choices]; X / Y by the anchor (corner / centre)."""
     t = sh["type"]
+    if t == "poly":
+        xs, ys = [p[0] for p in sh["pts"]], [p[1] for p in sh["pts"]]
+        w, h = max(xs) - min(xs), max(ys) - min(ys)
+        x, y = ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2) if anchor == ANCHORS[1] else (min(xs), min(ys))
+        return [["anchor", "Прив'язка X / Y", anchor, ANCHORS], ["X", "X", round(x, 4), None],
+                ["Y", "Y", round(y, 4), None], ["w", "Ширина", round(w, 4), None], ["h", "Висота", round(h, 4), None],
+                ["depth", "Глибина (0 - загальна)", sh.get("depth", 0.0), None]]
     if t in ("rect", "circle", "ellipse"):
         if t == "rect":
             w, h = sh["w"], sh["h"]
@@ -552,6 +616,15 @@ def rows_shape(sh, vals):
     """The figure from the form's values (the inverse of shape_rows)."""
     out = dict(sh)
     t = sh["type"]
+    if t == "poly":                                     # moved and scaled to the new box
+        xs, ys = [p[0] for p in sh["pts"]], [p[1] for p in sh["pts"]]
+        x0, y0, w0, h0 = min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+        w, h = abs(vals["w"]), abs(vals["h"])
+        nx, ny = (vals["X"] - w / 2, vals["Y"] - h / 2) if vals["anchor"] == ANCHORS[1] else (vals["X"], vals["Y"])
+        kx, ky = (w / w0 if w0 else 1.0), (h / h0 if h0 else 1.0)
+        out["pts"] = [[nx + (x - x0) * kx, ny + (y - y0) * ky] for x, y in sh["pts"]]
+        out["depth"] = abs(vals.get("depth", 0.0))
+        return out
     if t in ("rect", "circle", "ellipse"):
         w = abs(vals.get("d", vals.get("w", 0.0)))
         h = abs(vals.get("d", vals.get("h", 0.0)))
@@ -691,7 +764,9 @@ class Editor:
         self.preview = None       # (index, figure) while its numbers form is open
         self.form = None
         self.ask = None           # typing a new name ("Зберегти як")
-        self.files = None         # the open list: ([(name, path)], index)
+        self.files = None         # the open / import list: ([(name, path)], index)
+        self.files_mode = "open"
+        self.esc_t = 0.0          # the first Esc of the two that leave
         self.mod = 0
         self.hold = None          # a held arrow: {"key", "t0", "next"}
         self.help = None
@@ -761,7 +836,8 @@ class Editor:
         t = sh["type"]
         return {"circle": lambda: sh["r"] > 0, "ellipse": lambda: sh["rx"] > 0 and sh["ry"] > 0,
                 "rect": lambda: sh["w"] > 0 and sh["h"] > 0, "arc": lambda: sh["r"] > 0 and sh["a0"] != sh["a1"],
-                "line": lambda: (sh["x0"], sh["y0"]) != (sh["x1"], sh["y1"])}[t]()
+                "line": lambda: (sh["x0"], sh["y0"]) != (sh["x1"], sh["y1"]),
+                "poly": lambda: len(sh["pts"]) > 1}[t]()
 
     def hover(self):
         """The figure whose line is within HIT_PX of the cross-hair (the nearest one), or None."""
@@ -959,6 +1035,33 @@ class Editor:
                 self.files = (paths, (i - 1) % len(paths))
             elif k == pygame.K_DOWN:
                 self.files = (paths, (i + 1) % len(paths))
+            elif k in (pygame.K_RETURN, pygame.K_KP_ENTER) and self.files_mode == "import":
+                name, path = paths[i]
+                self.files = None
+                try:
+                    new = load(path)[0]
+                except (OSError, ValueError, ET.ParseError) as e:
+                    self.msg = "не прочитано: %s" % e
+                    return None
+                b = bounds(new)
+                if not b:
+                    self.msg = "у файлі немає фігур"
+                    return None
+                dx, dy = self.cur[0] - b[0], self.cur[1] - b[1]     # its bottom left onto the cross-hair
+                for sh in new:
+                    for kx, ky in (("cx", "cy"), ("x", "y"), ("x0", "y0"), ("x1", "y1")):
+                        if kx in sh:
+                            sh[kx] += dx
+                            sh[ky] += dy
+                    if sh["type"] == "poly":
+                        sh["pts"] = [[x + dx, y + dy] for x, y in sh["pts"]]
+                self.push_undo()
+                self.shapes += new
+                polys = sum(1 for sh in new if sh["type"] == "poly")
+                self.msg = "додано %d фігур (%d контурів), %s×%s мм" % (len(new), polys, fmt(round(b[2] - b[0], 2)),
+                                                                       fmt(round(b[3] - b[1], 2)))
+                self.fit()
+                return None
             elif k in (pygame.K_RETURN, pygame.K_KP_ENTER):
                 name, path = paths[i]
                 self.files = None
@@ -1059,6 +1162,10 @@ class Editor:
         elif k == pygame.K_ESCAPE:
             if self.tool:
                 self.tool, self.pts = None, []
+            elif time.monotonic() - self.esc_t > 2.0:   # one Esc never leaves: a second one within 2 s does
+                self.esc_t = time.monotonic()
+                self.flush()
+                self.msg = "Esc ще раз - вийти (креслення збережено)"
             else:                                       # leave: saved, and the G-code opens in SERIAL
                 self.flush()
                 return ("load", os.path.join(SHAPES_DIR, self.name + ".nc")) if self.shapes else "close"
@@ -1093,7 +1200,13 @@ class Editor:
             self.ask = "" if untitled(self.name) else self.name
         elif ch == "o":
             self.flush()
-            self.files = ([("+ нове креслення", None)] + drawings(), 0)
+            self.files, self.files_mode = ([("+ нове креслення", None)] + drawings(), 0), "open"
+        elif ch == "i":
+            src = import_sources()
+            if src:
+                self.files, self.files_mode = (src, 0), "import"
+            else:
+                self.msg = "немає .svg у ~/gcode, ~/Downloads, ~"
         return None
 
     def tick_grab(self):
@@ -1241,7 +1354,8 @@ class Editor:
             yy = max(10, (128 - h) / 2)
             pygame.draw.rect(screen, (20, 20, 30), (6, yy, 116, h), border_radius=3)
             pygame.draw.rect(screen, ui.ACCENT, (6, yy, 116, h), 1, border_radius=3)
-            text("Відкрити", (64, yy + 1), ui.ACCENT, ui.f_bold, center=True)
+            text("Відкрити" if self.files_mode == "open" else "Імпорт SVG у хрестик", (64, yy + 1), ui.ACCENT,
+                 ui.f_bold, center=True)
             top = min(max(0, i - n + 1), max(0, len(paths) - n))
             for j in range(top, min(len(paths), top + n)):
                 y = yy + 11 + (j - top) * lh

@@ -344,6 +344,7 @@ class Job:
         self.paused = False
         self.started = 0.0
         self.error = ""
+        self.pre = []           # lines sent before the file's (a run from the middle: modes, spindle, position)
 
     def done(self):
         return self.pos >= len(self.lines) and not self.waiting
@@ -470,6 +471,7 @@ class Term:
         self.settings = {}       # $$ values {id: float or str}
         self.ov = None           # the overrides (feed, rapid, spindle %) from the last report that had them
         self.pins = ""           # Pn: the input signals now active
+        self.view_poll = False   # the toolpath view is open: poll ? for the machine's position
         self.queue = []          # lines to send one by one (outline)
         self.queue_wait = False
         self.apply_profile()
@@ -737,6 +739,13 @@ class Term:
             return
         job = self.job
         final = line == "ok" or line.startswith("error") or line.startswith("ALARM")
+        if job and job.waiting and getattr(job, "pre_wait", False) and (line == "ok" or line.startswith("error")):
+            job.waiting, job.pre_wait = False, False
+            if line.startswith("error"):              # the set-up failed: nothing of the file is sent
+                job.error = "підготовка: %s" % explain(line)
+                self.say("err", job.error)
+                job.pre, job.paused = [], True
+            return
         if job and job.waiting and (line == "ok" or line.startswith("error")):
             job.waiting = False
             if line.startswith("error"):
@@ -785,6 +794,14 @@ class Term:
         if not job or not job.mode or job.waiting or job.paused or job.done():
             return
         if job.mode == "run":
+            if job.pre:                               # resuming: set the machine up first
+                line = job.pre[0]
+                if self.send(line, log=False):
+                    job.pre.pop(0)
+                    job.waiting = True
+                    self.queue_wait = False
+                    job.pre_wait = True
+                return
             n, line = job.lines[job.pos]
             if self.send(line, log=False):
                 job.pos += 1
@@ -813,14 +830,23 @@ class Term:
         if job.mode is None:
             job.pos = 0 if job.done() or job.pos == 0 else job.pos
             job.started = time.monotonic()
-        job.mode, job.paused, job.error = "run", False, ""
+        job.mode, job.paused, job.error, job.pre = "run", False, "", []
         self.say("sys", "▶ %s: %d рядків" % (job.name, len(job.lines)))
+
+    def run_from(self, idx):
+        """Run the file from line idx (an index into job.lines): set the machine up as the file had it there."""
+        job = self.job
+        pre, notes = gcodeinfo.resume_preamble([l for _, l in job.lines], idx, job.info)
+        job.pos, job.pre, job.error, job.paused = idx, pre, "", False
+        job.mode, job.started = "run", time.monotonic()
+        self.say("sys", "▶ %s з рядка %d: %s" % (job.name, job.lines[idx][0], "; ".join(notes)))
 
     def stop_job(self, reset=True):
         if self.job and self.job.mode:
             self.say("sys", "■ зупинено на рядку %d" % (self.job.lines[max(0, self.job.pos - 1)][0]))
         if self.job:
             self.job.mode, self.job.waiting, self.job.paused, self.job.pos = None, False, False, 0
+            self.job.pre = []
         if reset and self.port:
             self.send("\x18", log=False, realtime=True)   # grbl drops its buffers and stops
 
@@ -900,6 +926,8 @@ class Term:
         self.jog = None
         if self.job and self.job.mode:
             self.job.mode, self.job.waiting, self.job.paused, self.job.pos = None, False, False, 0
+        if self.job:
+            self.job.pre = []
         self.say("err", "■ АВАРІЙНА ЗУПИНКА - далі Backspace ($X), щоб розблокувати")
 
     def unlock(self):
@@ -1028,7 +1056,7 @@ class Term:
             self.port.write("?")
         self.jog_tick(now)
         self.pump_queue()
-        if self.poll and self.port and now - self.last_poll > POLL_S:
+        if (self.poll or self.view_poll) and self.port and now - self.last_poll > POLL_S:
             self.last_poll = now
             self.port.write("?")
         self.pump_job()
@@ -1354,6 +1382,25 @@ class Popup:
             text(fit(self.items[i], f_small, 108), (10, y), FG, f_small)
 
 
+PATH_HELP = [
+    "# Траєкторія",
+    "Стрілки - хрестик (утримання - швидше); найближчий рух білий, його рядок - у вікні G-code.",
+    "+ / - - масштаб навколо хрестика, 0 - вмістити все, v - XY / XZ.",
+    "Кольори: швидкі - сірі, робочі - за глибиною (помаранчевий - найглибше, бірюзовий - вгорі), виконане - зелене;",
+    "  кружечок - де зараз інструмент.",
+    "# Вікно G-code",
+    "Tab - фокус у вікно і назад. ↑/↓ - рядок, ←/→ або PgUp/PgDn - по 5; рух рядка підсвічується.",
+    "# Запуск",
+    "r - запустити файл з початку. Enter у вікні G-code - з цього рядка: спершу режими (G21 G90, площина,",
+    "  система координат), шпиндель з розгоном, підйом на безпечну Z, переїзд у X Y перед рядком, опускання,",
+    "  подача - усе показано в підтвердженні.",
+    "Під час виконання: смуга ходу внизу (%, минуло, лишилось), вікно й хрестик ідуть за рядком;",
+    "  стрілки - роздивитися (стеження вимикається), f - знову стежити.",
+    "Пробіл - пауза / продовжити, Ctrl+X - стоп (скидання grbl).",
+    "Esc - закрити перегляд (файл виконується далі). HAT: натиск - фокус, KEY1/2 - масштаб, KEY3 - закрити.",
+]
+
+
 def hhmm(sec):
     sec = int(sec or 0)
     return "%d:%02d:%02d" % (sec // 3600, sec // 60 % 60, sec % 60) if sec >= 3600 else "%d:%02d" % (sec // 60, sec % 60)
@@ -1441,6 +1488,8 @@ class PathView:
         self.line = None                # the G-code line (an index into job.lines) lit
         self.hold = None
         self.mod = 0
+        self.help = None
+        self.follow_job = bool(job.mode)   # while it runs: the window and the cross-hair follow the line sent
         self.by_line = {}
         for i, sg in enumerate(job.info.segs):
             self.by_line.setdefault(sg[7], []).append(i)
@@ -1516,7 +1565,7 @@ class PathView:
     def tick(self):
         h = self.hold
         now = time.monotonic()
-        if not h or now < h["next"]:
+        if not h or now < h["next"] or self.help:
             return
         if self.focus == "path":
             self.step(h["key"], 3 if now - h["t0"] > 1.5 else 1)
@@ -1526,13 +1575,25 @@ class PathView:
 
     def key(self, k, hat=False, ch=""):
         arrows = (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN)
+        if self.help:
+            if self.help.key(k) == "close":
+                self.help = None
+            return None
+        if k == pygame.K_F1:
+            self.help = TextPopup("Перегляд траєкторії", PATH_HELP)
+            return None
+        if k in arrows + (pygame.K_PAGEUP, pygame.K_PAGEDOWN):
+            self.follow_job = False                     # looking around: stop following the run (f - again)
+        if ch in ("f", "F"):
+            self.follow_job = True
+            return None
         if hat and k == pygame.K_3:
             return "close"
         if (hat and k == pygame.K_RETURN) or k == pygame.K_TAB:
             self.focus = "code" if self.focus == "path" else "path"
             if self.focus == "code" and self.line is None:
                 self.to_line(0)
-        elif k == pygame.K_ESCAPE or k in (pygame.K_F1, pygame.K_F2, pygame.K_F3, pygame.K_F4, pygame.K_F5):
+        elif k == pygame.K_ESCAPE or k in (pygame.K_F2, pygame.K_F3, pygame.K_F4, pygame.K_F5):
             return "close"
         elif k in arrows and self.focus == "path":
             self.step(k)
@@ -1540,6 +1601,22 @@ class PathView:
         elif k in (pygame.K_UP, pygame.K_DOWN):
             self.to_line((self.line or 0) + (1 if k == pygame.K_DOWN else -1))
             self.hold = {"key": k, "t0": time.monotonic(), "next": time.monotonic() + 0.4}
+        elif k in (pygame.K_RETURN, pygame.K_KP_ENTER) and self.line is not None and self.job.lines:
+            return ("resume", self.line)                # run the file from this line
+        elif ch in ("r", "R") and self.job.lines:
+            return ("resume", 0)                        # run it all
+        elif ch == " " and self.job.mode == "run":      # pause / go on
+            t = self.t
+            if self.job.paused:
+                self.job.paused = False
+                t.send("~", log=False, realtime=True)
+                t.say("sys", "▶ продовжити")
+            else:
+                self.job.paused = True
+                t.send("!", log=False, realtime=True)
+                t.say("sys", "‖ пауза (feed hold)")
+        elif ch == "\x18" and self.job.mode:
+            self.t.stop_job()                           # Ctrl+X: grbl's soft reset - the job is over
         elif k in (pygame.K_PAGEUP, pygame.K_PAGEDOWN) or (self.focus == "code" and k in (pygame.K_LEFT, pygame.K_RIGHT)):
             self.to_line((self.line or 0) + (5 if k in (pygame.K_PAGEDOWN, pygame.K_RIGHT) else -5))
         elif ch in ("+", "=") or k in (pygame.K_KP_PLUS,) or (hat and k == pygame.K_1):
@@ -1560,8 +1637,10 @@ class PathView:
         return None
 
     def state(self):
+        j = self.job
         return repr((self.focus, self.line, [round(v, 4) for v in self.cur], self.scale, self.cx, self.cy, self.view,
-                     self.job.pos))
+                     j.pos, j.mode, j.paused, self.follow_job, j.mode and int(time.monotonic()),
+                     self.help and self.help.top))
 
     def render(self, done):
         """The toolpath on a native surface (redrawn when the view or the done part changes)."""
@@ -1596,11 +1675,19 @@ class PathView:
         return surf
 
     def draw(self):
+        self.draw_view()
+        if self.help:
+            self.help.draw()
+
+    def draw_view(self):
         t, job = self.t, self.job
         info = job.info
+        if self.follow_job and job.mode and job.pos and job.pos - 1 != self.line:
+            self.to_line(job.pos - 1)
         screen.fill(BG)
         text(fit(job.name, f_bold, 80), (2, 0), ACCENT, f_bold)
-        text(("Tab ↔  " if info.segs else "") + self.view, (126, 0), CYAN, f_bold, right=True)
+        text(("Enter ▶  " if self.focus == "code" else "Tab ↔  " if info.segs else "") + "F1 " + self.view, (126, 0),
+             CYAN, f_bold, right=True)
         done = job.pos if job.mode or job.pos else 0
         n = max(1, len(info.segs))
         bucket = 0
@@ -1647,7 +1734,15 @@ class PathView:
             num, src = lines[j]
             color = (110, 170, 110) if j < done else FG if j in self.by_line else (150, 150, 150)
             text(fit("%*d %s" % (nw, num, src), f_mono, 124), (2, y), color, f_mono)
-        # the bottom: the cross-hair's coordinates, or the sizes
+        # the bottom: the run's progress, or the cross-hair's coordinates, or the sizes
+        if job.mode:
+            frac, mode, tail = job_line(job)
+            pygame.draw.rect(screen, (40, 40, 40), (0, 119, 128, 9))
+            pygame.draw.rect(screen, ACCENT if job.paused else BLUE, (0, 119, 128 * frac, 9))
+            hint = "пробіл ‖" if not job.paused else "пробіл ▶"
+            text(fit(mode + tail, f_small, 124 - f_small.size(hint)[0]), (2, 119), FG, f_small)
+            text(hint, (126, 119), FG, f_small, right=True)
+            return
         if self.line is not None and info.segs:
             info_s = "%s%.2f %s%.2f · рядок %d/%d" % ("XYZ"[a], self.cur[0], "XYZ"[b], self.cur[1],
                                                       lines[self.line][0] if lines else 0, len(lines))
@@ -2352,6 +2447,41 @@ def main():
         except OSError as e:
             t.say("err", "%s: %s" % (os.path.basename(full), e.strerror or e))
 
+    def confirm_resume(idx, back):
+        job = t.job
+        if job.mode:
+            t.flash("файл уже виконується - спершу стоп")
+            return back
+        if not t.port:
+            t.flash("немає зв'язку")
+            return back
+        if t.status and t.status[0] != "Idle":
+            t.flash("лише в стані Idle (зараз %s)" % t.status[0])
+            return back
+        if idx == 0:
+            items, title = ["Ні, назад", "Так: увесь файл, %d рядків" % len(job.lines)], "Запустити файл?"
+        else:
+            pre, notes = gcodeinfo.resume_preamble([l for _, l in job.lines], idx, job.info)
+            items = ["Ні, назад", "Так: з рядка %d" % job.lines[idx][0]] + ["  " + n for n in notes]
+            title = "Запустити звідси?"
+
+        def pick(i):
+            nonlocal popup
+            if i == 1:
+                if idx == 0:
+                    job.pos = 0
+                    t.run_all()
+                else:
+                    t.run_from(idx)
+                back.follow_job = True                # the view tracks the running line
+                popup = back
+                return None
+            if i == 0:
+                popup = back
+                return None
+            return None
+        return Popup(title, items, pick)
+
     def confirm_outline():
         info = t.job.info
         if info.lo[0] is None or info.lo[1] is None:
@@ -2658,6 +2788,8 @@ def main():
             browse["dir"] = os.path.join(GCODE_DIR, "settings")
             popup = browser()
             t.flash("файл налаштувань: потім F4 → Запустити весь")
+        elif isinstance(r, tuple) and r[0] == "resume":     # the toolpath view: run from a line
+            popup = confirm_resume(r[1], popup)
         elif isinstance(r, tuple) and r[0] == "load":       # the shape editor saved its G-code
             popup = None
             load_job(r[1])
@@ -2808,6 +2940,7 @@ def main():
                         t.pending = None
                 else:
                     t.input += ch
+        t.view_poll = isinstance(popup, PathView)
         t.tick()
         if popup and hasattr(popup, "tick"):
             popup.tick()
@@ -2836,9 +2969,17 @@ def main():
     t.disconnect()
 
 
+CRASH_LOG = "/tmp/serialterm-crash.log"
+
 if __name__ == "__main__":
     try:
         main()
+    except Exception:
+        # the menu throws stderr away: keep the traceback where it can be found
+        import traceback
+        with open(CRASH_LOG, "a", encoding="utf-8") as fh:
+            fh.write("---- %s\n%s" % (time.strftime("%Y-%m-%d %H:%M:%S"), traceback.format_exc()))
+        raise
     finally:
         screen.fill(BG)
         lcd.flip()

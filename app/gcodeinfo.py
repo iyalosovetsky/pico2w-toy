@@ -219,3 +219,100 @@ def fits(info, wco, settings):
         if under > 0.01 or over > 0.01:
             out.append((a, under, over))
     return out
+
+
+def modal_state(lines, upto):
+    """The state grbl would be in before lines[upto]: what a run started there has to set up first.
+
+    {"units": "G21", "absolute": "G90", "plane": "G17", "wcs": "G54", "feed": F, "spindle": "M3" / "M4" / None,
+     "speed": S, "coolant": ["M7", "M8"], "pos": [x, y, z] (work, None if unknown), "zmax": the highest Z so far}
+    """
+    st = {"units": "G21", "absolute": "G90", "plane": "G17", "wcs": "G54", "feed": 0.0, "spindle": None,
+          "speed": 0.0, "coolant": [], "pos": [None, None, None], "zmax": None, "motion": 0}
+    scale = 1.0
+    for line in lines[:upto]:
+        words = WORD.findall(line.upper())
+        if not words or line.lstrip().startswith("$"):
+            continue
+        gs = [float(v) for k, v in words if k == "G"]
+        ms = [float(v) for k, v in words if k == "M"]
+        vals = {k: float(v) for k, v in words if k not in "GM"}
+        one_shot = False
+        for g in gs:
+            if g in (20, 21):
+                st["units"], scale = "G%d" % g, 25.4 if g == 20 else 1.0
+            elif g in (90, 91):
+                st["absolute"] = "G%d" % g
+            elif g in (17, 18, 19):
+                st["plane"] = "G%d" % g
+            elif g in (54, 55, 56, 57, 58, 59):
+                st["wcs"] = "G%d" % g
+            elif g in (0, 1, 2, 3):
+                st["motion"] = int(g)
+            elif g in (53, 28, 30, 10, 92, 4):
+                one_shot = True
+        for m in ms:
+            if m in (3, 4):
+                st["spindle"] = "M%d" % m
+            elif m in (5, 2, 30):
+                st["spindle"] = None
+                if m in (2, 30):
+                    st["coolant"] = []
+            elif m in (7, 8):
+                st["coolant"] = sorted(set(st["coolant"] + ["M%d" % m]))
+            elif m == 9:
+                st["coolant"] = []
+        if "F" in vals:
+            st["feed"] = vals["F"]
+        if "S" in vals:
+            st["speed"] = vals["S"]
+        if one_shot:
+            for i, a in enumerate("XYZ"):
+                if a in vals and (53 in gs or 28 in gs or 30 in gs):
+                    st["pos"][i] = None
+                elif a in vals and (92 in gs or vals.get("L") == 20):
+                    st["pos"][i] = vals[a] * scale
+            continue
+        for i, a in enumerate("XYZ"):
+            if a in vals:
+                v = vals[a] * scale
+                if st["absolute"] == "G90":
+                    st["pos"][i] = v
+                elif st["pos"][i] is not None:
+                    st["pos"][i] += v
+        z = st["pos"][2]
+        if z is not None and (st["zmax"] is None or z > st["zmax"]):
+            st["zmax"] = z
+    return st
+
+
+def resume_preamble(lines, upto, info):
+    """The lines that bring the machine to where lines[upto] expects it: modes, spindle, a safe Z, X Y, then Z.
+
+    Returns (preamble, notes); the units of the moves are the file's own (mm here: G21 is sent first)."""
+    st = modal_state(lines, upto)
+    out = ["G21", "G90", st["plane"], st["wcs"]]
+    notes = []
+    if st["spindle"]:
+        out += ["%s S%g" % (st["spindle"], st["speed"]), "G4 P3"]
+        notes.append("шпиндель %s S%g, 3 с на розгін" % (st["spindle"], st["speed"]))
+    out += st["coolant"]
+    safe = max(v for v in (info.hi[2], st["zmax"], 5.0) if v is not None)
+    x, y, z = st["pos"]
+    out.append("G0 Z%.3f" % safe)
+    notes.append("підйом на Z%.3f" % safe)
+    if x is not None and y is not None:
+        out.append("G0 X%.3f Y%.3f" % (x, y))
+        notes.append("переїзд у X%.3f Y%.3f" % (x, y))
+    else:
+        notes.append("X / Y до цього рядка невідомі - без переїзду")
+    if z is not None:
+        out.append("G1 Z%.3f F%g" % (z, min(st["feed"], 300) if st["feed"] else 200))
+        notes.append("опускання на Z%.3f" % z)
+    if st["units"] == "G20":
+        out.append("G20")
+    if st["absolute"] == "G91":
+        out.append("G91")
+    # the motion mode and the feed the line expects (G2 / G3 need their own words: they come with the line)
+    out.append(("G0" if st["motion"] == 0 else "G1") + (" F%g" % st["feed"] if st["feed"] else ""))
+    return out, notes
