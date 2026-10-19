@@ -1390,6 +1390,8 @@ PATH_HELP = [
     "  кружечок - де зараз інструмент.",
     "# Вікно G-code",
     "Tab - фокус у вікно і назад. ↑/↓ - рядок, ←/→ або PgUp/PgDn - по 5; рух рядка підсвічується.",
+    "Над рядками - для підсвіченого рядка: Z (глибина руху, або «від→до» для заглиблення) і час: «від старту ≈…»,",
+    "  а під час виконання - «через ≈…» (за реальною швидкістю), «зараз» або «виконано».",
     "# Запуск",
     "r - запустити файл з початку. Enter у вікні G-code - з цього рядка: спершу режими (G21 G90, площина,",
     "  система координат), шпиндель з розгоном, підйом на безпечну Z, переїзд у X Y перед рядком, опускання,",
@@ -1636,6 +1638,32 @@ class PathView:
                 self.cur = [self.cx, self.cy]
         return None
 
+    def line_info(self):
+        """(the depth of the lit line's move, when the run reaches it) as text."""
+        job, info, i = self.job, self.job.info, self.line
+        segs = self.by_line.get(i)
+        if segs:
+            sg = info.segs[segs[-1]]
+            z0, z1 = info.segs[segs[0]][2], sg[5]
+            z = "%.3f" % z1 if abs(z1 - z0) < 1e-6 else "%.3f→%.3f" % (z0, z1)
+        else:
+            z = "—"
+        lt = info.line_t
+        start = lt[i - 1] if 0 < i <= len(lt) else 0.0           # the estimated time when line i begins
+        if job.mode:
+            done = job.pos
+            if i < done - 1:
+                return z, "виконано"
+            if i <= done - 1:
+                return z, "зараз"
+            now_t = lt[done - 1] if 0 < done <= len(lt) else 0.0
+            left = max(0.0, start - now_t)
+            elapsed = time.monotonic() - job.started if job.started else 0
+            if now_t > 10 and elapsed > 0:                        # scaled by how the run really goes
+                left *= min(5.0, max(0.3, elapsed / now_t))
+            return z, "через ≈%s" % hhmm(left)
+        return z, "від старту ≈%s" % hhmm(start)
+
     def state(self):
         j = self.job
         return repr((self.focus, self.line, [round(v, 4) for v in self.cur], self.scale, self.cx, self.cy, self.view,
@@ -1722,13 +1750,19 @@ class PathView:
         h = 118 - y0
         pygame.draw.rect(screen, (12, 12, 20), (0, y0, 128, h))
         pygame.draw.rect(screen, ACCENT if self.focus == "code" else (50, 50, 50), (0, y0, 128, h), 1)
-        rows = max(1, int((h - 2) // LH))
         lines = job.lines
+        info_row = self.line is not None and bool(lines)
+        if info_row:                              # the lit line: its depth, and when the run gets there
+            z, when = self.line_info()
+            pygame.draw.rect(screen, (30, 30, 48), (1, y0 + 1, 126, LH))
+            text(fit("Z %s   %s" % (z, when), f_small, 122), (3, y0 + 1), (200, 200, 120), f_small)
+        first = y0 + 1 + (LH if info_row else 0)
+        rows = max(1, int((118 - first - 1) // LH))
         cur = self.line if self.line is not None else 0
         top = max(0, min(cur - rows // 2, len(lines) - rows))
         nw = len(str(lines[-1][0])) if lines else 1
         for j in range(top, min(len(lines), top + rows)):
-            y = y0 + 1 + (j - top) * LH
+            y = first + (j - top) * LH
             if j == self.line:
                 pygame.draw.rect(screen, (70, 60, 15), (1, y, 126, LH))
             num, src = lines[j]
