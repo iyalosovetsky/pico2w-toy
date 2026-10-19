@@ -67,7 +67,8 @@ HELP = [
     "  розміри, радіус кутів, кути дуги; фігура змінюється наживо, s або Enter на останньому - готово, Esc - ні.",
     "  Обробка (замкнені фігури): по лінії / зовні / всередині (фреза зсунута на радіус) / карман - вибрати все всередині:",
     "  кільця від центру назовні з кроком «Карман: крок, % фрези» (p), останнє - по стінці.",
-    "  Глибина - своя для фігури (0 - загальна з p); над фігурою вгорі видно ↓глибину.",
+    "  Глибина - перше поле: своя для фігури (0 - загальна з p); на кресленні біля фігури видно ↓глибину.",
+    "  У полі: цифри, потім Enter (далі) або s (готово одразу).",
     "Del / Backspace - видалити фігуру, u - скасувати останню зміну.",
     "# Файл",
     "p - обробка: безпечна Z, загальна глибина, крок по глибині, подачі, діаметр фрези (Ø угорі), крок карману, оберти, поле.",
@@ -577,9 +578,9 @@ def shape_rows(sh, anchor):
         xs, ys = [p[0] for p in sh["pts"]], [p[1] for p in sh["pts"]]
         w, h = max(xs) - min(xs), max(ys) - min(ys)
         x, y = ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2) if anchor == ANCHORS[1] else (min(xs), min(ys))
-        return [["anchor", "Прив'язка X / Y", anchor, ANCHORS], ["X", "X", round(x, 4), None],
-                ["Y", "Y", round(y, 4), None], ["w", "Ширина", round(w, 4), None], ["h", "Висота", round(h, 4), None],
-                ["depth", "Глибина (0 - загальна)", sh.get("depth", 0.0), None]]
+        return [["depth", "Глибина (0 - загальна)", sh.get("depth", 0.0), None],
+                ["anchor", "Прив'язка X / Y", anchor, ANCHORS], ["X", "X", round(x, 4), None],
+                ["Y", "Y", round(y, 4), None], ["w", "Ширина", round(w, 4), None], ["h", "Висота", round(h, 4), None]]
     if t in ("rect", "circle", "ellipse"):
         if t == "rect":
             w, h = sh["w"], sh["h"]
@@ -591,7 +592,8 @@ def shape_rows(sh, anchor):
             w, h = 2 * sh["rx"], 2 * sh["ry"]
             cx, cy = sh["cx"], sh["cy"]
         x, y = (cx, cy) if anchor == ANCHORS[1] else (cx - w / 2, cy - h / 2)
-        rows = [["anchor", "Прив'язка X / Y", anchor, ANCHORS], ["X", "X", round(x, 4), None],
+        rows = [["depth", "Глибина (0 - загальна)", sh.get("depth", 0.0), None],
+                ["anchor", "Прив'язка X / Y", anchor, ANCHORS], ["X", "X", round(x, 4), None],
                 ["Y", "Y", round(y, 4), None]]
         if t == "circle":
             rows.append(["d", "Діаметр", round(w, 4), None])
@@ -600,16 +602,15 @@ def shape_rows(sh, anchor):
         if t == "rect":
             rows.append(["rad", "Радіус кутів", sh.get("rad", 0.0), None])
         rows.append(["side", "Обробка", sh.get("side", SIDES[0]), SIDES])
-        rows.append(["depth", "Глибина (0 - загальна)", sh.get("depth", 0.0), None])
         return rows
     if t == "arc":
-        return [["cx", "Центр X", sh["cx"], None], ["cy", "Центр Y", sh["cy"], None], ["r", "Радіус", sh["r"], None],
+        return [["depth", "Глибина (0 - загальна)", sh.get("depth", 0.0), None],
+                ["cx", "Центр X", sh["cx"], None], ["cy", "Центр Y", sh["cy"], None], ["r", "Радіус", sh["r"], None],
                 ["a0", "Початок, °", sh["a0"], None], ["a1", "Кінець, °", sh["a1"], None],
-                ["ccw", "Напрям", sh.get("ccw", "проти год."), ["проти год.", "за год."]],
-                ["depth", "Глибина (0 - загальна)", sh.get("depth", 0.0), None]]
-    return [["x0", "Початок X", sh["x0"], None], ["y0", "Початок Y", sh["y0"], None],
-            ["x1", "Кінець X", sh["x1"], None], ["y1", "Кінець Y", sh["y1"], None],
-            ["depth", "Глибина (0 - загальна)", sh.get("depth", 0.0), None]]
+                ["ccw", "Напрям", sh.get("ccw", "проти год."), ["проти год.", "за год."]]]
+    return [["depth", "Глибина (0 - загальна)", sh.get("depth", 0.0), None],
+            ["x0", "Початок X", sh["x0"], None], ["y0", "Початок Y", sh["y0"], None],
+            ["x1", "Кінець X", sh["x1"], None], ["y1", "Кінець Y", sh["y1"], None]]
 
 
 def rows_shape(sh, vals):
@@ -657,7 +658,7 @@ class Form:
     def key(self, k, ch):
         row = self.rows[self.sel]
         if self.typing is not None:
-            if k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_UP, pygame.K_DOWN, pygame.K_TAB):
+            if k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_UP, pygame.K_DOWN, pygame.K_TAB) or ch in ("s", "S"):
                 old = row[2]
                 try:
                     row[2] = float(self.typing.replace(",", "."))
@@ -665,8 +666,15 @@ class Form:
                     pass
                 self.typing = None
                 self.changed(self.sel, old)
+                if ch in ("s", "S"):                     # typed and done at once
+                    self.on_done({r[0]: r[2] for r in self.rows})
+                    return "done"
                 if k in (pygame.K_RETURN, pygame.K_KP_ENTER):
-                    return None
+                    if self.sel < len(self.rows) - 1:
+                        self.sel += 1                    # the next field
+                        return None
+                    self.on_done({r[0]: r[2] for r in self.rows})
+                    return "done"
             elif k == pygame.K_ESCAPE:
                 self.typing = None
                 return None
@@ -1281,6 +1289,13 @@ class Editor:
                 off = [self.px(*p) for p in points(offset(sh, self.params["tool"]))]
                 for a in off[::2]:
                     pygame.draw.rect(screen, (110, 170, 110), (a[0] - 0.4, a[1] - 0.4, 0.8, 0.8))
+        for sh in self.shapes:                          # a figure's own depth, at its top left
+            if sh.get("depth"):
+                b = bounds([sh])
+                lx, ly = self.px(b[0], b[3])
+                ax0, ay0, aw0, ah0 = self.AREA
+                if ax0 <= lx <= ax0 + aw0 - 8 and ay0 + 4 <= ly <= ay0 + ah0:
+                    text("↓" + fmt(sh["depth"]), (lx, ly - 5), (200, 200, 120), ui.f_small)
         if self.tool:                                   # the shape being placed, live
             if self.pts:
                 sh = self.make(self.tool, self.pts, self.cur)
