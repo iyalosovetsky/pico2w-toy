@@ -110,6 +110,9 @@ CHARS = {
     98: ("/", "/"), 117: ("=", "="), 179: ("(", "("), 180: (")", ")"),
 }
 SHIFT_CODES = (42, 54)
+# key debugging: with this file present every key code from the kernel goes to /tmp/lcd-keys.log
+KEYLOG_FLAG = os.path.expanduser("~/.config/lcdtoy/keylog")
+KEYLOG = os.path.exists(KEYLOG_FLAG)
 CAPSLOCK = 58
 
 _fb = None
@@ -433,7 +436,14 @@ def _pump_buttons():
                     pygame.event.post(pygame.event.Event(pygame.KEYUP, key=key, mod=0, unicode="",
                                                          scancode=0, hat=False))
                 _held_arrows.clear()
-            elif etype == 1 and code in SHIFT_CODES:
+            if KEYLOG and etype == 1:
+                try:
+                    with open("/tmp/lcd-keys.log", "a") as f:
+                        f.write("%s code=%d value=%d %s\n" % (time.strftime("%H:%M:%S"), code, value,
+                                                              "known" if code in KEYMAP else "UNKNOWN"))
+                except OSError:
+                    pass
+            if etype == 1 and code in SHIFT_CODES:
                 (_shift.add if value else _shift.discard)(code)
             elif etype == 1 and code == CAPSLOCK and value == 1:
                 _caps = not _caps
