@@ -73,6 +73,28 @@ GRBL_ALARMS = {
     13: "шпиндель не стартував", 14: "кінцевик спрацював при старті", 15: "двигун: помилка драйвера",
     17: "кінцевик активний"}
 
+# what to do (the common ones)
+ADVICE = {
+    ("alarm", 1): "Відведіть вісь з кінцевика, $X, потім хомінг $H - позиція могла збитися.",
+    ("alarm", 2): "Ціль за межами ходу: виправте програму / нуль; $X можна безпечно.",
+    ("alarm", 3): "$X, потім хомінг $H: після скидання в русі позиція могла збитися.",
+    ("alarm", 4): "Перевірте щуп (не замкнений до старту), $X.",
+    ("alarm", 5): "Щуп не торкнувся: збільшіть хід проби або підведіть ближче, $X.",
+    ("alarm", 6): "Хомінг перервано: $X, повторіть $H.",
+    ("alarm", 7): "Закрийте двері, $X, повторіть $H.",
+    ("alarm", 8): "Кінцевик не відпустило: перевірте $27 (відскок) і кінцевик, $X, $H.",
+    ("alarm", 9): "Кінцевик не знайдено: перевірте проводку / $23 (напрям) / $25, $X, $H.",
+    ("alarm", 10): "Відпустіть аварійну кнопку, Ctrl-X, потім $X.",
+    ("alarm", 11): "Потрібен хомінг: $H (або $X, якщо впевнені в позиції).",
+    ("alarm", 14): "Кінцевик активний при старті: відведіть вісь вручну, $X.",
+    ("error", 8): "$-команди лише в стані Idle - дочекайтеся кінця руху.",
+    ("error", 9): "Заблоковано (ALARM / двері): $X або $H.",
+    ("error", 15): "Jog за м'які межі: зменшіть крок або перевірте нуль / хомінг.",
+    ("error", 20): "Команда не підтримується цією збіркою grblHAL.",
+    ("error", 22): "Задайте подачу: F<мм/хв> у рядку руху (G1 X10 F300).",
+    ("error", 79): "Спершу зніміть критичну подію (E-stop / ALARM): Ctrl-X, $X.",
+}
+
 
 # ---------------------------------------------------------------- ports
 
@@ -293,6 +315,10 @@ class Term:
         self.status_in_full = self.cfg.get("status_in_full", True)
         self.status = None       # (state, rest)
         self.wco = None          # the work coordinate offset (from reports that carry WCO)
+        self.alerts = []         # recent errors / alarms: {"kind", "code", "t", "ctx"}
+        self.alert = None        # the one shown on the bar (or None)
+        self.codes = {"error": {}, "alarm": {}}   # the device's own texts ($EE / $EA)
+        self.codes_asked = False
         self.status_n = 0        # status reports received (the pendant's indicator blinks on each)
         self.status_t = 0.0
         self.pendant = False
@@ -385,6 +411,8 @@ class Term:
         if log:
             self.say("in", shown)
             self.pending = {"shown": 0, "more": 0, "idx": None}
+            if self.alert and self.alert["kind"] == "error":
+                self.alert = None                 # a new command: the old error is history
         return True
 
     # -- received lines
@@ -400,6 +428,9 @@ class Term:
                 self.status = (body[0].split(":")[0], body[1:])
                 self.status_n += 1
                 self.status_t = time.monotonic()
+                a = self.alert
+                if a and a["kind"] == "alarm" and self.status[0] != "Alarm" and time.time() - a["t"] > 1:
+                    self.alert = None
                 for part in body[1:]:
                     if part.startswith("WCO:"):
                         try:
@@ -413,7 +444,38 @@ class Term:
                 self.on_line(line.strip())
             del self.full[:-FULL_MAX]
 
+    def note_alert(self, line, ctx=""):
+        m = re.match(r"^(error|ALARM):(\d+)", line)
+        if not m:
+            return
+        a = {"kind": m.group(1).lower(), "code": int(m.group(2)), "t": time.time(), "ctx": ctx}
+        self.alerts = (self.alerts + [a])[-12:]
+        self.alert = a
+        if not self.codes_asked and not (self.job and self.job.mode == "run" and not self.job.paused):
+            self.codes_asked = True               # the device's own explanations, once
+            self.send("$EA", log=False)
+            self.send("$EE", log=False)
+
+    def code_text(self, kind, code):
+        return self.codes[kind].get(code, "")
+
     def on_line(self, line):
+        m = re.match(r"^\[(ERROR|ALARM)CODE:(\d+)\|([^|]*)\|(.*)\]$", line)
+        if m:                                     # $EE / $EA lines
+            self.codes["error" if m.group(1) == "ERROR" else "alarm"][int(m.group(2))] = (m.group(4) or m.group(3)).strip()
+            return
+        if line.startswith(("error:", "ALARM:")):
+            ctx = ""
+            if self.job and self.job.waiting and self.job.pos:
+                n, src = self.job.lines[self.job.pos - 1]
+                ctx = "рядок %d: %s" % (n, src)
+            elif self.cmd:
+                last_in = [s for k, s in self.cmd if k == "in"]
+                ctx = last_in[-1] if last_in else ""
+            self.note_alert(line, ctx)
+        if line.startswith("[MSG:Caution: Unlocked") or line.startswith("[MSG:Unlocked"):
+            if self.alert and self.alert["kind"] == "alarm":
+                self.alert = None
         job = self.job
         final = line == "ok" or line.startswith("error") or line.startswith("ALARM")
         if job and job.waiting and (line == "ok" or line.startswith("error")):
@@ -595,6 +657,8 @@ class Term:
             elif not self.dev and default_port():
                 self.connect()
         self.feed()
+        if self.alert and self.alert["kind"] == "error" and time.time() - self.alert["t"] > 15:
+            self.alert = None
         if self.pendant and self.port and now - self.last_poll > PENDANT_POLL_S:
             self.last_poll = now
             self.port.write("?")
@@ -632,6 +696,7 @@ def draw(t, popup):
         if extra:
             text(fit("  ".join(extra), f_mono, 124), (2, y), (170, 170, 120), f_mono)
             y += LH
+    y += draw_alert(t, y, "^E пояснення")
     job = t.job
     if job:
         n = len(job.lines)
@@ -694,6 +759,97 @@ def draw(t, popup):
     lcd.flip()
 
 
+def alert_short(t, a):
+    table = GRBL_ALARMS if a["kind"] == "alarm" else GRBL_ERRORS
+    return table.get(a["code"]) or t.code_text(a["kind"], a["code"]) or "?"
+
+
+def draw_alert(t, y, key_hint):
+    """The red (ALARM) / orange (error) bar; returns the height it took."""
+    a = t.alert
+    if not a:
+        return 0
+    color = RED if a["kind"] == "alarm" else ORANGE
+    pygame.draw.rect(screen, color, (0, y, 128, 10))
+    s = "⚠ %s %d · %s" % ("ALARM" if a["kind"] == "alarm" else "error", a["code"], alert_short(t, a))
+    hint_w = f_small.size(key_hint)[0]
+    text(fit(s, f_bold, 124 - hint_w - 3), (2, y + 1), BG, f_bold)
+    text(key_hint, (126, y + 1), BG, f_small, right=True)
+    return 11
+
+
+def explain_lines(t):
+    """The explanation window's text: the last alert in detail, then the earlier ones."""
+    if not t.alerts:
+        return ["Помилок і аварій ще не було."]
+    a = t.alerts[-1]
+    kind = "ALARM" if a["kind"] == "alarm" else "error"
+    out = ["# %s %d - %s" % (kind, a["code"], alert_short(t, a))]
+    dev = t.code_text(a["kind"], a["code"])
+    if dev:
+        out.append("grblHAL: " + dev)
+    elif t.codes_asked:
+        out.append("grblHAL: (опис ще не надійшов)")
+    adv = ADVICE.get((a["kind"], a["code"]))
+    if adv:
+        out.append("Що робити: " + adv)
+    if a["ctx"]:
+        out.append("Після: " + a["ctx"])
+    out.append("Час: " + time.strftime("%H:%M:%S", time.localtime(a["t"])))
+    if len(t.alerts) > 1:
+        out.append("# Раніше")
+        for b in reversed(t.alerts[:-1]):
+            out.append("%s %s %d - %s" % (time.strftime("%H:%M:%S", time.localtime(b["t"])),
+                                          "ALARM" if b["kind"] == "alarm" else "error", b["code"], alert_short(t, b)))
+    return out
+
+
+class TextPopup:
+    """A scrollable text window (UP / DOWN), any other key closes."""
+
+    def __init__(self, title, lines):
+        self.title = title
+        self.rows = []
+        for line in lines:
+            head = line.startswith("# ")
+            s = line[2:] if head else line
+            cur = ""
+            for w in s.split(" "):
+                cand = (cur + " " + w).strip()
+                if cur and f_small.size(cand)[0] > 110:
+                    self.rows.append((cur, head))
+                    cur = "  " + w
+                else:
+                    cur = cand
+            self.rows.append((cur, head))
+        self.top = 0
+        self.sel = 0
+
+    def key(self, k, hat=False):
+        n = 11
+        if k == pygame.K_UP:
+            self.top = max(0, self.top - 1)
+        elif k == pygame.K_DOWN:
+            self.top = min(max(0, len(self.rows) - n), self.top + 1)
+        else:
+            return "close"
+        self.sel = self.top
+        return None
+
+    def draw(self):
+        lh = f_small.get_linesize()
+        n = min(len(self.rows), 11)
+        h = 12 + n * lh + 3
+        y0 = max(4, (128 - h) / 2)
+        pygame.draw.rect(screen, (20, 20, 30), (4, y0, 120, h), border_radius=3)
+        pygame.draw.rect(screen, ACCENT, (4, y0, 120, h), 1, border_radius=3)
+        text(self.title, (64, y0 + 1), ACCENT, f_bold, center=True)
+        for i, (s, head) in enumerate(self.rows[self.top:self.top + n]):
+            text(s, (8, y0 + 11 + i * lh), ACCENT if head else FG, f_bold if head else f_small)
+        if self.top + n < len(self.rows):
+            text("▼", (120, y0 + h - lh), DIM, f_small, right=True)
+
+
 def draw_pendant(t, popup):
     screen.fill(BG)
     state = t.status[0] if t.status else "?"
@@ -707,9 +863,12 @@ def draw_pendant(t, popup):
         text("немає ?", (x + 5, 0), RED, f_small)
     text(state, (126, 0), STATE_COLORS.get(state.split(":")[0], FG) if t.status else DIM, f_bold, right=True)
     wpos, mpos = t.positions()
-    text("робочі", (60, 10), DIM, f_small, right=True)
-    text("машинні", (126, 10), DIM, f_small, right=True)
-    y = 19
+    if t.alert:                                  # the bar takes the column titles' line
+        draw_alert(t, 9, "e - пояснення")
+    else:
+        text("робочі", (60, 10), DIM, f_small, right=True)
+        text("машинні", (126, 10), DIM, f_small, right=True)
+    y = 21
     for i, ax in enumerate("XYZ"):
         w = "%9.3f" % wpos[i] if wpos and i < len(wpos) else "      —"
         m = "%9.3f" % mpos[i] if mpos and i < len(mpos) else "      —"
@@ -957,7 +1116,8 @@ def main():
 
     def main_menu():
         items = ["Пульт (pendant)", "Порт…", "Файл G-code…", "grblHAL…",
-                 "Повний вивід: %s" % ("сховати" if t.show_full else "показати"), "Довідка", "Вихід"]
+                 "Повний вивід: %s" % ("сховати" if t.show_full else "показати"), "Довідка",
+                 "Пояснити помилку / аварію", "Вихід"]
 
         def pick(i):
             nonlocal popup
@@ -979,6 +1139,8 @@ def main():
                 return "close"
             elif i == 4:
                 popup = help_popup()
+            elif i == 5:
+                popup = TextPopup("Помилки й аварії", explain_lines(t))
             else:
                 return "quit"
             return None
@@ -1026,6 +1188,8 @@ def main():
             t.set_zero(["X", "Y", "Z"])
         elif ch in ("s", "S"):
             t.toggle_spindle()
+        elif ch in ("e", "E"):
+            return "explain"
         elif ch in (",", "<", ".", ">"):
             i = SPINDLE_SPEEDS.index(t.spindle) if t.spindle in SPINDLE_SPEEDS else 5
             i = max(0, i - 1) if ch in (",", "<") else min(len(SPINDLE_SPEEDS) - 1, i + 1)
@@ -1058,6 +1222,8 @@ def main():
                 r = pendant_key(k, ch, hat)
                 if r == "menu":
                     popup = main_menu()
+                elif r == "explain":
+                    popup = TextPopup("Помилки й аварії", explain_lines(t))
                 continue
             if popup:
                 r = popup.key(k, hat)
@@ -1076,6 +1242,9 @@ def main():
             menu_key = {"\x10": pygame.K_F3, "\x0f": pygame.K_F4, "\x07": pygame.K_F5}.get(ch)
             if menu_key:
                 k, ch = menu_key, ""
+            if ch == "\x05":                       # Ctrl+E: explain the last error / alarm
+                popup = TextPopup("Помилки й аварії", explain_lines(t))
+                continue
             if ch == "\x14":                       # Ctrl+T: the pendant
                 t.pendant, t.wco = True, None
                 continue
@@ -1143,7 +1312,8 @@ def main():
                t.status, t.scroll, t.show_full, t.poll, popup and (popup.sel, id(popup)), t.port is not None,
                t.job and (t.job.pos, t.job.mode, t.job.paused), t.note, int(time.monotonic() * 2),
                t.pendant, t.step_i, t.spindle, t.jog and t.jog["axis"], str(t.wco),
-               t.pendant and (t.status_n, time.monotonic() - t.status_t > 1.0))
+               t.pendant and (t.status_n, time.monotonic() - t.status_t > 1.0), str(t.alert),
+               popup and getattr(popup, "top", 0))
         if key != shown_key:
             (draw_pendant if t.pendant else draw)(t, popup)
             shown_key = key
