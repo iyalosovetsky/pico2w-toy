@@ -578,7 +578,7 @@ def draw(t, popup):
     else:
         hint = ""
         if not t.input:
-            hint = "Enter - наст. рядок" if job and job.mode == "step" else "F1 довідка  ^P порт  ^O файл  ^G grbl"
+            hint = "Enter - наст. рядок" if job and job.mode == "step" else "F1 меню  ^P порт  ^O файл  quit"
         s = "> " + t.input[-(COLS - 3):]
         text(s, (2, in_y), FG, f_mono)
         if int(time.monotonic() * 2) % 2 == 0:
@@ -596,7 +596,9 @@ class Popup:
     def __init__(self, title, items, on_pick, sel=0):
         self.title, self.items, self.on_pick, self.sel, self.top = title, items, on_pick, sel, 0
 
-    def key(self, k):
+    def key(self, k, hat=False):
+        if hat and k == pygame.K_3:          # HAT KEY3: close
+            return "close"
         if k == pygame.K_UP:
             self.sel = (self.sel - 1) % len(self.items)
         elif k == pygame.K_DOWN:
@@ -632,7 +634,8 @@ HELP = ["Введення + Enter - надіслати рядок", "↑/↓ - �
         "F4 / Ctrl+O - файл G-code: відкрити, весь, кроками, пауза, стоп",
         "F5 / Ctrl+G - grbl: опитування ?, скидання, $X, $H",
         "? ! ~ на порожньому рядку - одразу (grbl)", "Ctrl+X - скидання, Ctrl+C / D - байт",
-        "Esc - очистити рядок / вихід"]
+        "Esc - очистити рядок, закрити меню", "quit + Enter або F1 → Вихід - вийти",
+        "HAT: KEY3 - меню, джойстик - вибір"]
 
 
 def file_list(path):
@@ -796,6 +799,30 @@ def main():
     def help_popup():
         return Popup("Довідка", HELP, lambda i: "close")
 
+    def main_menu():
+        items = ["Порт…", "Файл G-code…", "grblHAL…",
+                 "Повний вивід: %s" % ("сховати" if t.show_full else "показати"), "Довідка", "Вихід"]
+
+        def pick(i):
+            nonlocal popup
+            if i == 0:
+                popup = port_menu()
+            elif i == 1:
+                popup = file_menu()
+            elif i == 2:
+                popup = grbl_menu()
+            elif i == 3:
+                t.show_full = not t.show_full
+                t.scroll = 0
+                t.save_cfg()
+                return "close"
+            elif i == 4:
+                popup = help_popup()
+            else:
+                return "quit"
+            return None
+        return Popup("Меню", items, pick)
+
     running = True
     shown_key = None
     while running:
@@ -810,9 +837,12 @@ def main():
             hat = getattr(ev, "hat", False)
             ch = getattr(ev, "unicode", "") if not hat else ""
             if popup:
-                r = popup.key(k)
+                r = popup.key(k, hat)
                 if r == "close":
                     popup = None
+                elif r == "quit":
+                    popup = None
+                    running = False
                 elif r == "minicom":
                     popup = None
                     running = False
@@ -823,8 +853,8 @@ def main():
             menu_key = {"\x10": pygame.K_F3, "\x0f": pygame.K_F4, "\x07": pygame.K_F5}.get(ch)
             if menu_key:
                 k, ch = menu_key, ""
-            if k == pygame.K_F1:
-                popup = help_popup()
+            if k == pygame.K_F1 or (hat and k == pygame.K_3):
+                popup = main_menu()
             elif k in (pygame.K_F2, pygame.K_TAB):
                 t.show_full = not t.show_full
                 t.scroll = 0
@@ -835,14 +865,14 @@ def main():
                 popup = file_menu()
             elif k == pygame.K_F5:
                 popup = grbl_menu()
-            elif k == pygame.K_ESCAPE or (hat and k == pygame.K_3):
-                if t.input:
-                    t.input = ""
-                else:
-                    running = False
+            elif k == pygame.K_ESCAPE:
+                t.input = ""                      # Esc never leaves: quit + Enter or the menu does
             elif k in (pygame.K_RETURN, pygame.K_KP_ENTER):
                 line = t.input
-                if not line and t.job and t.job.mode == "step":
+                if line.strip().lower() == "quit":    # leave (not sent to the device)
+                    running = False
+                    t.input = ""
+                elif not line and t.job and t.job.mode == "step":
                     t.step()
                 elif line:
                     if t.send(line):
