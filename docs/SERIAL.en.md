@@ -211,6 +211,11 @@ figure.
 
 ### Arrays
 
+![array](gif-picocalc/serial-array.gif)
+
+*Clear it all (`X`), an array of holes `m` 6×4 without the corners, editing: arrows from copy to copy, Del
+leaves two out, pitch X dragged.*
+
 The numbers of **any** figure have "Масив: по X, шт", "по Y, шт", "Крок по X, мм", "Крок по Y, мм" (columns,
 rows, pitches). The figure is the bottom left copy, the rest repeat to the right and up; they are cut row by
 row in a zigzag (the shortest way). Two more fields: **"Без кутових"** (no corners: yes / no) leaves the four

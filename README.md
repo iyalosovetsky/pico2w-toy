@@ -40,8 +40,8 @@ Doom, чат з локальною LLM, текстова консоль і ви�
 | ![reader](docs/gif-picocalc/reader.gif) | ![pdf](docs/gif-picocalc/pdf.gif) | ![generator](docs/gif-picocalc/generator.gif) | ![voltmeter](docs/gif-picocalc/voltmeter.gif) |
 | **Осцилограф** | **Логічний аналізатор** | **Калькулятор** | **SDR** |
 | ![oscilloscope](docs/gif-picocalc/oscilloscope.gif) | ![logic](docs/gif-picocalc/logic.gif) | ![calc](docs/gif-picocalc/calc.gif) | ![sdr](docs/gif-picocalc/sdr.gif) |
-| **SERIAL: редактор фігур** | **SERIAL: траєкторія й запуск** | | |
-| ![serial editor](docs/gif-picocalc/serial-editor.gif) | ![serial toolpath](docs/gif-picocalc/serial-toolpath.gif) | | |
+| **SERIAL: редактор фігур** | **SERIAL: траєкторія й запуск** | **SERIAL: масив отворів** | |
+| ![serial editor](docs/gif-picocalc/serial-editor.gif) | ![serial toolpath](docs/gif-picocalc/serial-toolpath.gif) | ![serial array](docs/gif-picocalc/serial-array.gif) | |
 
 *(GIF записані з фреймбуфера PicoCalc 1:1, 320×320, скриптом `tools/record_gif.py`; SERIAL - `tools/serial_gif.py`: справжня програма на PicoCalc, натискання за сценарієм і уявний верстат `tools/fake_grbl.py`.)*
 

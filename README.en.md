@@ -40,8 +40,8 @@ joystick and buttons or with a small USB keyboard.
 | ![reader](docs/gif-picocalc/reader.gif) | ![pdf](docs/gif-picocalc/pdf.gif) | ![generator](docs/gif-picocalc/generator.gif) | ![voltmeter](docs/gif-picocalc/voltmeter.gif) |
 | **Oscilloscope** | **Logic analyzer** | **Calculator** | **SDR** |
 | ![oscilloscope](docs/gif-picocalc/oscilloscope.gif) | ![logic](docs/gif-picocalc/logic.gif) | ![calc](docs/gif-picocalc/calc.gif) | ![sdr](docs/gif-picocalc/sdr.gif) |
-| **SERIAL: shape editor** | **SERIAL: toolpath and a run** | | |
-| ![serial editor](docs/gif-picocalc/serial-editor.gif) | ![serial toolpath](docs/gif-picocalc/serial-toolpath.gif) | | |
+| **SERIAL: shape editor** | **SERIAL: toolpath and a run** | **SERIAL: an array of holes** | |
+| ![serial editor](docs/gif-picocalc/serial-editor.gif) | ![serial toolpath](docs/gif-picocalc/serial-toolpath.gif) | ![serial array](docs/gif-picocalc/serial-array.gif) | |
 
 *(GIFs recorded 1:1 from the PicoCalc framebuffer, 320×320, with `tools/record_gif.py`; SERIAL with `tools/serial_gif.py`: the real app on the PicoCalc, scripted keys and a pretend machine, `tools/fake_grbl.py`.)*
 

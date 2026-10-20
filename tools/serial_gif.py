@@ -58,6 +58,19 @@ key(K.K_F4, t=0.4); taps(K.K_DOWN, 6, 0.15); key(K.K_RETURN, t=0.3); wait(1.2)
 taps(K.K_RIGHT, 24, 0.07); wait(0.8); key(K.K_TAB, "\t", t=0.4); taps(K.K_DOWN, 3, 0.25); wait(1.0)
 key(K.K_RETURN, t=0.5); wait(2.0); key(K.K_DOWN, t=0.4); key(K.K_RETURN, t=0.4); wait(9.0)   # run from this line
 key(0, " ", t=0.2); wait(1.5); key(0, " ", t=0.2); wait(2.0); mark("tp_end")
+# --- an array of holes: clear, m, the numbers, edit copy by copy, the pitch
+key(K.K_ESCAPE, t=0.3); key(K.K_F1, t=0.4); key(K.K_DOWN, t=0.3); key(K.K_RETURN, t=0.3); wait(0.8); mark("ar")
+wait(0.8); key(0, "X", t=0.4); wait(1.2); key(K.K_RETURN, t=0.3); wait(0.8)
+key(0, "h", t=0.3); key(0, "0", t=0.3); wait(0.5); taps(K.K_RIGHT, 10, 0.05); taps(K.K_UP, 7, 0.05)
+key(0, "m", t=0.4); wait(0.6); key(K.K_RETURN, t=0.3); wait(0.6)
+typ("6"); key(K.K_DOWN, t=0.3); key(K.K_DOWN, t=0.3); typ("6"); key(K.K_DOWN, t=0.3); typ("4"); key(K.K_DOWN, t=0.3)
+typ("15"); key(K.K_DOWN, t=0.3); typ("12"); key(K.K_DOWN, t=0.3); key(K.K_DOWN, t=0.4); key(K.K_RIGHT, t=0.5)
+wait(0.6); key(0, "s", t=0.3); wait(1.5)
+taps(K.K_RIGHT, 6, 0.08); wait(0.5); key(K.K_RETURN, t=0.3); wait(0.8)
+taps(K.K_RIGHT, 2, 0.4); taps(K.K_UP, 1, 0.4); wait(0.4); key(K.K_DELETE, t=0.3); wait(0.6)
+taps(K.K_RIGHT, 1, 0.4); taps(K.K_UP, 1, 0.4); key(K.K_DELETE, t=0.3); wait(0.8)
+key(K.K_TAB, "\t", t=0.5); key(K.K_TAB, "\t", t=0.5); wait(0.4); key(K.K_RETURN, t=0.3)
+taps(K.K_RIGHT, 2, 0.3); wait(0.3); key(K.K_RETURN, t=0.3); wait(1.5); key(K.K_ESCAPE, t=0.3); wait(1.5); mark("ar_end")
 orig = pygame.event.get
 t0 = [time.monotonic()]; idx = [0]
 def get(*a, **k):
@@ -86,3 +99,4 @@ def save(name, a, b, path):
     Image.frombytes("RGB", out[-1][1], out[-1][0]).save(path.replace(".gif", "-last.png"))
 save("editor", "ed", "ed_end", OUT + "/serial-editor.gif")
 save("toolpath", "tp", "tp_end", OUT + "/serial-toolpath.gif")
+save("array", "ar", "ar_end", OUT + "/serial-array.gif")
