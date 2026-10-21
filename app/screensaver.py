@@ -1,7 +1,7 @@
 """Screensaver - the animations of our Raspberry Pi Pico W DVI LCD dashboard (pico-dvi-python,
 picodvi.julia / picodvi.effect) on the whole screen: a Julia set with a turning c, a plasma, a lava lamp
-(metaballs), water ripples and a kaleidoscope flower, 20 s each, the same palettes; the time and the date
-in a strip at the bottom.
+(metaballs), water ripples and a kaleidoscope flower, 2.5 minutes each at half the dashboard's pace, the
+same palettes; the time and the date in a strip at the bottom.
 
 The same integer formulas as the C module, done with numpy on a 128x128 picture (the HAT's own size;
 smoothly scaled up on the PicoCalc). The menu starts it after a while without a key
@@ -16,7 +16,8 @@ import pygame
 import lcd
 
 R = 128                      # the animations' own resolution
-SWITCH_S = 20                # seconds per animation (config.ANIM_SWITCH_S on the dashboard)
+SWITCH_S = 150               # seconds per animation (2.5 minutes; the dashboard's slot uses 20)
+SPEED = 0.5                  # of the dashboard's pace: a screensaver should drift, not hurry
 FPS = 20
 NAMES = ["Julia", "плазма", "лава-лампа", "хвилі", "квітка"]
 DAYS = ["Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота", "Неділя"]
@@ -245,7 +246,7 @@ def main(seconds=None, switch=SWITCH_S):
         if seconds is not None and now - t0 > seconds:
             return
         # ms, like the dashboard's ticks; kept small - numpy 2 refuses int32 maths with bigger Python ints
-        t = int(now * 1000) % (1 << 27)
+        t = int(now * 1000 * SPEED) % (1 << 27)
         kind = int((now - t0) // switch) % len(ANIMS)
         show(ANIMS[kind](t))
         clock_strip(NAMES[kind])
