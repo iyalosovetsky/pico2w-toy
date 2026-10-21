@@ -13,7 +13,8 @@ The app code is shared: `app/lcd.py` detects the display. `install.sh` detects t
 
 A launcher menu starts at boot and offers Pong, Tetris, Texas Hold'em poker, chess against Stockfish,
 Doom, a chat with a local LLM, a text console and power-off. Everything is controlled with the HAT's
-joystick and buttons or with a small USB keyboard.
+joystick and buttons or with a small USB keyboard. After 3 minutes without a key the menu starts a
+screensaver of fractals and animations (the SCREENSAVER item).
 
 ![Prototype in the printed case](docs/prototype.jpg)
 
