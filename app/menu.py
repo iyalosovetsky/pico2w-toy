@@ -32,6 +32,7 @@ ITEMS = [
     ("RADIO", "online", ["/usr/bin/python3", HERE + "/radio.py"], HERE),
     ("SDR", "rtl-sdr", ["/usr/bin/python3", HERE + "/sdr.py"], HERE),
     ("FLIPPER", "scan", ["/usr/bin/python3", HERE + "/flipper.py"], HERE),
+    ("SCREENSAVER", "demo", ["/usr/bin/python3", HERE + "/screensaver.py"], HERE),
     ("AI CHAT", "", "aichat", None),
     ("PYTHON", "bpython", "term:python", None),
     ("BASIC", "MMBasic", "term:basic", None),
@@ -81,6 +82,22 @@ if not os.path.exists("/dev/serial0") and not glob.glob("/dev/ttyACM*"):
 if not _has_hdmi_fb():  # no monitor framebuffer (e.g. PicoCalc): nothing to lend the keyboard to
     ITEMS = [it for it in ITEMS if it[2] != "hdmi"]
 POWEROFF_CMD = ["sudo", "-n", "/usr/bin/systemctl", "poweroff"]
+SAVER_FILE = os.path.expanduser("~/.config/lcdtoy/screensaver")   # seconds without a key; 0 - never
+
+
+_saver = {"t": -99.0, "value": 180}
+
+
+def saver_after():
+    """Seconds of no keys before the screensaver starts (180 by default, 0 - off); read every 10 s."""
+    if time.monotonic() - _saver["t"] > 10:
+        _saver["t"] = time.monotonic()
+        try:
+            with open(SAVER_FILE) as f:
+                _saver["value"] = max(0, int(float(f.read().strip() or 0)))
+        except (OSError, ValueError):
+            _saver["value"] = 180
+    return _saver["value"]
 
 BG = (0, 0, 0)
 FG = (220, 220, 220)
@@ -351,6 +368,8 @@ def run(cmd, cwd):
 
 sel = 0
 running = True
+idle_t = time.monotonic()   # the last key: the screensaver after saver_after() seconds without one
+SAVER = next((it for it in ITEMS if it[0] == "SCREENSAVER"), None)
 shown = None    # what is on the screen: redraw only when it changes (a full frame cost 40-60 % of
                 # a core on the PicoCalc at 20 fps on an unchanging screen)
 while running:
@@ -358,6 +377,7 @@ while running:
         if ev.type == pygame.QUIT:  # SIGTERM from systemctl stop
             running = False
         elif ev.type == pygame.KEYDOWN:
+            idle_t = time.monotonic()
             shown = None            # a key (and whatever it opened - an app, help) may change the screen
             if ev.key == pygame.K_UP:
                 sel = (sel - 1) % len(ITEMS)
@@ -395,6 +415,11 @@ while running:
                         poweroff()
                 else:
                     run(cmd, cwd)
+    wait = saver_after()
+    if SAVER and wait and time.monotonic() - idle_t > wait:
+        run(SAVER[2], SAVER[3])         # any key ends it and comes back here
+        idle_t = time.monotonic()
+        shown = None
     state = (sel, battery() if HAS_BATTERY else None, lcd.sound_enabled())
     if state != shown:
         draw(sel)
