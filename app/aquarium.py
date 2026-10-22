@@ -363,7 +363,14 @@ def build_rays():
 
 
 BACKGROUND, FRONT = load_scene()
-RAYS = build_rays()
+# the light rays are baked into the backdrop (two full-screen alpha layers per frame were too slow on the Zero)
+for _layer in build_rays():
+    _layer.set_alpha(190)
+    BACKGROUND.blit(_layer, (0, 0))
+BACKGROUND = BACKGROUND.convert(canvas)            # the canvas' pixel format: no conversion on every blit
+FRONT = FRONT.convert_alpha()
+FRONT_RECT = FRONT.get_bounding_rect()             # the pebbles cover only the bottom: blend just that
+FRONT = FRONT.subsurface(FRONT_RECT).copy()
 DARK = pygame.Surface((NW, NH), pygame.SRCALPHA)
 STRIP = pygame.Surface((NW, NH // 4))              # the dark strip under the key hints
 STRIP.fill((4, 14, 20))
@@ -894,9 +901,6 @@ class Tank:
         t = now - self.t0
         surf = canvas
         surf.blit(BACKGROUND, (0, 0))
-        for i, layer in enumerate(RAYS):
-            layer.set_alpha(int(255 * self.light * (0.55 + 0.45 * math.sin(t * 0.5 + i * 2.4))))
-            surf.blit(layer, (0, 0))
         draw_air_gear(surf)
         order = sorted(self.angels, key=lambda f: f.y)
         order[0].draw(surf)                                  # the highest one swims behind the neons
@@ -913,7 +917,7 @@ class Tank:
             r = b.r * S
             pygame.draw.circle(surf, (206, 236, 250), P(b.x, b.y), r, max(1, int(r * 0.3)))
             pygame.draw.circle(surf, (250, 255, 255), (b.x * S - r * 0.35, b.y * S - r * 0.35), max(1, r * 0.25))
-        surf.blit(FRONT, (0, 0))
+        surf.blit(FRONT, FRONT_RECT.topleft)
         draw_surface(surf, t, self.light)
         draw_ducks(surf, t)
         if self.light < 0.999:
