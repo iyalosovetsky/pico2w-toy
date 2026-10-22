@@ -33,6 +33,7 @@ ITEMS = [
     ("SDR", "rtl-sdr", ["/usr/bin/python3", HERE + "/sdr.py"], HERE),
     ("FLIPPER", "scan", ["/usr/bin/python3", HERE + "/flipper.py"], HERE),
     ("SCREENSAVER", "demo", ["/usr/bin/python3", HERE + "/screensaver.py"], HERE),
+    ("AQUARIUM", "demo", ["/usr/bin/python3", HERE + "/aquarium.py"], HERE),
     ("AI CHAT", "", "aichat", None),
     ("PYTHON", "bpython", "term:python", None),
     ("BASIC", "MMBasic", "term:basic", None),
@@ -83,6 +84,23 @@ if not _has_hdmi_fb():  # no monitor framebuffer (e.g. PicoCalc): nothing to len
     ITEMS = [it for it in ITEMS if it[2] != "hdmi"]
 POWEROFF_CMD = ["sudo", "-n", "/usr/bin/systemctl", "poweroff"]
 SAVER_FILE = os.path.expanduser("~/.config/lcdtoy/screensaver")   # seconds without a key; 0 - never
+AQUARIUM_BOOT_FILE = os.path.expanduser("~/.config/lcdtoy/aquarium-on-boot")   # 0 - no aquarium at boot
+BOOTED_FLAG = "/dev/shm/lcdtoy-booted"   # tmpfs: gone after a reboot, kept while the menu restarts
+
+
+def aquarium_at_boot():
+    """True once per boot (the menu's first start after the device is switched on), unless turned off."""
+    if os.path.exists(BOOTED_FLAG):
+        return False
+    try:
+        open(BOOTED_FLAG, "w").close()
+    except OSError:
+        return False
+    try:
+        with open(AQUARIUM_BOOT_FILE) as f:
+            return f.read().strip() != "0"
+    except OSError:
+        return True
 
 
 _saver = {"t": -99.0, "value": 180}
@@ -370,6 +388,10 @@ sel = 0
 running = True
 idle_t = time.monotonic()   # the last key: the screensaver after saver_after() seconds without one
 SAVER = next((it for it in ITEMS if it[0] == "SCREENSAVER"), None)
+AQUARIUM = next((it for it in ITEMS if it[0] == "AQUARIUM"), None)
+if AQUARIUM and aquarium_at_boot():   # the device has just been switched on: the tank first, the menu after
+    run(AQUARIUM[2], AQUARIUM[3])
+    idle_t = time.monotonic()
 shown = None    # what is on the screen: redraw only when it changes (a full frame cost 40-60 % of
                 # a core on the PicoCalc at 20 fps on an unchanging screen)
 while running:
