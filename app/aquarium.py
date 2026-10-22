@@ -16,7 +16,7 @@ class Aquarium:
         rng = random.Random(731)
         self.back = lcd.Surface((128, 128)) if lcd.S != 1 else pygame.Surface((128, 128))
         for y in range(128):
-            pygame.draw.rect(self.back, (4, 38-y//5, 48-y//4), (0,y,128,1))
+            pygame.draw.rect(self.back, (5, 88-y//2, 105-y//2), (0,y,128,1))
         for i in range(45):
             x, h = rng.uniform(0,128), rng.uniform(20,90)
             pygame.draw.lines(self.back,(8,43+i%13,30),False,[(x,120),(x+3,120-h/2),(x-3,120-h)],2)
@@ -24,14 +24,33 @@ class Aquarium:
         for _ in range(1000):
             c = rng.choice([(92,81,51),(118,103,66),(45,47,31),(140,122,82)])
             pygame.draw.circle(self.back,c,(rng.uniform(0,128),rng.uniform(119,128)),rng.uniform(.2,.6))
-        self.plants = [(x,rng.uniform(43,96),rng.random()*6.28,i%3) for i,x in enumerate([2,8,15,22,28,102,108,115,122,127,35,94])]
+        # Dark stems on the left, broad leaves and a grassy centre as in the reference.
+        self.plants = [(x,rng.uniform(55,104),rng.random()*6.28,1+i%2)
+                       for i,x in enumerate([2,7,13,19,25,108,115,123,127,103])]
+        self.plants += [(40,44,1,3), (53,36,3,3), (75,34,2,0), (113,43,4,3)]
+        for x,y,w,h in [(27,118,22,10),(57,121,18,15),(81,124,13,7),(46,125,8,5)]:
+            pygame.draw.ellipse(self.back,(91,92,60),(x-w/2,y-h/2,w,h))
+            pygame.draw.ellipse(self.back,(155,147,104),(x-w/2+1,y-h/2,w-3,h-3))
+            for _ in range(35):
+                dx,dy = rng.uniform(-.42,.42)*w,rng.uniform(-.3,.3)*h
+                pygame.draw.circle(self.back,(112,114,75),(x+dx,y+dy),.35)
         self.bubbles = [(rng.random(),rng.uniform(-2,2),rng.uniform(.5,1.2)) for _ in range(34)]
 
     def plant(self, x,h,phase,kind,t):
         s = self.screen
         color = (24,106,44) if kind else (39,132,49)
-        if kind == 0:
-            for j in range(4):
+        if kind == 3:
+            for j in range(7):
+                side = -1 if j % 2 else 1
+                py = 113-h*(.2+j*.11)
+                px = x+side*(5+j*.8)+math.sin(t*.55+phase+j)*1.3
+                pygame.draw.line(s,(58,113,30),(x,120),(px,py),stroke(.5))
+                pygame.draw.polygon(s,(57+j*5,119+j*5,27),
+                    [(x,py+6),(px-side*5,py-4),(px+side*5,py-7),
+                     (px+side*8,py-3),(px+side*3,py+3)])
+                pygame.draw.line(s,(130,167,57),(x,py+6),(px+side*7,py-4),stroke(.35))
+        elif kind == 0:
+            for j in range(9):
                 top = (x+j*2+math.sin(t*.65+phase)*3-4,119-h*(.65+j*.12))
                 mid = (x+j+2,119-h*.4)
                 pygame.draw.polygon(s,color,[(x+j,120),mid,top,(mid[0]-2,mid[1])])
@@ -60,10 +79,11 @@ class Aquarium:
         poly((137,158,145),[(-9,0),(-17,-7-wave),(-16,7+wave)])
         for k in range(4):
             pygame.draw.line(s,(66,102,102),p(-4,-19+k*3),p(4,-4+k),stroke(.35))
-        poly((172,191,173),[(-11,0),(-6,-8),(1,-10),(7,-5),(10,-1),(8,3),(3,9),(-5,7)])
-        poly((207,213,187),[(-6,-5),(1,-9),(7,-4),(8,-1),(0,1),(-7,2)])
+        gold = phase < 1 or phase > 4
+        poly((196,166,80) if gold else (172,191,173),[(-11,0),(-6,-8),(1,-10),(7,-5),(10,-1),(8,3),(3,9),(-5,7)])
+        poly((231,194,100) if gold else (207,213,187),[(-6,-5),(1,-9),(7,-4),(8,-1),(0,1),(-7,2)])
         for a in (-6,0,5):
-            poly((39,58,57),[(a-1,-7),(a+1,-6),(a+2,6),(a,7)])
+            poly((92,76,39) if gold else (39,58,57),[(a-1,-7),(a+1,-6),(a+2,6),(a,7)])
         for a in (0,3):
             pygame.draw.lines(s,(181,199,170),False,[p(a,6),p(a,16),p(a+3+wave,25)],stroke(.4))
         pygame.draw.line(s,(224,216,165),p(2,0),p(-4,3+wave),stroke(.7))
@@ -77,7 +97,7 @@ class Aquarium:
             self.plant(x,h,ph,k,t)
         for i in range(6):
             x = 10+i*22+math.sin(t*.4+i)*3
-            pygame.draw.line(s,(15,52,55),(x,3),(x-12,65),stroke(.35))
+            pygame.draw.line(s,(14,83,93),(x,3),(x-12,65),stroke(.35))
         for i in range(3):
             ph = i*2.1
             x = 64+math.sin(t*.13+ph)*37
