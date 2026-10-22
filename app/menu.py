@@ -32,6 +32,7 @@ ITEMS = [
     ("RADIO", "online", ["/usr/bin/python3", HERE + "/radio.py"], HERE),
     ("SDR", "rtl-sdr", ["/usr/bin/python3", HERE + "/sdr.py"], HERE),
     ("FLIPPER", "scan", ["/usr/bin/python3", HERE + "/flipper.py"], HERE),
+    ("AQUARIUM", "demo", ["/usr/bin/python3", HERE + "/aquarium.py"], HERE),
     ("SCREENSAVER", "demo", ["/usr/bin/python3", HERE + "/screensaver.py"], HERE),
     ("AI CHAT", "", "aichat", None),
     ("PYTHON", "bpython", "term:python", None),
