@@ -48,7 +48,8 @@ class Aquarium:
 
     def angel(self,x,y,size,direction,t,phase):
         s = self.screen
-        turn = .4+.6*abs(math.cos(t*.13+phase))
+        # Narrow to an edge-on silhouette before changing direction.
+        turn = max(.06, abs(math.cos(t*.13+phase)))
         def p(a,b):
             return x+a*size*direction*turn,y+b*size
         def poly(c,pts):
@@ -116,6 +117,7 @@ def main(seconds=None):
     scene = Aquarium(screen)
     start = time.monotonic()
     try:
+        pygame.event.clear()
         while True:
             t = time.monotonic()-start
             if seconds is not None and t >= seconds:
