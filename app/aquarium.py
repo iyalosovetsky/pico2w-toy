@@ -41,7 +41,7 @@ W = H = 128                     # the logical tank
 SURFACE_Y = 9                   # the water line
 FONT_DIR = "/usr/share/fonts/truetype/dejavu/"
 CACHE = os.path.expanduser("~/.cache/lcdtoy")
-SCENE_VERSION = 12               # bump when the still scene changes (the cache is keyed on it)
+SCENE_VERSION = 13               # bump when the still scene changes (the cache is keyed on it)
 rng = random.Random()
 
 canvas = pygame.Surface((NW, NH))   # everything is drawn here in native pixels, then shown at once
@@ -230,12 +230,33 @@ def build_scene():
         pygame.draw.aalines(lay, (100, 176, 90), False, [lp.p(*q) for q in pts[:9]])
     layers["broad"] = lay
 
-    # small round leaves by the castle
+    # the round-leaved bush by the castle (pennywort): layered for depth - the far leaves small and dark, the near
+    # ones big and light, each a shaded tilted disc with veins from the middle
     lay, lp = layer()
-    for _ in range(40):
-        x, y = r.uniform(84, 100), r.uniform(84, 102)
-        lp.line((60, 130, 60), (x, ground_line(x)), (x, y), 0.3)
-        lp.circle(r.choice(((86, 182, 72), (70, 164, 64), (110, 200, 90))), (x, y), r.uniform(1.3, 2.1))
+    leaves = []
+    for _ in range(64):
+        z = r.random() ** 0.8                            # 0 far .. 1 near
+        x = r.uniform(78, 106)
+        top = 68 + (1 - z) * 6
+        y = r.uniform(top, 101)
+        leaves.append((z, x, y))
+    leaves.sort()
+    for z, x, y in leaves:
+        rad = (1.8 + 1.6 * z) * r.uniform(0.85, 1.15)
+        tilt = r.uniform(0.55, 0.85)                     # a disc on its stalk, tipped towards you
+        base = mix((24, 70, 36), (70, 150, 60), z)
+        light = mix((60, 120, 60), (150, 222, 110), z)
+        rim = mix((14, 44, 24), (40, 104, 44), z)
+        lp.line(mix((30, 80, 40), (70, 140, 60), z), (x + r.uniform(-1, 1), ground_line(x) + 1), (x, y + rad * tilt * 0.3), 0.35 + 0.15 * z)
+        lp.ellipse(rim, x, y, rad, rad * tilt)
+        lp.ellipse(base, x - rad * 0.06, y - rad * tilt * 0.06, rad * 0.9, rad * tilt * 0.88)
+        lp.ellipse(light, x - rad * 0.28, y - rad * tilt * 0.3, rad * 0.5, rad * tilt * 0.45)
+        cx, cy = x + rad * 0.05, y + rad * tilt * 0.12   # where the stalk joins: the veins run out from there
+        for j in range(7):
+            a = j / 7 * 2 * math.pi + 0.3
+            lp.line(mix(base, (200, 240, 160), 0.35), (cx, cy), (cx + math.cos(a) * rad * 0.8, cy + math.sin(a) * rad * tilt * 0.8), 0.14 + 0.06 * z)
+        if z > 0.6:
+            lp.circle((230, 250, 210), (x - rad * 0.4, y - rad * tilt * 0.42), 0.25 + 0.15 * z)   # a glint
     layers["round"] = lay
 
     # the red-purple bush at the bottom left
@@ -560,7 +581,7 @@ class Sway(Layer):
 
 
 PLANTS = [Sway(_scene["stem"], 104, 95, 2.4, 0.55, 0.0), Sway(_scene["broad"], 103, 30, 1.0, 0.7, 1.3),
-          Sway(_scene["red"], 104, 24, 0.9, 0.8, 2.1), Sway(_scene["round"], 103, 22, 0.7, 0.9, 3.0)]
+          Sway(_scene["red"], 104, 24, 0.9, 0.8, 2.1), Sway(_scene["round"], 103, 36, 1.0, 0.85, 3.0)]
 STONES = Layer(_scene["stones"])
 FRONT = Layer(_scene["front"])
 GLOW = Layer(_scene["glow"])
