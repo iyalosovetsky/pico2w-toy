@@ -1057,9 +1057,9 @@ def platy_sprite(size, tail):
     return finish(surf, size, X0, X1, Y0, Y1)
 
 
-def tilted_frames(make, *args):
-    """[facing 0=right 1=left][tilt][tail] sprites."""
-    base = [make(*args, math.sin(2 * math.pi * i / TAIL_FRAMES)) for i in range(TAIL_FRAMES)]
+def tilted_frames(make, *args, n=TAIL_FRAMES):
+    """[facing 0=right 1=left][tilt][tail] sprites, n tail positions per beat."""
+    base = [make(*args, math.sin(2 * math.pi * i / n)) for i in range(n)]
     right = [[pygame.transform.rotozoom(f, -deg, 1) if deg else f for f in base] for deg in TILTS]
     left = [[pygame.transform.flip(f, True, False) for f in row] for row in right]
     return right, left
@@ -1205,7 +1205,7 @@ class Fish:
 
     def image(self):
         row = self.tilt_row(self.right if self.face >= 0 else self.left)
-        img = row[int(self.tail) % TAIL_FRAMES]
+        img = row[int(self.tail * len(row) / TAIL_FRAMES) % len(row)]   # the same beat, however many positions
         wscale = abs(self.face)
         if wscale < 0.97:                                   # turning: narrower
             img = pygame.transform.smoothscale(img, (max(1, int(img.get_width() * max(0.2, wscale))), img.get_height()))
@@ -1528,7 +1528,8 @@ def timer_light(h):
 class Tank:
     def __init__(self):
         kinds = (("silver", 1.0, (40, 40)), ("gold", 0.95, (84, 30)), ("silver", 0.88, (62, 58)))
-        self.angels = [Fish(tilted_frames(angelfish_sprite, size, kind), X(x), y, 8.5, (16, 28, W - 16, 80), margin=15,
+        # the angelfish beat their big tails slowly: 12 positions a beat, or it looks jerky
+        self.angels = [Fish(tilted_frames(angelfish_sprite, size, kind, n=12), X(x), y, 8.5, (16, 28, W - 16, 80), margin=15,
                             nose=9.5 * size, low=11) for kind, size, (x, y) in kinds]
         self.angel_peck = rng.uniform(8, 16)
         for f, (kind, size, _) in zip(self.angels, kinds):
