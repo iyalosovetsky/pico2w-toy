@@ -3,6 +3,7 @@ import math
 import random
 import time
 import pygame
+import pygame.gfxdraw
 import lcd
 
 
@@ -45,10 +46,26 @@ class Aquarium:
                 py = 113-h*(.2+j*.11)
                 px = x+side*(5+j*.8)+math.sin(t*.55+phase+j)*1.3
                 pygame.draw.line(s,(58,113,30),(x,120),(px,py),stroke(.5))
-                pygame.draw.polygon(s,(57+j*5,119+j*5,27),
-                    [(x,py+6),(px-side*5,py-4),(px+side*5,py-7),
-                     (px+side*8,py-3),(px+side*3,py+3)])
-                pygame.draw.line(s,(130,167,57),(x,py+6),(px+side*7,py-4),stroke(.35))
+                base = (x, py+6)
+                tip = (px+side*7, py-4)
+                # Two curved edges meet at the tip without angular notches.
+                points = []
+                for a, b, control in (
+                    (base, tip, (px-side*2, py-12)),
+                    (tip, base, (px+side*9, py+7)),
+                ):
+                    for step in range(13):
+                        u = step/12
+                        points.append(tuple((1-u)**2*a[i]+2*u*(1-u)*control[i]+u*u*b[i]
+                                            for i in (0, 1)))
+                scale = lcd.S if isinstance(s, lcd.Surface) else 1
+                native = [(round(a*scale), round(b*scale)) for a,b in points]
+                color = (57+j*5,119+j*5,27)
+                pygame.gfxdraw.filled_polygon(s, native, color)
+                pygame.gfxdraw.aapolygon(s, native, color)
+                pygame.draw.aaline(s,(130,167,57),
+                                   tuple(v*scale for v in base),
+                                   tuple(v*scale for v in tip))
         elif kind == 0:
             for j in range(9):
                 top = (x+j*2+math.sin(t*.65+phase)*3-4,119-h*(.65+j*.12))
