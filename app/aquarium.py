@@ -1739,7 +1739,9 @@ def show_camera():
     import threading
     disp = pygame.display.set_mode((CAM_W, CAM_H), pygame.SCALED | (pygame.FULLSCREEN if lcd.DISPLAY_MODE == "kms" else 0))
     pygame.mouse.set_visible(False)
-    rtsp = ["-rtsp_transport", "tcp", "-timeout", "5000000"] if CAMERA_URL.startswith("rtsp") else []
+    # RTSP over TCP, 5 s to connect; no long probing (at night the camera gives 1 frame a second: 28 s -> 7 s)
+    rtsp = ["-rtsp_transport", "tcp", "-timeout", "5000000", "-analyzeduration", "0", "-probesize", "32"] \
+        if CAMERA_URL.startswith("rtsp") else []
     cmd = ["ffmpeg", "-loglevel", "error", *rtsp, "-reorder_queue_size", "4000", "-max_delay", "10000000",
            "-fflags", "nobuffer", "-flags", "low_delay", "-i", CAMERA_URL, "-an",
            "-vf", "scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2" % (CAM_W, CAM_H, CAM_W, CAM_H),
