@@ -65,7 +65,8 @@ _FB_SYS = None if DISPLAY_MODE else _find_fb()
 NATIVE_W, NATIVE_H = (int(v) for v in os.environ["LCD_SIZE"].split("x")) if "LCD_SIZE" in os.environ \
     else _fb_size(_FB_SYS)
 WIDTH = HEIGHT = 128                     # logical size every app draws in
-S = NATIVE_W / WIDTH                     # 1 on the HAT, 2.5 on the PicoCalc
+S = NATIVE_H / HEIGHT                    # 1 on the HAT, 2.5 on the PicoCalc
+SCREEN_W = NATIVE_W / S                  # the logical width: 128, wider on a monitor (LCD_SIZE=1024x640)
 DEVICE = "picocalc" if NATIVE_W >= 240 else "hat144"
 
 # key names shown in on-screen hints
@@ -440,6 +441,36 @@ def _is_touchscreen(path):
     return bool(bits >> BTN_TOUCH & 1) and any(int(w, 16) for w in absw)
 
 
+ABS_X, ABS_Y, ABS_MT_POSITION_X, ABS_MT_POSITION_Y = 0, 1, 53, 54
+_touch_state = {}
+_touch_range = {}
+
+
+def _touch_pos(fd, x, y):
+    """A touch screen's raw position -> the display's pixels (the panel covers the whole monitor)."""
+    if fd not in _touch_range:
+        rng = []
+        for ax in (ABS_X, ABS_Y):
+            buf = bytearray(24)                          # struct input_absinfo: value, min, max, fuzz, flat, res
+            try:
+                fcntl.ioctl(fd, 0x80184540 + ax, buf)
+                _, lo, hi = struct.unpack_from("iii", buf)
+            except OSError:
+                lo, hi = 0, 0
+            rng.append((lo, hi))
+        _touch_range[fd] = rng
+    dw, dh = _display.get_size() if _display is not None else (NATIVE_W, NATIVE_H)
+    out = []
+    for v, (lo, hi), size in ((x, _touch_range[fd][0], dw), (y, _touch_range[fd][1], dh)):
+        out.append(size // 2 if v is None or hi <= lo else int((v - lo) / (hi - lo) * (size - 1)))
+    return tuple(out)
+
+
+def logical_pos(pos):
+    """A click's position on the display -> the app's logical coordinates (x may exceed 128 on a monitor)."""
+    return ((pos[0] - _offset) / S, pos[1] / S)
+
+
 def _pump_touch():
     """On a real display: touches straight from the touch screen (SDL's kmsdrm input misses some panels),
     posted as left mouse clicks."""
@@ -464,12 +495,23 @@ def _pump_touch():
             continue
         except OSError:
             _touch_fds.remove(fd)
+            _touch_state.pop(fd, None)
+            _touch_range.pop(fd, None)
             os.close(fd)
             continue
         for i in range(0, len(data) - _EVENT.size + 1, _EVENT.size):
             _, _, etype, code, value = _EVENT.unpack_from(data, i)
-            if etype == 1 and code == BTN_TOUCH and value == 1:
-                pygame.event.post(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(0, 0), touch=True))
+            st = _touch_state.setdefault(fd, {"down": False, "x": None, "y": None})
+            if etype == 3 and code in (ABS_X, ABS_MT_POSITION_X):
+                st["x"] = value
+            elif etype == 3 and code in (ABS_Y, ABS_MT_POSITION_Y):
+                st["y"] = value
+            elif etype == 1 and code == BTN_TOUCH:
+                st["down"] = value == 1
+            elif etype == 0 and st["down"] and st["down"] != "sent":     # the frame with the touch is complete
+                st["down"] = "sent"
+                pygame.event.post(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, touch=True,
+                                                     pos=_touch_pos(fd, st["x"], st["y"])))
 
 
 def _pump_buttons():
@@ -544,7 +586,7 @@ def init():
     pygame.init()
     if DISPLAY_MODE:
         _open_display()
-        _screen = Surface((WIDTH, HEIGHT)) if S != 1 else pygame.Surface((WIDTH, HEIGHT))
+        _screen = Surface((SCREEN_W, HEIGHT)) if S != 1 else pygame.Surface((NATIVE_W, NATIVE_H))
         _orig = pygame.event.get
 
         def get(*a, **kw):
@@ -559,7 +601,7 @@ def init():
         _fb = open("/dev/" + os.path.basename(_FB_SYS), "r+b", buffering=0)
     _scan_inputs()
     _init_sound()
-    _screen = Surface((WIDTH, HEIGHT)) if S != 1 else pygame.Surface((WIDTH, HEIGHT))
+    _screen = Surface((SCREEN_W, HEIGHT)) if S != 1 else pygame.Surface((NATIVE_W, NATIVE_H))
     _orig_get = pygame.event.get
 
     def get(*a, **kw):
