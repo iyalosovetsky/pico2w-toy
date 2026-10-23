@@ -44,12 +44,12 @@ NW, NH = lcd.NATIVE_W, lcd.NATIVE_H
 S = lcd.S                       # native pixels per logical one (1 on the HAT, 2.5 on the PicoCalc)
 W, H = lcd.SCREEN_W, 128          # the logical tank: 128 x 128 on the LCDs, wider on a monitor
 XS = W / 128                    # how much wider than the square scene it was drawn for
-DC = max(0.0, W - 138)          # the castle (with the heater and the air stone) by the right wall, all of it in view
-DB = max(0.0, DC - 12)          # the round-leaved bush in front of it, a little apart (the day cut in the castle shows)
+CX = 0.75 * W                   # the castle's tall tower, three quarters across like ours (the heater, the air stone and
+                                # the round-leaved bush go with it)
 SURFACE_Y = 9                   # the water line
 FONT_DIR = "/usr/share/fonts/truetype/dejavu/"
 CACHE = os.path.expanduser("~/.cache/lcdtoy")
-SCENE_VERSION = 22               # bump when the still scene changes (the cache is keyed on it)
+SCENE_VERSION = 23               # bump when the still scene changes (the cache is keyed on it)
 rng = random.Random()
 
 canvas = pygame.Surface((NW, NH))   # everything is drawn here in native pixels, then shown at once
@@ -283,11 +283,11 @@ def build_scene():
     surf_n.blit(far, (0, 0))
 
     # the heater, small, at the back: its top with the thermostat lamp shows above the tower
-    castle = castle_layer(sw, sh, k, DC)
+    castle = castle_layer(sw, sh, k, CX)
     for target in (pen, Pen(surf_n, k)):
-        for c, x0, x1, y0, y1 in (((176, 206, 218), 108.6, 110.8, 30, 66), ((96, 102, 108), 109.3, 110.1, 36, 64),
-                                  ((44, 48, 54), 108.2, 111.2, 28, 31)):
-            target.poly(c, [(x0 + DC, y0), (x1 + DC, y0), (x1 + DC, y1), (x0 + DC, y1)])
+        for c, x0, x1, y0, y1 in (((176, 206, 218), 10.6, 12.8, 30, 66), ((96, 102, 108), 11.3, 12.1, 36, 64),
+                                  ((44, 48, 54), 10.2, 13.2, 28, 31)):
+            target.poly(c, [(x0 + CX, y0), (x1 + CX, y0), (x1 + CX, y1), (x0 + CX, y1)])
     surf.blit(castle, (0, 0))
     surf_n.blit(castle, (0, 0))
 
@@ -339,7 +339,7 @@ def build_scene():
     leaves = []
     for _ in range(70):
         z = r.random() ** 1.4                            # 0 far .. 1 near (more far leaves than near ones)
-        x = r.uniform(80, 104) + (r.uniform(-3, 3) * z) + DB
+        x = r.uniform(80, 104) + (r.uniform(-3, 3) * z) + CX - 115     # in front of the castle's left block
         y = 70 + 14 * z + r.uniform(0, 16 - 4 * z)       # far ones high at the back, near ones low in front
         leaves.append((z, x, y))
     leaves.sort()
@@ -547,89 +547,152 @@ def stem_plant(pen, x, y0, h, lean, dark, light, r, alpha=255):
 VIEW_DOWN = 0.17
 
 
-def castle_layer(sw, sh, k, dx=0.0, seed=4):
-    """Our castle ruins: sculpted sandstone-like ceramic, several round towers of different heights - a tall
-    one at the back with a wavy petal rim, a wide base with arches, a lower one in front on the left; each
-    shaded as a cylinder lit from the front left, with a bumpy moulded surface, deep arches and moss."""
+def castle_layer(sw, sh, k, cx, seed=4):
+    """Our castle, as in the video of our tank: a moulded resin ruin, ochre with an olive bloom low down.
+    A tall vase-like tower widening upwards to a wavy open rim, a band of moulded lumps under it, ledges like
+    little balconies round it and tall arches; on its left a lower block with rows of small arched windows,
+    a terrace with a green pool and a little round turret on top; at its foot on the right a small tower with
+    a yellow cone roof; grey-green tufts of moss on the ledges. Each part shaded as a solid of revolution lit
+    from the front left and seen a little from above (VIEW_DOWN), with a bumpy moulded surface.
+    cx - the tall tower's axis (logical)."""
     nr = np.random.default_rng(seed)
     rgb = np.zeros((sh, sw, 3), np.float32)
     alpha = np.zeros((sh, sw), np.float32)
     yy, xx = np.mgrid[0:sh, 0:sw].astype(np.float32) / k
-    sand = np.array([234, 186, 116], np.float32)
+    sand = np.array([212, 190, 128], np.float32)
+    olive = np.array([150, 156, 92], np.float32)
     bumps = smooth_noise(nr, sw, sh, 34) * 0.6 + smooth_noise(nr, sw, sh, 70) * 0.4      # the moulded relief
     grain = 1 + nr.normal(0, 0.04, (sh, sw)).astype(np.float32)
     mossmap = smooth_noise(nr, sw, sh, 26)
+    G = ground_line(cx) + 1.0                         # where the front of the castle's foot meets the gravel
 
-    # its shadow on the gravel
-    shadow = (((xx - 112 - dx) / 19) ** 2 + ((yy - 104.6) / 2.8) ** 2) < 1
+    shadow = (((xx - cx + 4) / 23) ** 2 + ((yy - G - 0.6) / 2.6) ** 2) < 1     # its shadow on the gravel
     alpha[shadow], rgb[shadow] = 0.42, 0
 
-    def tower(cx, rad, top, base, petals, arches, cap="open"):
-        """One round tower seen a little from above: its top an ellipse (the wall's rim and the dark inside
-        of the ruin, or a flat roof), the foot, the bands and the arches curving round it.
-        top - the height of the rim ellipse's centre; base - where the front of its foot meets the ground."""
-        cx += dx
-        arches = [(ax + dx, ay, aw, ah) for ax, ay, aw, ah in arches]
-        e = rad * VIEW_DOWN                                  # the ellipses' half height (the view from above)
-        u = (xx - cx) / rad
+    def body(x0, top, base, r_bot, r_top, petals=0, cap="open", arches=(), bands=(), flare=0.0):
+        """A solid of revolution round x0 from base (the front of its foot) up to top (the rim ellipse's centre),
+        its radius growing from r_bot to r_top (and flaring out by flare just under the rim)."""
+        h = max(1.0, base - top)
+        t = np.clip((base - yy) / h, 0, 1)
+        rad = r_bot + (r_top - r_bot) * t ** 1.4 + flare * np.clip(1 - (yy - top) / 3.0, 0, 1) ** 2
+        u = (xx - x0) / rad
         inx = np.abs(u) < 1
         theta = np.arcsin(np.clip(u, -1, 1))
         nz = np.sqrt(np.clip(1 - u * u, 0, 1))
         lit = np.clip(-0.55 * u + 0.83 * nz, 0, 1)
-        wav = 1.5 * np.abs(np.sin(theta * petals / 2 + 0.6)) ** 0.7 if cap == "open" else 0.0   # the petal rim
-        front_top = top + e * nz - wav                     # the near edge of the rim (curving down at the middle)
-        foot = base - e + e * nz                             # the foot: lowest in the middle, nearest to you
-        body = inx & (yy >= front_top) & (yy <= foot)
-        relief = (bumps - 0.5) * 0.5 + 0.05 * np.sin(theta * 9)
-        shade = (0.38 + 0.72 * lit) * (1 + relief) * grain
-        band_y = top + 3.4 + e * nz                          # a moulded band under the rim, curving round
-        band = np.abs(yy - band_y) < 0.7
-        shade = np.where(band, shade * (1.12 - 0.3 * (yy - band_y + 0.6)), shade)
-        shade *= 1 - 0.3 * np.clip((yy - (foot - 5)) / 5, 0, 1)
-        col = np.minimum(sand[None, None, :] * shade[..., None], 255)
-        for ax, ay, aw, ah in arches:                        # arched openings, following the curve
+        e_top, e_bot = (r_top + flare) * VIEW_DOWN, r_bot * VIEW_DOWN
+        wav = 1.3 * np.abs(np.sin(theta * petals / 2 + 0.6)) ** 0.7 if (cap == "open" and petals) else 0.0
+        front_top = top + e_top * nz - wav
+        foot = base - e_bot + e_bot * nz
+        m = inx & (yy >= front_top) & (yy <= foot)
+        relief = (bumps - 0.5) * 0.8 + 0.06 * np.sin(theta * 9) + 0.05 * np.sin(yy * 2.3 + theta * 3)
+        shade = (0.36 + 0.74 * lit) * (1 + relief) * grain
+        for by in bands:                              # moulded bands curving round it
+            band_y = by + (r_top * VIEW_DOWN) * nz
+            band = np.abs(yy - band_y) < 0.6
+            shade = np.where(band, shade * (1.14 - 0.32 * (yy - band_y + 0.5)), shade)
+        shade *= 1 - 0.28 * np.clip((yy - (foot - 5)) / 5, 0, 1)
+        low = np.clip((yy - (G - 26)) / 26, 0, 1) * 0.45 + np.clip(mossmap - 0.55, 0, 1)   # the olive bloom
+        col = np.minimum((sand * (1 - low[..., None]) + olive * low[..., None]) * shade[..., None], 255)
+        for ax, ay, aw, ah in arches:                 # arched openings, following the curve
             ar = aw / 2
-            ua = np.clip((ax - cx) / rad, -0.99, 0.99)
-            ay = ay + e * math.sqrt(1 - ua * ua)
+            ua = np.clip((ax - x0) / max(r_bot, 1), -0.99, 0.99)
+            ay = ay + e_bot * math.sqrt(1 - ua * ua)
             hole = ((np.abs(xx - ax) < ar) & (yy > ay - ah / 2 + ar) & (yy < ay + ah / 2)) | \
                    ((((xx - ax) ** 2 + (yy - (ay - ah / 2 + ar)) ** 2) < ar * ar) & (yy <= ay - ah / 2 + ar))
-            hole &= body
+            hole &= m
             depth = np.clip((yy - (ay - ah / 2)) / ah, 0, 1)
-            col[hole] = np.array([40, 30, 22], np.float32) * (0.8 + 0.5 * depth[hole, None])
-            edge = (np.abs(xx - (ax + ar - 0.35)) < 0.4) & (yy > ay - ah / 2 + ar) & (yy < ay + ah / 2) & body
-            col[edge] = sand * 1.05
-            lip = (((xx - ax) ** 2 + (yy - (ay - ah / 2 + ar)) ** 2) < (ar + 0.7) ** 2) & ~hole & body & (yy < ay - ah / 2 + ar)
-            col[lip] = np.minimum(col[lip] * 1.18, 255)
-        moss = body & (mossmap > 0.58) & (nr.random((sh, sw)) < 0.6)
-        col[moss] = np.array([136, 150, 64], np.float32) * (0.6 + 0.6 * lit[moss, None])
-        rgb[body], alpha[body] = col[body], 1
-        # the top, seen from above: an ellipse
-        r = np.sqrt(u * u + ((yy - top) / e) ** 2)
-        if cap == "open":                                    # the wall's rim, then the dark inside of the ruin
-            back_top = top - e * nz - wav
-            cap_m = inx & (r < 1.0) & (yy >= back_top) & (yy < front_top + 0.01)
-            rim = cap_m & (r > 0.8)
-            inside = cap_m & (r <= 0.8)
-            rimcol = np.minimum(sand * (1.05 + 0.25 * (1 - (yy - top + e) / (2 * e)))[..., None] * grain[..., None], 255)
+            col[hole] = np.array([46, 34, 22], np.float32) * (0.75 + 0.5 * depth[hole, None])
+            edge = (np.abs(xx - (ax + ar - 0.3)) < 0.35) & (yy > ay - ah / 2 + ar) & (yy < ay + ah / 2) & m & ~hole
+            col[edge] = np.minimum(sand * 1.08, 255)
+            lip = (((xx - ax) ** 2 + (yy - (ay - ah / 2 + ar)) ** 2) < (ar + 0.6) ** 2) & ~hole & m & (yy < ay - ah / 2 + ar)
+            col[lip] = np.minimum(col[lip] * 1.2, 255)
+        rgb[m], alpha[m] = col[m], 1
+        R = r_top + flare
+        ur = (xx - x0) / R
+        rr = np.sqrt(ur * ur + ((yy - top) / max(e_top, 0.3)) ** 2)
+        inr = np.abs(ur) < 1
+        nzr = np.sqrt(np.clip(1 - ur * ur, 0, 1))
+        if cap == "open":                             # the rim, then the dark inside
+            back_top = top - e_top * nzr - wav
+            cap_m = inr & (rr < 1.0) & (yy >= back_top) & (yy < top + e_top * nzr - wav + 0.01)
+            rim = cap_m & (rr > 0.78)
+            inside = cap_m & (rr <= 0.78)
+            rimcol = np.minimum(sand * (1.08 + 0.22 * (1 - (yy - top + e_top) / (2 * e_top)))[..., None] * grain[..., None], 255)
             rgb[rim], alpha[rim] = rimcol[rim], 1
-            dark = sand * 0.28 * (1 + 0.8 * np.clip((yy - (top - e)) / (2 * e), 0, 1))[..., None]   # lighter low in front
+            dark = sand * 0.26 * (1 + 0.8 * np.clip((yy - (top - e_top)) / (2 * e_top), 0, 1))[..., None]
             rgb[inside], alpha[inside] = dark[inside], 1
-        else:                                                # a flat roof, lit
-            cap_m = inx & (r < 1.0)
+        else:                                         # a flat terrace, lit
+            cap_m = inr & (rr < 1.0)
             roof = np.minimum(sand * (1.12 + 0.18 * (bumps[..., None] - 0.5)) * grain[..., None], 255)
             rgb[cap_m], alpha[cap_m] = roof[cap_m], 1
-            edge = cap_m & (r > 0.93)
-            rgb[edge] = sand * 0.85
+            rgb[cap_m & (rr > 0.9)] = sand * 0.82
+        return lambda y: r_bot + (r_top - r_bot) * min(1.0, max(0.0, (base - y) / h)) ** 1.4
 
-    # the wide base with a flat roof, the tall tower standing on it, the lower tower in front on the left
-    tower(112.0, 16.5, 74.0, 104.0, 9, [(104.5, 89, 4.6, 10), (115.5, 91, 5.2, 11), (124.5, 88, 3.6, 8)], cap="flat")
-    tower(113.5, 10.5, 46.0, 75.5, 7, [(110.0, 58, 4.0, 8.5), (118.4, 60, 3.2, 7)])
-    tower(92.0, 7.5, 80.0, 104.0, 6, [(91.0, 92, 3.4, 7.5)])
+    def ledge(x0, y, rad, u0, u1):
+        """A little balcony round a tower: the lit top of a shelf ring and its shaded front edge, from u0 to u1."""
+        R = rad + 2.2
+        e = R * VIEW_DOWN
+        u = (xx - x0) / R
+        nzl = np.sqrt(np.clip(1 - u * u, 0, 1))
+        span = (u > u0) & (u < u1) & (np.abs(u) < 1)
+        top_m = span & (yy >= y + e * nzl * 0.2) & (yy < y + e * nzl)
+        front = span & (yy >= y + e * nzl) & (yy < y + e * nzl + 1.3)
+        lit = np.clip(-0.55 * u + 0.83 * nzl, 0, 1)
+        rgb[top_m] = np.minimum(sand * (1.0 + 0.3 * lit[top_m, None]), 255)
+        rgb[front] = sand * (0.48 + 0.3 * lit[front, None])
+        alpha[top_m | front] = 1
+
+    # the block on the left with its windows and the terrace, the turret on it, the tall vase, the small tower
+    bx = cx - 13.5
+    rows = (71.5, 79.5, 87.5)
+    wins = [(bx + dx, wy, 2.3, 4.4) for wy in rows for dx in (-4.6, 0.0, 4.6)]
+    body(bx, 66.0, G + 0.3, 8.6, 8.2, cap="flat", arches=wins, bands=(68.6,))
+    body(bx - 4.2, 58.5, 66.2, 2.6, 2.6, petals=5, cap="open", arches=[(bx - 4.2, 62.2, 1.4, 2.8)])
+    rad_at = body(cx, 40.0, G, 6.4, 9.6, petals=11, cap="open", flare=2.8, bands=(44.6, 51.4),
+                  arches=[(cx + 3.4, 75.0, 4.2, 12.0), (cx - 4.6, 84.0, 2.6, 6.0), (cx + 5.6, 62.4, 1.9, 4.2),
+                          (cx - 3.2, 70.0, 2.0, 3.8), (cx + 1.2, 91.0, 2.4, 5.2)])
+    ledge(cx, 66.5, rad_at(66.5), 0.05, 0.98)
+    ledge(cx, 81.0, rad_at(81.0), -0.98, -0.1)
+    ledge(bx, 66.0 + 8.6 * VIEW_DOWN, 6.6, -0.95, 0.95)
+    # the moulded lumps under the rim (light on top, shadow below)
+    for uu in (-0.72, -0.36, 0.0, 0.36, 0.72):
+        lx, ly = cx + uu * 9.6, 47.8 + 9.6 * VIEW_DOWN * math.sqrt(1 - uu * uu)
+        d = ((xx - lx) / 2.3) ** 2 + ((yy - ly) / 1.5) ** 2
+        lump = (d < 1 + (bumps - 0.5) * 0.8) & (alpha > 0)
+        lit = np.clip(1.02 - ((xx - lx + 0.6) ** 2 + (yy - ly + 0.5) ** 2) / 6.0, 0.55, 1.08) * (1 - 0.3 * abs(uu))
+        rgb[lump] = np.minimum(sand * lit[lump, None], 255)
+        under = (((xx - lx) / 1.9) ** 2 + ((yy - ly - 0.9) / 1.6) ** 2 < 1) & ~lump & (alpha > 0)
+        rgb[under] *= 0.62
+    # the small tower at the foot on the right with its yellow cone roof
+    tx = cx + 8.4
+    body(tx, G - 12.0, G + 0.9, 3.4, 3.3, cap="flat", arches=[(tx - 0.6, G - 6.0, 1.6, 3.2)], bands=(G - 9.6,))
+    cone_h, cone_r = 7.2, 4.4
+    cy0 = G - 12.0 + cone_r * VIEW_DOWN
+    t = np.clip((yy - (cy0 - cone_h)) / cone_h, 0, 1)
+    cone = (np.abs(xx - tx) < cone_r * t) & (yy >= cy0 - cone_h) & (yy <= cy0 + cone_r * VIEW_DOWN * np.sqrt(np.clip(1 - ((xx - tx) / cone_r) ** 2, 0, 1)))
+    uc = np.clip((xx - tx) / np.maximum(cone_r * t, 0.3), -1, 1)
+    clit = np.clip(0.55 - 0.5 * uc, 0.15, 1)
+    rgb[cone] = np.array([236, 206, 92], np.float32) * (0.5 + 0.6 * clit[cone, None])
+    alpha[cone] = 1
+    # the green pool on the terrace
+    pool = (((xx - bx - 1.0) / 5.2) ** 2 + ((yy - 66.2) / (5.2 * VIEW_DOWN * 0.9)) ** 2) < 1
+    rgb[pool & (alpha > 0)] = np.array([96, 176, 92], np.float32)
     lay = pygame.Surface((sw, sh), pygame.SRCALPHA)
     pygame.surfarray.blit_array(lay, np.clip(rgb, 0, 255).astype(np.uint8).swapaxes(0, 1))
     a = pygame.surfarray.pixels_alpha(lay)
     a[:] = (np.clip(alpha, 0, 1) * 255).astype(np.uint8).T
     del a
+    # grey-green tufts of moss on the ledges, the rims and the terrace
+    pen = Pen(lay, k)
+    r = random.Random(seed)
+    spots = [(cx + rad_at(66.5) * u, 67.2) for u in (0.3, 0.6, 0.85)] + [(cx - rad_at(81) * u, 81.7) for u in (0.4, 0.75)] + \
+            [(bx + u, 66.6) for u in (-5, -2.5, 3.5, 5.5)] + [(cx + u * 10.6, 40.6) for u in (-0.85, 0.7)] + \
+            [(bx - 4.2, 58.8), (tx + 2.5, G - 11.6), (cx - 7.6, 92.0), (bx + 7.2, 76.0)]
+    for x0, y0 in spots:
+        for _ in range(r.randint(4, 7)):
+            c = r.choice(((138, 148, 118), (160, 168, 134), (112, 124, 96), (176, 180, 150)))
+            pen.circle(c, (x0 + r.uniform(-1.5, 1.5), y0 + r.uniform(-1.0, 0.4)), r.uniform(0.45, 0.95))
     return lay
 
 
@@ -1151,17 +1214,24 @@ class Fish:
     def draw(self, surf):
         img = self.image()
         if self.eye2 is not None and self.front > 0.02:
-            # turning three quarters to you: the body foreshortens, the far eye shows past the snout
-            img = pygame.transform.smoothscale(img, (max(1, int(img.get_width() * (1 - 0.4 * self.front))), img.get_height()))
+            # turning to you: at the glass it looks at you nearly head on, its body only 10-20 degrees off (as in
+            # our photos): the flat body narrows to a third, both eyes show round on either side of the face
+            img = pygame.transform.smoothscale(img, (max(1, int(img.get_width() * (1 - 0.68 * self.front))), img.get_height()))
             if self.front > 0.45:
                 x0, x1, y0, y1 = ANGEL_BOX
-                ex = (5.7 - x0) / (x1 - x0) * img.get_width()
-                if self.face < 0:
-                    ex = img.get_width() - ex
-                ey = (-2.6 - y0) / (y1 - y0) * img.get_height()
+                w = img.get_width()
+                f = min(1.0, (self.front - 0.45) / 0.55)
+                face_x = (6.0 - x0) / (x1 - x0) * w                      # the middle of the face
+                gap = self.eye2.get_width() * (0.2 + 0.65 * f)          # the eyes move apart as it turns to you
+                near = (4.9 - x0) / (x1 - x0) * w * (1 - f) + (face_x - gap) * f
+                far = face_x + gap * f + ((5.7 - x0) / (x1 - x0) * w) * (1 - f) - face_x * (1 - f)
+                ey = (-2.0 - y0) / (y1 - y0) * img.get_height()
                 img = img.copy()
-                self.eye2.set_alpha(int(255 * min(1.0, (self.front - 0.45) * 2.5)))
-                img.blit(self.eye2, (ex - self.eye2.get_width() / 2, ey - self.eye2.get_height() / 2))
+                for ex, a in ((near, f), (far, min(1.0, (self.front - 0.45) * 2.5))):
+                    if self.face < 0:
+                        ex = w - ex
+                    self.eye2.set_alpha(int(255 * a))
+                    img.blit(self.eye2, (ex - self.eye2.get_width() / 2, ey - self.eye2.get_height() / 2))
         if abs(self.depth - 1) > 0.01:
             img = pygame.transform.smoothscale(img, (int(img.get_width() * self.depth), int(img.get_height() * self.depth)))
         surf.blit(img, (self.x * S - img.get_width() / 2, self.y * S - img.get_height() / 2))
@@ -1184,7 +1254,7 @@ def peck_spot(x, y, kinds):
                   (X(60) + rng.uniform(-4, 4), 92 + rng.uniform(0, 1.5), "stone")]
     if "plant" in kinds:
         cands += [(X(rng.uniform(6, 34)), rng.uniform(44, 92), "plant"), (X(rng.uniform(40, 56)), rng.uniform(82, 94), "plant"),
-                  (X(rng.uniform(18, 32)), rng.uniform(84, 96), "plant"), (rng.uniform(84, 98) + DB, rng.uniform(86, 98), "plant")]
+                  (X(rng.uniform(18, 32)), rng.uniform(84, 96), "plant"), (rng.uniform(CX - 31, CX - 17), rng.uniform(86, 98), "plant")]
     return min(cands, key=lambda c: (c[0] - x) ** 2 + (c[1] - y) ** 2 + rng.uniform(0, 900))
 
 
@@ -1289,7 +1359,7 @@ def glofish_school(colors):
 
 # ---------------------------------------------------------------- air, food, the surface, the ducks
 
-STONE = (88 + DC, 106)      # the air stone (logical): bubbles come from here
+STONE = (CX - 24, 106)      # the air stone (logical): bubbles come from here
 
 
 class Bubble:
@@ -1380,7 +1450,7 @@ def draw_air_gear(surf):
     pygame.draw.ellipse(surf, (122, 130, 140), (*P(STONE[0] - 3, STONE[1] - 1.5), 5 * S, 1.6 * S))
 
 
-HEATER_LED = (109.7 + DC, 33)
+HEATER_LED = (CX + 11.7, 33)
 
 
 def finger_sprite():
@@ -2056,10 +2126,9 @@ class CastleClock:
         if key != self.key:
             self.key = key
             self.night = {}
-            self.parts = [carve(time.strftime("%H:%M", now), 8.0, 113.5 + DC, 69.6, 10.5, 0.78),
-                          carve("%s, %d" % (DAYS[now.tm_wday], now.tm_mday), 4.4, 112.0 + DC, 83.7, 16.5, 0.85)
-                          if W > 150 else
-                          carve("%s, %d" % (DAYS_SHORT[now.tm_wday], now.tm_mday), 4.8, 116.0, 83.7, 16.5, 0.85)]
+            # the time on the vase between the moulded band and the ledge, the day low on it
+            self.parts = [carve(time.strftime("%H:%M", now), 7.0, CX, 58.8, 8.6, 0.8),
+                          carve("%s, %d" % (DAYS_SHORT[now.tm_wday], now.tm_mday), 4.2, CX - 1.2, 96.0, 6.9, 0.85)]
         for mul, add, _, pos in self.parts:
             dst.blit(mul, pos, special_flags=pygame.BLEND_RGB_MULT)
             dst.blit(add, pos, special_flags=pygame.BLEND_RGB_ADD)
