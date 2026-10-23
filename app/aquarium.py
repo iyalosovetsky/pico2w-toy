@@ -694,6 +694,47 @@ def angelfish_sprite(size, kind, tail):
     return finish(surf, size, X0, X1, Y0, Y1)
 
 
+def angelfish_front(size, kind, phase):
+    """The same angelfish looking at you through the glass: a narrow upright lens of a body, the tall thin fins,
+    an eye on each side of the head, the mouth in the middle, the pectoral fins fanning, the feelers hanging."""
+    X0, X1, Y0, Y1 = -6, 6, -18, 27
+    surf, T, k = sprite_canvas(X0, X1, Y0, Y1, size)
+    gold = kind == "gold"
+    fin = (244, 232, 214, 150) if gold else (226, 228, 216, 150)
+    fl = math.sin(phase * math.pi / 2)
+    # the tall fins, seen edge-on
+    pygame.draw.polygon(surf, fin, [T(-1.2, -6.2), T(-0.2, -12), T(0.1, -17.4), T(0.5, -12), T(1.3, -6.2)])
+    pygame.draw.polygon(surf, fin, [T(-1.3, 5.8), T(-0.4, 12), T(-0.1, 18.6), T(0.4, 12), T(1.3, 5.8)])
+    pygame.draw.line(surf, (40, 40, 44, 200) if not gold else (40, 30, 26, 200), T(0.05, -12), T(0.1, -17), max(1, int(0.3 * k)))
+    # the pectoral fins fanning on both sides
+    for sx in (-1, 1):
+        pygame.draw.polygon(surf, (236, 236, 228, 120), [T(sx * 2.2, 1.2), T(sx * (5.6 + fl * 0.4), -0.6 + fl), T(sx * (5.4 + fl * 0.4), 3.8 + fl), T(sx * 2.2, 3.2)])
+    # the body: a lens, light in the middle, darker at the edges (round, seen from the front)
+    for i in range(8, 0, -1):
+        f = i / 8
+        if gold:
+            c = mix((246, 150, 46), (255, 214, 120), 1 - f)
+        else:
+            c = mix((150, 156, 146), (240, 242, 236), 1 - f)
+        pygame.draw.ellipse(surf, c, (*T(-2.8 * f, -7.4 * (0.55 + 0.45 * f)), 5.6 * f * k, 14.8 * (0.55 + 0.45 * f) * k))
+    pygame.draw.ellipse(surf, mix(c, (255, 255, 255), 0.1), (*T(-2.9, -5.6), 5.8 * k, 6.2 * k))   # the broader head
+    if not gold:                                             # the dark bars at the edges, through the eyes
+        for sx in (-1, 1):
+            pygame.draw.line(surf, (30, 30, 34, 220), T(sx * 2.4, -5.4), T(sx * 2.2, 5.2), max(1, int(0.7 * k)))
+    # the eyes, bulging on both sides, and the mouth
+    for sx in (-1, 1):
+        pygame.draw.circle(surf, (200, 64, 36), T(sx * 2.6, -2.4), 1.45 * k)
+        pygame.draw.circle(surf, (10, 10, 10), T(sx * 2.55, -2.4), 0.8 * k)
+        pygame.draw.circle(surf, (255, 255, 255), T(sx * 2.3, -2.8), 0.28 * k)
+    pygame.draw.ellipse(surf, (90, 56, 44), (*T(-0.6, 0.0), 1.2 * k, 0.9 * k))
+    # the feelers hanging down in a V, swaying
+    for sx in (-1, 1):
+        pts = [T(sx * (0.9 + 2.2 * u + 0.5 * fl * u * u), 5.4 + 20 * u) for u in (i / 8 for i in range(9))]
+        pygame.draw.lines(surf, (70, 82, 96, 190), False, pts, max(2, int(1.05 * k)))
+        pygame.draw.lines(surf, (252, 240, 222, 235), False, pts, max(1, int(0.6 * k)))
+    return finish(surf, size, X0, X1, Y0, Y1)
+
+
 def neon_sprite(size, tail, glow=False):
     """A neon tetra facing right; glow - only its blue stripe (shown when the lamp is off)."""
     X0, X1, Y0, Y1 = -5.2, 4, -1.8, 1.8
@@ -814,6 +855,7 @@ class Fish:
         self.turn_rate = rng.uniform(1.4, 3.0)    # each fish turns at its own pace ...
         self.activity = 1.0              # 1 by day; at night the fish nearly sleep (see Tank.update)
         self.depth = 1.0                 # > 1 - up at the front glass (drawn a little bigger)
+        self.front, self.front_target, self.front_frames = 0.0, 0.0, None   # 1 - looking at you (front view)
         self.flip_at = rng.uniform(0.6, 1.8)      # ... and only once it really swims the other way
         self.margin = margin             # half its height: how close it may come to the surface / the gravel
         self.others = []                 # fish it keeps away from when choosing where to swim
@@ -928,7 +970,15 @@ class Fish:
         return img
 
     def draw(self, surf):
-        img = self.image()
+        if self.front_frames and self.front > 0.02:
+            if self.front >= 0.5:                            # the front view opening out
+                img = self.front_frames[int(self.tail * 0.7) % len(self.front_frames)]
+                img = pygame.transform.smoothscale(img, (max(1, int(img.get_width() * (self.front - 0.5) * 2)), img.get_height()))
+            else:                                            # the profile narrowing as it turns to you
+                img = self.image()
+                img = pygame.transform.smoothscale(img, (max(1, int(img.get_width() * (1 - self.front * 2))), img.get_height()))
+        else:
+            img = self.image()
         if abs(self.depth - 1) > 0.01:
             img = pygame.transform.smoothscale(img, (int(img.get_width() * self.depth), int(img.get_height() * self.depth)))
         surf.blit(img, (self.x * S - img.get_width() / 2, self.y * S - img.get_height() / 2))
@@ -1204,9 +1254,10 @@ class Tank:
         self.angels = [Fish(tilted_frames(angelfish_sprite, size, kind), x, y, 8.5, (16, 28, 112, 80), margin=15,
                             nose=9.5 * size, low=11) for kind, size, (x, y) in kinds]
         self.angel_peck = rng.uniform(8, 16)
-        for f in self.angels:
+        for f, (kind, size, _) in zip(self.angels, kinds):
             f.others = [g for g in self.angels if g is not f]
             f.pick_target()
+            f.front_frames = [angelfish_front(size, kind, ph) for ph in range(4)]
         self.school = neon_school(11)
         self.glofish = glofish_school((GLO_ORANGE, GLO_LIME, GLO_PINK, GLO_ROSE, GLO_ORANGE))
         self.platy = Fish(tilted_frames(platy_sprite, 1.0), 30, 88, 9, (12, 64, 70, 100), margin=4, nose=5.6, low=1.5)
@@ -1387,7 +1438,13 @@ class Tank:
                 f.ty = 44 + (i % 2) * 12 + 4 * math.sin(t * 0.6 + i)
                 f.rest = 0
                 f.activity = max(f.activity, 0.7)
+            near = visiting and math.hypot(f.x - f.tx, f.y - f.ty) < 5
             f.depth += ((1.14 if visiting and abs(f.x - f.tx) < 8 else 1.0) - f.depth) * min(1, dt * 0.7)
+            f.front_target = 1.0 if near else 0.0            # at the glass it turns to look at you
+            f.front += max(-dt * 1.4, min(dt * 1.4, f.front_target - f.front))
+            if f.front > 0.3:                                # while looking at you it hardly moves
+                f.vx *= 1 - min(1, dt * 3)
+                f.vy *= 1 - min(1, dt * 3)
         self.school.update(dt, t, self.food)
         self.glofish.update(dt, t, self.food)
         self.platy.update(dt, self.food)
