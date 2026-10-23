@@ -420,9 +420,62 @@ def _scan_inputs():
             pass  # device vanished or not accessible (yet)
 
 
+_touch_fds = []
+_touch_scan = 0.0
+BTN_TOUCH = 330
+
+
+def _is_touchscreen(path):
+    """A touch screen: BTN_TOUCH among its keys and absolute axes."""
+    try:
+        with open(path + "/device/capabilities/key") as f:
+            words = f.read().split()
+        with open(path + "/device/capabilities/abs") as f:
+            absw = f.read().split()
+    except OSError:
+        return False
+    bits = 0
+    for w in words:
+        bits = (bits << (struct.calcsize("l") * 8)) | int(w, 16)
+    return bool(bits >> BTN_TOUCH & 1) and any(int(w, 16) for w in absw)
+
+
+def _pump_touch():
+    """On a real display: touches straight from the touch screen (SDL's kmsdrm input misses some panels),
+    posted as left mouse clicks."""
+    global _touch_scan
+    if time.monotonic() - _touch_scan > RESCAN_SECONDS:
+        _touch_scan = time.monotonic()
+        known = {os.readlink("/proc/self/fd/%d" % fd) for fd in _touch_fds if os.path.exists("/proc/self/fd/%d" % fd)}
+        for path in glob.glob("/sys/class/input/event*"):
+            dev = "/dev/input/" + os.path.basename(path)
+            if dev not in known and _is_touchscreen(path):
+                try:
+                    _touch_fds.append(os.open(dev, os.O_RDONLY | os.O_NONBLOCK))
+                except OSError:
+                    pass
+    if not _touch_fds:
+        return
+    ready, _, _ = select.select(_touch_fds, [], [], 0)
+    for fd in ready:
+        try:
+            data = os.read(fd, _EVENT.size * 64)
+        except BlockingIOError:
+            continue
+        except OSError:
+            _touch_fds.remove(fd)
+            os.close(fd)
+            continue
+        for i in range(0, len(data) - _EVENT.size + 1, _EVENT.size):
+            _, _, etype, code, value = _EVENT.unpack_from(data, i)
+            if etype == 1 and code == BTN_TOUCH and value == 1:
+                pygame.event.post(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(0, 0), touch=True))
+
+
 def _pump_buttons():
     global _caps
-    if DISPLAY_MODE:                      # on a real display SDL reads the keyboard itself
+    if DISPLAY_MODE:                      # on a real display SDL reads the keyboard itself; touches - _pump_touch
+        _pump_touch()
         return
     if time.monotonic() - _last_scan > RESCAN_SECONDS:
         _scan_inputs()
@@ -490,12 +543,14 @@ def init():
         _install_scaling()
     pygame.init()
     if DISPLAY_MODE:
-        flags = pygame.SCALED | (pygame.FULLSCREEN if DISPLAY_MODE == "kms" else 0)
-        _display = pygame.display.set_mode((NATIVE_W, NATIVE_H), flags)
-        pygame.mouse.set_visible(False)
+        _open_display()
         _screen = Surface((WIDTH, HEIGHT)) if S != 1 else pygame.Surface((WIDTH, HEIGHT))
         _orig = pygame.event.get
-        pygame.event.get = lambda *a, **kw: _orig(*a, **kw)
+
+        def get(*a, **kw):
+            _pump_buttons()
+            return _orig(*a, **kw)
+        pygame.event.get = get
         return _screen
     pygame.display.set_mode((1, 1))
     if _FB_SYS is None and "LCD_SIZE" not in os.environ:
@@ -514,18 +569,38 @@ def init():
     return _screen
 
 
+# on a wide monitor the square picture sits in the middle; an app may draw in the bars at the sides
+# (panel_hook(display, left_rect, right_rect), called before each flip)
+panel_hook = None
+_offset = 0
+
+
+def _open_display():
+    """The display in the screen's own shape, LCD_SIZE high: the square picture centred, bars at the sides."""
+    global _display, _offset
+    flags = pygame.SCALED | (pygame.FULLSCREEN if DISPLAY_MODE == "kms" else 0)
+    try:
+        dw, dh = pygame.display.get_desktop_sizes()[0]
+    except (pygame.error, IndexError, AttributeError):
+        dw, dh = NATIVE_W, NATIVE_H
+    w = max(NATIVE_W, int(round(NATIVE_H * dw / dh)) // 2 * 2) if DISPLAY_MODE == "kms" else NATIVE_W
+    _display = pygame.display.set_mode((w, NATIVE_H), flags)
+    _offset = (w - NATIVE_W) // 2
+    pygame.mouse.set_visible(False)
+
+
 def reopen_display():
     """After another full-screen view (the aquarium's camera) took the display: set the app's mode again."""
-    global _display
     if DISPLAY_MODE:
-        flags = pygame.SCALED | (pygame.FULLSCREEN if DISPLAY_MODE == "kms" else 0)
-        _display = pygame.display.set_mode((NATIVE_W, NATIVE_H), flags)
-        pygame.mouse.set_visible(False)
+        _open_display()
 
 
 def flip():
     if _display is not None:
-        pygame.Surface.blit(_display, _screen, (0, 0))
+        pygame.Surface.blit(_display, _screen, (_offset, 0))
+        if panel_hook and _offset:
+            panel_hook(_display, pygame.Rect(0, 0, _offset, NATIVE_H),
+                       pygame.Rect(_offset + NATIVE_W, 0, _display.get_width() - _offset - NATIVE_W, NATIVE_H))
         pygame.display.flip()
         return
     if _fb is None:

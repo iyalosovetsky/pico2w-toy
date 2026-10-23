@@ -854,7 +854,7 @@ def glofish_sprite(size, color, tail, glow=False):
     body = [(x, -h(x) * (1.05 if x > -1 else 0.9)) for x in xs] + [(x, h(x) * 0.95) for x in xs[::-1]]
     fin = (*mix(color, (255, 255, 255), 0.15), 170)
     if glow:
-        pygame.draw.polygon(surf, (*mix(color, (255, 255, 255), 0.25), 255), [T(*p) for p in body])
+        pygame.draw.polygon(surf, (*mix(color, (255, 255, 255), 0.08), 255), [T(*p) for p in body])
         return finish(surf, size, X0, X1, Y0, Y1)
     a = tail * 0.35
     pygame.draw.polygon(surf, fin, [T(*p) for p in ((-3.6, -0.5), (-5.6 + abs(a), -2.2 + a), (-4.7, a * 0.4),
@@ -1588,7 +1588,7 @@ class Tank:
             surf.blit(NIGHT, (0, 0))
         if self.light < 0.5:                                 # only the neons' stripes are seen in the dark
             self.school.draw_glow(surf, 1 - self.light * 2)
-            self.glofish.draw_glow(surf, (1 - self.light * 2) * 0.75)
+            self.glofish.draw_glow(surf, (1 - self.light * 2) * 0.38)
         glow = self.charge * (1 - self.light) ** 1.5
         if glow > 0.02:                                      # the fluorescent stones, added light
             v = int(255 * min(1.0, glow * (0.94 + 0.06 * math.sin(t * 1.3)))) // 6 * 6
@@ -1695,6 +1695,7 @@ def show_camera():
                     return False
                 if ev.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN, pygame.FINGERDOWN) and time.monotonic() - t0 > 0.6:
                     return True
+            _panel["key"] = None                                  # the bars get redrawn after the camera
             if latest["n"] != shown and latest["frame"] is not None:
                 shown = latest["n"]
                 pygame.Surface.blit(disp, pygame.image.frombuffer(latest["frame"], (CAM_W, CAM_H), "RGB"), (0, 0))
@@ -1714,6 +1715,50 @@ def show_camera():
         proc.wait()
         lcd.reopen_display()
         pygame.event.clear()
+
+
+# ---------------------------------------------------------------- a clock in the bars beside the tank (a monitor)
+
+DAYS = ["понеділок", "вівторок", "середа", "четвер", "п'ятниця", "субота", "неділя"]
+MONTHS = ["січня", "лютого", "березня", "квітня", "травня", "червня", "липня", "серпня", "вересня",
+          "жовтня", "листопада", "грудня"]
+_panel = {"key": None, "fonts": None}
+
+
+def draw_panels(disp, left, right):
+    """The time, the day and the date on the left; on the right a hint about the camera. Dimmer at night."""
+    tank = _panel.get("tank")
+    light = tank.light if tank else 1.0
+    now = time.localtime()
+    key = (now.tm_hour, now.tm_min, now.tm_sec // 2, int(light * 10))
+    if key == _panel["key"]:
+        return
+    _panel["key"] = key
+    if _panel["fonts"] is None:
+        Font = pygame.font.Font.__bases__[0] if S != 1 else pygame.font.Font
+        path = FONT_DIR + "DejaVuSans.ttf"
+        bold = FONT_DIR + "DejaVuSans-Bold.ttf"
+        ok = os.path.exists(path) and os.path.exists(bold)
+        big = max(24, left.width // 3)
+        _panel["fonts"] = (Font(bold if ok else None, big), Font(path if ok else None, max(12, big // 3)),
+                           Font(path if ok else None, max(11, big // 4)))
+    f_big, f_mid, f_small = _panel["fonts"]
+    fg = mix((80, 96, 100), (226, 236, 240), max(0.25, light))
+    dim = mix((50, 62, 66), (140, 156, 166), max(0.25, light))
+    for r in (left, right):
+        disp.fill((0, 0, 0), r)
+    t_img = f_big.render(time.strftime("%H:%M", now), True, fg)
+    y = left.height // 2 - t_img.get_height()
+    disp.blit(t_img, (left.centerx - t_img.get_width() // 2, y))
+    y += t_img.get_height()
+    for line, f, c in ((DAYS[now.tm_wday], f_mid, fg), ("%d %s" % (now.tm_mday, MONTHS[now.tm_mon - 1]), f_mid, dim)):
+        img = f.render(line, True, c)
+        disp.blit(img, (left.centerx - img.get_width() // 2, y))
+        y += img.get_height()
+    if CAMERA_URL:
+        for i, line in enumerate(("торкніться", "екрана -", "камера")):
+            img = f_small.render(line, True, dim)
+            disp.blit(img, (right.centerx - img.get_width() // 2, right.height // 2 - img.get_height() * (1.5 - i)))
 
 
 ARROWS = (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN)
@@ -1759,6 +1804,8 @@ def main(seconds=None):
     """Until Esc / KEY3; seconds - stop by itself (for the GIF recorder)."""
     pygame.event.clear()
     tank = Tank()
+    _panel["tank"] = tank
+    lcd.panel_hook = draw_panels
     last = time.monotonic()
     while True:
         now = time.monotonic()
