@@ -37,7 +37,7 @@ W = H = 128                     # the logical tank
 SURFACE_Y = 9                   # the water line
 FONT_DIR = "/usr/share/fonts/truetype/dejavu/"
 CACHE = os.path.expanduser("~/.cache/lcdtoy")
-SCENE_VERSION = 6               # bump when the still scene changes (the cache is keyed on it)
+SCENE_VERSION = 7               # bump when the still scene changes (the cache is keyed on it)
 rng = random.Random()
 
 canvas = pygame.Surface((NW, NH))   # everything is drawn here in native pixels, then shown at once
@@ -191,12 +191,12 @@ def build_scene():
                    (60, 150, 130), (120, 200, 170), r, alpha=120)
     surf.blit(far, (0, 0))
 
+    # the heater, small, at the back: its top with the thermostat lamp shows above the tower
+    pen.poly((176, 206, 218), [(108.6, 30), (110.8, 30), (110.8, 66), (108.6, 66)])
+    pen.poly((96, 102, 108), [(109.3, 36), (110.1, 36), (110.1, 64), (109.3, 64)])
+    pen.poly((44, 48, 54), [(108.2, 28), (111.2, 28), (111.2, 31), (108.2, 31)])
     surf.blit(castle_layer(size, k), (0, 0))
 
-    # the heater in the back right corner
-    pen.poly((190, 220, 230), [(119.5, 14), (122.5, 14), (122.5, 66), (119.5, 66)])
-    pen.poly((90, 96, 100), [(120.4, 22), (121.6, 22), (121.6, 62), (120.4, 62)])
-    pen.poly((40, 44, 50), [(119, 12), (123, 12), (123, 16), (119, 16)])
 
     # the plants that sway: each group on its own layer (moved in bands every frame, see Sway)
     def layer():
@@ -650,9 +650,11 @@ def angelfish_sprite(size, kind, tail):
         pts = []
         for i in range(9):
             u = i / 8
-            pts.append(T(2.6 + dx - 3.2 * u - 2.6 * u * u + sw * u * u, 5.0 + 19.5 * u + dx * 0.8 * u))
-        pygame.draw.lines(surf, feeler, False, pts, max(1, int(0.5 * k)))
-        pygame.draw.circle(surf, feeler, pts[-1], max(1, 0.32 * k))
+            pts.append(T(2.6 + dx - 3.2 * u - 2.6 * u * u + sw * u * u, 5.0 + 20.5 * u + dx * 0.8 * u))
+        # a thin dark edge first, so the pale feeler reads on the light water too
+        pygame.draw.lines(surf, (70, 82, 96, 190), False, pts, max(2, int(1.05 * k)))
+        pygame.draw.lines(surf, feeler, False, pts, max(1, int(0.6 * k)))
+        pygame.draw.circle(surf, feeler, pts[-1], max(1, 0.4 * k))
     pygame.draw.circle(surf, (196, 60, 34), T(4.9, -1.7), 1.25 * k)
     pygame.draw.circle(surf, (10, 10, 10), T(5.0, -1.7), 0.62 * k)
     pygame.draw.circle(surf, (255, 255, 255), T(5.25, -2.0), 0.2 * k)
@@ -966,7 +968,7 @@ def draw_air_gear(surf):
     pygame.draw.ellipse(surf, (122, 130, 140), (*P(STONE[0] - 3, STONE[1] - 1.5), 5 * S, 1.6 * S))
 
 
-HEATER_LED = (121, 18)
+HEATER_LED = (109.7, 33)
 
 
 def finger_sprite():
@@ -988,13 +990,13 @@ def draw_heater_led(surf, on, light=1.0):
     """The heater's thermostat lamp: orange with a little halo while it heats."""
     x, y = P(*HEATER_LED)
     if on:
-        for rr, a in ((2.6, 40), (1.7, 80), (1.0, 160)):
+        for rr, a in ((2.0, 40), (1.3, 80), (0.8, 160)):
             g = pygame.Surface((int(rr * 2 * S) + 2, int(rr * 2 * S) + 2), pygame.SRCALPHA)
             pygame.draw.circle(g, (255, 150, 40, a), (g.get_width() / 2, g.get_height() / 2), rr * S)
             surf.blit(g, (x - g.get_width() / 2, y - g.get_height() / 2))
-        pygame.draw.circle(surf, (255, 230, 150), (x, y), max(1, 0.55 * S))
+        pygame.draw.circle(surf, (255, 230, 150), (x, y), max(1, 0.42 * S))
     else:
-        pygame.draw.circle(surf, mix((24, 16, 14), (110, 60, 40), light), (x, y), max(1, 0.55 * S))
+        pygame.draw.circle(surf, mix((24, 16, 14), (110, 60, 40), light), (x, y), max(1, 0.42 * S))
 
 
 def surface_y(x, t):
@@ -1176,7 +1178,7 @@ class Tank:
         draw_surface(surf, t, self.light)
         draw_ducks(surf, t)
         if self.light < 0.999:                               # night: an opaque dark-blue sheet, whole-surface alpha
-            NIGHT.set_alpha(int(228 * (1 - self.light)))      # (2 ms on the Zero; per-pixel alpha took 32 ms)
+            NIGHT.set_alpha(int(178 * (1 - self.light)))      # (2 ms on the Zero; per-pixel alpha took 32 ms)
             surf.blit(NIGHT, (0, 0))
         if self.light < 0.5:                                 # only the neons' stripes are seen in the dark
             self.school.draw_glow(surf, 1 - self.light * 2)
