@@ -1872,7 +1872,7 @@ class CastleClock:
 
     def draw_dark(self, dst, dark):
         """Over the night: the letters still readable, faintly glowing."""
-        lv = int(255 * dark * 0.55) // 16 * 16
+        lv = int(255 * dark * 0.26) // 8 * 8
         if lv <= 0 or not self.parts:
             return
         for i, (_, _, glow, pos) in enumerate(self.parts):
