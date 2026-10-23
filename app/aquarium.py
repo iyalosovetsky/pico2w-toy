@@ -41,7 +41,7 @@ W = H = 128                     # the logical tank
 SURFACE_Y = 9                   # the water line
 FONT_DIR = "/usr/share/fonts/truetype/dejavu/"
 CACHE = os.path.expanduser("~/.cache/lcdtoy")
-SCENE_VERSION = 18               # bump when the still scene changes (the cache is keyed on it)
+SCENE_VERSION = 19               # bump when the still scene changes (the cache is keyed on it)
 rng = random.Random()
 
 canvas = pygame.Surface((NW, NH))   # everything is drawn here in native pixels, then shown at once
@@ -219,7 +219,7 @@ def build_scene():
     # the lemon plant (Nomaphila) in the middle: thick stems with pairs of ovate light-green leaves, big low down,
     # smaller and lighter up top, veined, a little wavy; the stem at the back darker
     lay, lp = layer()
-    for x0, h, z in ((52.0, 30.0, 0.0), (43.5, 25.0, 0.55), (48.5, 20.0, 1.0)):
+    for x0, h, z in ((52.0, 44.0, 0.0), (43.5, 38.0, 0.55), (48.5, 32.0, 1.0)):
         base_y = ground_line(x0) + 1
         far = 1 - z
         stem_c = mix((112, 132, 66), (58, 84, 46), far * 0.8)            # thick, brownish green
@@ -231,7 +231,7 @@ def build_scene():
             t = (i + 0.5) / pairs
             sx, sy = x0 + lean * t, base_y - h * t
             ln = (15.0 - 6.5 * t) * r.uniform(0.9, 1.1)
-            wd = ln * 0.58
+            wd = ln * 0.72
             if i % 2 == 0:                       # a pair spreading out, the low ones hanging down
                 for side in (-1, 1):
                     lemon_leaf(lp, sx, sy, ln, wd, side * r.uniform(1.1, 1.45), z, t, r, droop=(1.0 - t) * 1.5)
@@ -388,6 +388,9 @@ def lemon_leaf(pen, x, y, length, width, angle, z, t, r, droop=0.0):
     z - how near it is, t - how high up the stem (young leaves are lighter)."""
     far = 1 - z
     body = mix(mix((100, 166, 56), (54, 106, 44), far * 0.8), (146, 204, 84), t * 0.3)
+    q = r.uniform(-1, 1)                                   # each leaf its own tone: yellow-green .. dark green
+    body = mix(body, (168, 196, 70), q * 0.4) if q > 0 else mix(body, (40, 84, 38), -q * 0.35)
+    lit = mix(body, (190, 226, 120), 0.22)                 # the half facing the lamp
     edge = mix(body, (34, 70, 30), 0.4)
     shine = mix(body, (200, 236, 140), 0.35)
     vein = mix(body, (196, 226, 128), 0.45)
@@ -396,7 +399,7 @@ def lemon_leaf(pen, x, y, length, width, angle, z, t, r, droop=0.0):
     ph = r.uniform(0, 6.3)
     for k in range(15):
         u = k / 14
-        hw = width / 2 * math.sin(math.pi * min(1.0, u * 1.02)) ** 0.85 * (1.25 - 0.55 * u) ** 1.2   # widest low, pointed
+        hw = width / 2 * math.sin(math.pi * min(1.0, u * 1.02)) ** 0.7 * (1.15 - 0.35 * u)   # round, widest low, a point
         hw *= 1 + 0.05 * math.sin(u * 15 + ph)
         ax = x + sa * length * u
         ay = y + ca * length * u + droop * length * u * u * 0.45          # the tip hanging down
@@ -407,6 +410,8 @@ def lemon_leaf(pen, x, y, length, width, angle, z, t, r, droop=0.0):
     inner = [(ax + (lx - ax) * 0.9, ay + (ly - ay) * 0.9) for (ax, ay), (lx, ly) in zip(mid, left)] + \
             [(ax + (rx - ax) * 0.9, ay + (ry - ay) * 0.9) for (ax, ay), (rx, ry) in zip(mid, right)][::-1]
     pen.poly(body, inner)
+    half = [(ax + (lx - ax) * 0.9, ay + (ly - ay) * 0.9) for (ax, ay), (lx, ly) in zip(mid, left)] + mid[::-1]
+    pen.poly(lit, half)
     # the gloss: a light band along the midrib on the upper half
     band = [(ax + (lx - ax) * 0.38, ay + (ly - ay) * 0.38) for (ax, ay), (lx, ly) in zip(mid[1:12], left[1:12])] + mid[1:12][::-1]
     pen.poly(shine, band)
@@ -632,7 +637,7 @@ class Sway(Layer):
             dst.blit(self.img, (x0 + dx, y0 + r), (0, r, w, min(self.BAND, h - r)))
 
 
-PLANTS = [Sway(_scene["stem"], 104, 95, 2.4, 0.55, 0.0), Sway(_scene["broad"], 104, 40, 1.1, 0.7, 1.3),
+PLANTS = [Sway(_scene["stem"], 104, 95, 2.4, 0.55, 0.0), Sway(_scene["broad"], 104, 54, 1.3, 0.7, 1.3),
           Sway(_scene["red"], 104, 24, 0.9, 0.8, 2.1), Sway(_scene["round"], 103, 36, 1.0, 0.85, 3.0)]
 STONES = Layer(_scene["stones"])
 FRONT = Layer(_scene["front"])
