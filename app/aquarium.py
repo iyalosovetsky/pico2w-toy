@@ -1714,7 +1714,8 @@ def draw_hud(tank, now):
         (title.img if hasattr(title, "img") else title).set_alpha(int(255 * min(1.0, (t - 1.0) / 0.8) * a))
         screen.blit(title, ((W - title.get_width()) / 2, 24))
     if lcd.DEVICE == "picocalc":
-        hints = ("1 світло  2 повітря  T постукати", "стрілки - палець  Enter - корм  Esc")
+        hints = ("1 світло  2 повітря  T стук" + ("  C камера" if CAMERA_URL else ""),
+                 "стрілки - палець  Enter - корм  Esc")
     else:
         hints = ("K1 світло  K2 повітря", "джойстик палець  OK корм  K3")
     imgs = [f_hint.render(h, True, (226, 236, 232)) for h in hints]
@@ -1729,7 +1730,19 @@ def draw_hud(tank, now):
 
 # ---------------------------------------------------------------- the camera (on a monitor with a touch screen)
 
-CAMERA_URL = os.environ.get("AQUARIUM_CAMERA", "")   # e.g. rtsp://10.80.39.161:8888/stream1; a touch shows it
+def _camera_url():
+    """AQUARIUM_CAMERA, else the first line of ~/.config/lcdtoy/aquarium-camera (e.g. rtsp://10.80.39.161:8888/stream1)."""
+    url = os.environ.get("AQUARIUM_CAMERA", "")
+    if not url:
+        try:
+            with open(os.path.expanduser("~/.config/lcdtoy/aquarium-camera")) as f:
+                url = f.readline().strip()
+        except OSError:
+            pass
+    return url
+
+
+CAMERA_URL = _camera_url()   # a touch (a monitor) or the C key (the LCDs) shows it
 CAMERA_FOR = 180                                     # seconds before it goes back to the tank by itself
 CAM_W, CAM_H = 1280, 800                             # the screen's mode while the camera is shown
 FRAME_W, FRAME_H = 1600, 640                         # the frames, as the window camera sends them (zoom keeps detail)
@@ -1737,24 +1750,40 @@ FRAME_W, FRAME_H = 1600, 640                         # the frames, as the window
 
 def show_camera():
     """The camera full screen until a key (or CAMERA_FOR seconds): ffmpeg decodes the stream (RTSP over TCP:
-    on WiFi lost UDP packets froze it) into raw frames at the stream's own size, which we show fitted to the
-    screen. A touch on the picture zooms in (digital zoom, smoothly) at that point: x2, x4, then back to the whole
-    view; a touch on the dark strips above or below it (the one below says so) - back to the tank."""
+    on WiFi lost UDP packets froze it) into raw frames, which we show fitted to the screen, with a digital zoom
+    (smooth: x2, x4, then the whole view again).
+    On a monitor the frames come at the stream's own size; a touch on the picture zooms in at that point, a touch
+    on the dark strips above or below it (the one below says so) or a key - back to the tank.
+    On the LCDs (the PicoCalc) the frames are twice the screen's width: point it at a small stream (the window
+    camera's rtsp://.../small is 640x256 M-JPEG - the Zero 2 W decodes that at 15 frames a second, while
+    scaling the 1600x640 H.264 one down, even decoded in hardware, held it at 3-10); Enter / Space zoom in, the
+    arrows move the view, Esc / C - back to the tank."""
     import subprocess
     import threading
-    disp = pygame.display.set_mode((CAM_W, CAM_H), pygame.SCALED | (pygame.FULLSCREEN if lcd.DISPLAY_MODE == "kms" else 0))
-    lcd._display = disp                                   # touch positions are taken against this screen
-    pygame.mouse.set_visible(False)
+    monitor = bool(lcd.DISPLAY_MODE)
+    if monitor:
+        cam_w, cam_h, frame_w, frame_h = CAM_W, CAM_H, FRAME_W, FRAME_H
+        disp = pygame.display.set_mode((CAM_W, CAM_H), pygame.SCALED | (pygame.FULLSCREEN if lcd.DISPLAY_MODE == "kms" else 0))
+        lcd._display = disp                               # touch positions are taken against this screen
+        pygame.mouse.set_visible(False)
+        flip = pygame.display.flip
+    else:
+        cam_w, cam_h = NW, NH
+        frame_w = 2 * NW
+        frame_h = int(frame_w * FRAME_H / FRAME_W) // 2 * 2
+        disp = screen                                     # the LCD's own surface, drawn on in native pixels
+        flip = lcd.flip
     # RTSP over TCP; no long probing and a long read timeout (at night the window camera gives a frame each 15 s)
     rtsp = ["-rtsp_transport", "tcp", "-timeout", "40000000", "-analyzeduration", "0", "-probesize", "32",
             "-reorder_queue_size", "4000", "-max_delay", "10000000"] if CAMERA_URL.startswith("rtsp") else ["-re"]
+    scale = "scale=%d:%d:force_original_aspect_ratio=decrease%s,pad=%d:%d:(ow-iw)/2:(oh-ih)/2" % (
+        frame_w, frame_h, "" if monitor else ":flags=fast_bilinear", frame_w, frame_h)
     cmd = ["ffmpeg", "-loglevel", "error", *rtsp,
            "-fflags", "nobuffer", "-flags", "low_delay", "-i", CAMERA_URL, "-an",
-           "-vf", "scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2" % (FRAME_W, FRAME_H, FRAME_W, FRAME_H),
-           "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"]
+           "-vf", scale, "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
     latest = {"frame": None, "n": 0}
-    size = FRAME_W * FRAME_H * 3
+    size = frame_w * frame_h * 3
 
     def reader():
         buf = bytearray(size)
@@ -1770,20 +1799,22 @@ def show_camera():
     threading.Thread(target=reader, daemon=True).start()
     Font = pygame.font.Font.__bases__[0] if S != 1 else pygame.font.Font   # the plain font: this screen is not scaled
     path = FONT_DIR + "DejaVuSans.ttf"
-    f_msg = Font(path, 28) if os.path.exists(path) else Font(None, 32)
-    f_zoom = Font(FONT_DIR + "DejaVuSans-Bold.ttf", 34) if os.path.exists(FONT_DIR + "DejaVuSans-Bold.ttf") else Font(None, 40)
-    back = Font.render(f_msg, "\u2190 акваріум", True, (150, 162, 170))   # in the strip below: a touch there goes back
+    px = 28 if monitor else max(10, NH // 22)
+    f_msg = Font(path, px) if os.path.exists(path) else Font(None, px + 4)
+    f_zoom = Font(FONT_DIR + "DejaVuSans-Bold.ttf", px * 5 // 4) if os.path.exists(FONT_DIR + "DejaVuSans-Bold.ttf") else Font(None, px * 3 // 2)
+    # in the strip below: on a monitor a touch there goes back; on the LCDs the keys
+    back = Font.render(f_msg, "\u2190 акваріум" if monitor else "Enter ближче  стрілки  Esc назад", True, (150, 162, 170))
     # where the picture goes on the screen (fitted, keeping its shape)
-    k = min(CAM_W / FRAME_W, CAM_H / FRAME_H)
-    dw, dh = int(FRAME_W * k), int(FRAME_H * k)
-    dx, dy = (CAM_W - dw) // 2, (CAM_H - dh) // 2
-    zoom = {"z": 1.0, "to": 1.0, "cx": FRAME_W / 2, "cy": FRAME_H / 2, "tx": FRAME_W / 2, "ty": FRAME_H / 2, "t": -9.0}
+    k = min(cam_w / frame_w, cam_h / frame_h)
+    dw, dh = int(frame_w * k), int(frame_h * k)
+    dx, dy = (cam_w - dw) // 2, (cam_h - dh) // 2
+    zoom = {"z": 1.0, "to": 1.0, "cx": frame_w / 2, "cy": frame_h / 2, "tx": frame_w / 2, "ty": frame_h / 2, "t": -9.0}
 
     def view():
         """The part of the frame in view now: (x, y, w, h), kept inside the frame."""
-        w, h = FRAME_W / zoom["z"], FRAME_H / zoom["z"]
-        x = min(max(zoom["cx"] - w / 2, 0), FRAME_W - w)
-        y = min(max(zoom["cy"] - h / 2, 0), FRAME_H - h)
+        w, h = frame_w / zoom["z"], frame_h / zoom["z"]
+        x = min(max(zoom["cx"] - w / 2, 0), frame_w - w)
+        y = min(max(zoom["cy"] - h / 2, 0), frame_h - h)
         return x, y, w, h
 
     def tap(pos):
@@ -1793,7 +1824,7 @@ def show_camera():
             return False
         x, y, w, h = view()
         if zoom["to"] >= 4:
-            zoom["to"], zoom["tx"], zoom["ty"] = 1.0, FRAME_W / 2, FRAME_H / 2
+            zoom["to"], zoom["tx"], zoom["ty"] = 1.0, frame_w / 2, frame_h / 2
         else:
             zoom["tx"] = x + min(max((pos[0] - dx) / dw, 0), 1) * w
             zoom["ty"] = y + min(max((pos[1] - dy) / dh, 0), 1) * h
@@ -1801,6 +1832,14 @@ def show_camera():
         zoom["t"] = time.monotonic()
         return True
 
+    def pan(dxs, dys):
+        """The arrows on the LCDs: move the zoomed view by a fifth of it."""
+        x, y, w, h = view()
+        zoom["tx"] = min(max(x + w / 2 + dxs * w / 5, w / 2), frame_w - w / 2)
+        zoom["ty"] = min(max(y + h / 2 + dys * h / 5, h / 2), frame_h - h / 2)
+
+    keys_back = (pygame.K_ESCAPE, pygame.K_BACKSPACE, pygame.K_q, pygame.K_c, pygame.K_3)
+    arrows = {pygame.K_LEFT: (-1, 0), pygame.K_RIGHT: (1, 0), pygame.K_UP: (0, -1), pygame.K_DOWN: (0, 1)}
     t0 = time.monotonic()
     shown, frame = -1, None
     pygame.event.clear()
@@ -1812,10 +1851,15 @@ def show_camera():
                 if time.monotonic() - t0 < 0.6:
                     continue
                 if ev.type == pygame.KEYDOWN:
-                    return True
+                    if monitor or ev.key in keys_back:
+                        return True
+                    if ev.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_KP_ENTER) and not tap((cam_w / 2, cam_h / 2)):
+                        return True
+                    if ev.key in arrows and latest["frame"] is not None:
+                        pan(*arrows[ev.key])
                 if ev.type == pygame.MOUSEBUTTONDOWN and not tap(ev.pos):
                     return True
-                if ev.type == pygame.FINGERDOWN and not tap((ev.x * CAM_W, ev.y * CAM_H)):
+                if ev.type == pygame.FINGERDOWN and not tap((ev.x * cam_w, ev.y * cam_h)):
                     return True
             moving = abs(zoom["z"] - zoom["to"]) > 0.002 or abs(zoom["cx"] - zoom["tx"]) > 0.5 or abs(zoom["cy"] - zoom["ty"]) > 0.5
             if moving:                                    # ease towards the new zoom and centre
@@ -1824,13 +1868,13 @@ def show_camera():
             badge = time.monotonic() - zoom["t"] < 1.6
             if latest["n"] != shown and latest["frame"] is not None:
                 shown = latest["n"]
-                frame = pygame.image.frombuffer(latest["frame"], (FRAME_W, FRAME_H), "RGB")
+                frame = pygame.image.frombuffer(latest["frame"], (frame_w, frame_h), "RGB")
             elif frame is None:
-                disp.fill((0, 0, 0))
+                pygame.Surface.fill(disp, (0, 0, 0))
                 text = "камера: з'єднання..." if proc.poll() is None else "камера недоступна"
                 img = Font.render(f_msg, text, True, (220, 230, 230))
-                pygame.Surface.blit(disp, img, ((CAM_W - img.get_width()) // 2, (CAM_H - img.get_height()) // 2))
-                pygame.display.flip()
+                pygame.Surface.blit(disp, img, ((cam_w - img.get_width()) // 2, (cam_h - img.get_height()) // 2))
+                flip()
                 if proc.poll() is not None and time.monotonic() - t0 > 4:
                     return True
                 clock.tick(30)
@@ -1841,14 +1885,14 @@ def show_camera():
             zoom["badge"] = badge
             x, y, w, h = view()
             part = frame.subsurface(pygame.Rect(int(x), int(y), max(1, int(w)), max(1, int(h))))
-            disp.fill((0, 0, 0))
+            pygame.Surface.fill(disp, (0, 0, 0))
             pygame.Surface.blit(disp, pygame.transform.smoothscale(part, (dw, dh)), (dx, dy))
             if dy >= back.get_height() + 8:
-                pygame.Surface.blit(disp, back, ((CAM_W - back.get_width()) // 2, dy + dh + (dy - back.get_height()) // 2))
+                pygame.Surface.blit(disp, back, ((cam_w - back.get_width()) // 2, dy + dh + (dy - back.get_height()) // 2))
             if badge:
                 img = Font.render(f_zoom, "\u00d7%d" % round(zoom["to"]), True, (240, 246, 244))
-                pygame.Surface.blit(disp, img, (CAM_W - img.get_width() - 24, dy + 16))
-            pygame.display.flip()
+                pygame.Surface.blit(disp, img, (cam_w - img.get_width() - px, dy + px // 2))
+            flip()
             clock.tick(30)
         return True
     finally:
@@ -1991,6 +2035,8 @@ def handle_keys(tank, now):
             lcd.play("move")
         elif ev.key in (pygame.K_t, pygame.K_4):
             tank.tap(t)
+        elif ev.key == pygame.K_c and CAMERA_URL:
+            tank.want_camera = True
         elif ev.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_f):
             tank.feed(t)
     return True
