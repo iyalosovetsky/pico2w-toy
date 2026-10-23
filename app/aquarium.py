@@ -796,8 +796,14 @@ DUCK = duck_sprite()
 class Fish:
     """Glides towards a target point; tilts with its climb, turns round smoothly (narrows, flips, widens)."""
 
-    def __init__(self, sprites, x, y, speed, zone, margin=4):
+    def __init__(self, sprites, x, y, speed, zone, margin=4, nose=4.0, low=None):
         self.right, self.left = sprites
+        self.nose = nose                 # from its centre to its mouth (logical): where it pecks with
+        self.low = margin if low is None else low   # how close to the gravel it may come while pecking
+        self.forage = None               # pecking at something: {"x", "y", "kind", "t", "pecks", ...}
+        self.face_lock = None            # faces this way while pecking (it backs off without turning)
+        self.turn_rate = rng.uniform(1.4, 3.0)    # each fish turns at its own pace ...
+        self.flip_at = rng.uniform(0.6, 1.8)      # ... and only once it really swims the other way
         self.margin = margin             # half its height: how close it may come to the surface / the gravel
         self.others = []                 # fish it keeps away from when choosing where to swim
         self.x, self.y = x, y
@@ -825,7 +831,47 @@ class Fish:
         self.vy += (dy / d * want * 0.55 - self.vy) * min(1, accel * dt)
         return d
 
+    def start_forage(self, x, y, kind):
+        """Swim to (x, y) and peck at it a few times: kind 'ground' (sand puffs), 'stone' or 'plant'."""
+        self.forage = {"x": x, "y": y, "kind": kind, "t": 0.0, "pecks": rng.randint(2, 5), "phase": 0,
+                       "pt": 0.0, "touch": False}
+        self.rest = 0
+
+    def forage_step(self, dt):
+        F = self.forage
+        F["t"] += dt
+        side = 1 if self.x < F["x"] else -1 if F["phase"] == 0 else self.face_lock
+        tx, ty = F["x"] - side * self.nose, F["y"] + (1.2 if F["kind"] != "plant" else 0.3)
+        if F["phase"] == 0:                                  # swim up to it
+            if self.steer(tx, ty, dt, self.speed * 0.8, 2.2) < 1.6 or F["t"] > 9:
+                F["phase"], self.face_lock = 1, side
+        else:                                                # peck: in, back a little, in again
+            F["pt"] += dt
+            touch = F["pt"] % 0.6 < 0.28
+            if touch and not F["touch"]:
+                F["pecks"] -= 1
+                if F["kind"] == "ground":
+                    for _ in range(4):
+                        PUFFS.append([F["x"] + rng.uniform(-1, 1), F["y"], rng.uniform(-3, 3), rng.uniform(-5, -2), 1.2])
+            F["touch"] = touch
+            if touch:
+                self.steer(tx, ty, dt, self.speed * 0.7, 6)
+            else:
+                self.steer(tx - side * 2.2, ty - 0.8, dt, self.speed * 0.5, 5)
+            if F["pecks"] <= 0 and not touch:
+                self.forage, self.face_lock = None, None
+                self.pick_target()
+        if self.forage is not None and F["t"] > 14:          # gave up
+            self.forage, self.face_lock = None, None
+
     def update(self, dt, food):
+        if self.forage is not None:
+            if food:
+                self.forage, self.face_lock = None, None
+            else:
+                self.forage_step(dt)
+                self.move(dt)
+                return
         target = None
         if food:
             near = min(food, key=lambda f: (f.x - self.x) ** 2 + (f.y - self.y) ** 2)
@@ -847,16 +893,23 @@ class Fish:
         self.x += self.vx * dt
         self.y += self.vy * dt
         self.x = max(6, min(122, self.x))
-        self.y = max(SURFACE_Y + self.margin, min(ground_line(self.x) - self.margin, self.y))
-        want = 1.0 if self.vx > 0.5 else -1.0 if self.vx < -0.5 else (1.0 if self.face >= 0 else -1.0)
-        self.face += max(-dt * 2.2, min(dt * 2.2, want - self.face))
+        low = self.low if self.forage is not None else self.margin
+        self.y = max(SURFACE_Y + self.margin, min(ground_line(self.x) - low, self.y))
+        want = 1.0 if self.vx > self.flip_at else -1.0 if self.vx < -self.flip_at else (1.0 if self.face >= 0 else -1.0)
+        if self.face_lock:
+            want = self.face_lock
+        self.face += max(-dt * self.turn_rate, min(dt * self.turn_rate, want - self.face))
         climb = max(-1.0, min(1.0, self.vy / max(3.0, abs(self.vx) + 1.0)))
+        if self.forage is not None and self.forage["phase"] == 1:   # nose down to peck
+            climb = 0.85 if self.forage["kind"] != "plant" else 0.4
         self.tilt += (climb - self.tilt) * min(1, dt * 3)
         self.tail += dt * (2.2 + abs(self.vx) * 0.3 + abs(self.vy) * 0.2)
 
+    def tilt_row(self, rows):
+        return rows[min(len(rows) - 1, max(0, int(round((self.tilt + 1) / 2 * (len(rows) - 1)))))]
+
     def image(self):
-        side = self.right if self.face >= 0 else self.left
-        row = side[min(len(side) - 1, max(0, int(round((self.tilt + 1) / 2 * (len(side) - 1)))))]
+        row = self.tilt_row(self.right if self.face >= 0 else self.left)
         img = row[int(self.tail) % TAIL_FRAMES]
         wscale = abs(self.face)
         if wscale < 0.97:                                   # turning: narrower
@@ -869,6 +922,26 @@ class Fish:
         return img
 
 
+PUFFS = []          # sand grains stirred up by pecking at the gravel: [x, y, vx, vy, life]
+
+
+def peck_spot(x, y, kinds):
+    """Somewhere to peck at near (x, y): the gravel, the top of a stone, a leaf."""
+    cands = []
+    if "ground" in kinds:
+        for _ in range(4):
+            gx = max(14, min(100, x + rng.uniform(-30, 30)))
+            if not (24 < gx < 44 or 52 < gx < 68):              # not under the stones
+                cands.append((gx, ground_line(gx) - 0.3, "ground"))
+    if "stone" in kinds:
+        cands += [(34 + rng.uniform(-5, 5), 92.5 + rng.uniform(0, 1.5), "stone"),
+                  (60 + rng.uniform(-4, 4), 92 + rng.uniform(0, 1.5), "stone")]
+    if "plant" in kinds:
+        cands += [(rng.uniform(6, 34), rng.uniform(44, 92), "plant"), (rng.uniform(40, 56), rng.uniform(82, 94), "plant"),
+                  (rng.uniform(18, 32), rng.uniform(84, 96), "plant"), (rng.uniform(84, 98), rng.uniform(86, 98), "plant")]
+    return min(cands, key=lambda c: (c[0] - x) ** 2 + (c[1] - y) ** 2 + rng.uniform(0, 900))
+
+
 class School:
     """A shoal: a leader wanders, the others keep their place around it with a little jitter.
 
@@ -877,11 +950,15 @@ class School:
 
     def __init__(self, members, start, zone, speed, spread):
         self.leader = Fish(([[None]], [[None]]), *start, speed * 0.8, zone)
-        self.glow = [g for _, g in members]
+        self.glow = [g for _, g, _ in members]
         self.fish = []
-        for frames_, _ in members:
-            f = Fish(frames_, start[0] + rng.uniform(-10, 10), start[1] + rng.uniform(-6, 6), speed, zone)
+        self.next_forage = rng.uniform(4, 9)
+        self.hist = []                  # (t, x, y) of the leader: each fish follows it with its own lag
+        for frames_, _, nose in members:
+            f = Fish(frames_, start[0] + rng.uniform(-10, 10), start[1] + rng.uniform(-6, 6), speed, zone,
+                     nose=nose, low=1.5)
             f.off = (rng.uniform(-spread[0], spread[0]), rng.uniform(-spread[1], spread[1]))
+            f.lag = rng.uniform(0.05, 1.3)
             f.jit = rng.uniform(0, 6.3)
             self.fish.append(f)
 
@@ -894,13 +971,29 @@ class School:
             L.rest = rng.uniform(0, 0.8)
         L.x += L.vx * dt
         L.y += L.vy * dt
+        self.hist.append((t, L.x, L.y))
+        if len(self.hist) > 40 and self.hist[0][0] < t - 1.6:
+            del self.hist[:10]
+        # now and then one fish drops out of the shoal to peck at something near it, then catches up
+        self.next_forage -= dt
+        if self.next_forage <= 0 and not food:
+            self.next_forage = rng.uniform(5, 12)
+            idle = [f for f in self.fish if f.forage is None]
+            if idle and sum(f.forage is not None for f in self.fish) < 2:
+                f = rng.choice(idle)
+                f.start_forage(*peck_spot(f.x, f.y, ("ground", "stone", "plant")))
         for f in self.fish:
-            if food and any((p.x - f.x) ** 2 + (p.y - f.y) ** 2 < 40 ** 2 for p in food):
+            if f.forage is not None or (food and any((p.x - f.x) ** 2 + (p.y - f.y) ** 2 < 40 ** 2 for p in food)):
                 f.update(dt, food)
                 continue
             ox = f.off[0] + 2.5 * math.sin(t * 0.7 + f.jit)
             oy = f.off[1] + 1.8 * math.sin(t * 1.1 + f.jit * 1.3)
-            f.steer(L.x + ox, L.y + oy, dt, f.speed, 2.4)
+            lx, ly = L.x, L.y
+            for ht, hx, hy in reversed(self.hist):            # where the leader was f.lag seconds ago
+                lx, ly = hx, hy
+                if ht <= t - f.lag:
+                    break
+            f.steer(lx + ox, ly + oy, dt, f.speed, rng.uniform(1.8, 2.8))
             for g in self.fish:                              # keep apart a little
                 if g is not f:
                     dx, dy = f.x - g.x, f.y - g.y
@@ -919,19 +1012,24 @@ class School:
             if gs is None:
                 continue
             img = f.image()
-            g = gs[0] if f.face >= 0 else gs[1]
+            g = f.tilt_row(gs[0] if f.face >= 0 else gs[1])
             if img.get_width() != g.get_width():
                 g = pygame.transform.smoothscale(g, (img.get_width(), g.get_height()))
             g.set_alpha(int(255 * strength))
             surf.blit(g, (f.x * S - g.get_width() / 2, f.y * S - g.get_height() / 2))
 
 
+def glow_frames(img):
+    """The glow sprite at each tilt: ([right per tilt], [left per tilt])."""
+    right = [pygame.transform.rotozoom(img, -deg, 1) if deg else img for deg in TILTS]
+    return right, [pygame.transform.flip(g, True, False) for g in right]
+
+
 def neon_school(n):
     members = []
     for _ in range(n):
         s = rng.uniform(0.85, 1.1)
-        g = neon_sprite(s, 0, True)
-        members.append((plain_frames(neon_sprite, s), (g, pygame.transform.flip(g, True, False))))
+        members.append((tilted_frames(neon_sprite, s), glow_frames(neon_sprite(s, 0, True)), 4.6 * s))
     return School(members, (66, 82), (14, 56, 112, 98), 19, (16, 8))
 
 
@@ -939,9 +1037,7 @@ def glofish_school(colors):
     members = []
     for c in colors:
         s = rng.uniform(0.9, 1.05)
-        fr = plain_frames(glofish_sprite, s, c)
-        g = glofish_sprite(s, c, 0, True)
-        members.append((fr, (g, pygame.transform.flip(g, True, False))))
+        members.append((tilted_frames(glofish_sprite, s, c), glow_frames(glofish_sprite(s, c, 0, True)), 5.0 * s))
     return School(members, (40, 60), (14, 34, 100, 86), 14, (10, 7))
 
 
@@ -970,20 +1066,42 @@ class Bubble:
 
 
 class Flake:
+    """A flake of food: floats on the surface a moment, then sinks tumbling and swaying."""
+
     def __init__(self, x=None):
-        self.x = rng.uniform(30, 100) if x is None else max(8, min(120, x + rng.uniform(-6, 6)))
-        self.y = SURFACE_Y + rng.uniform(-1, 2)
-        self.c = rng.choice(((214, 120, 50), (196, 70, 44), (226, 182, 82)))
+        self.x = rng.uniform(30, 100) if x is None else max(8, min(120, x + rng.uniform(-7, 7)))
+        self.y = SURFACE_Y - 0.5
+        self.c = rng.choice(((222, 124, 52), (200, 72, 44), (232, 188, 84), (186, 96, 52), (150, 170, 70)))
+        self.edge = mix(self.c, (255, 240, 200), 0.45)
+        self.size = rng.uniform(1.4, 2.4)
+        n = 6
+        self.shape = [(math.cos(2 * math.pi * i / n) * rng.uniform(0.6, 1.0), math.sin(2 * math.pi * i / n) * rng.uniform(0.35, 0.7))
+                      for i in range(n)]
         self.ph = rng.uniform(0, 6.3)
+        self.spin = rng.uniform(-2.5, 2.5)
+        self.float_for = rng.uniform(1.0, 2.5)
         self.age = 0.0
 
     def update(self, dt):
         self.age += dt
-        floor = ground_line(self.x) - 0.5
-        if self.y < floor:
-            self.y += (5 if self.age > 1.2 else 1.5) * dt
-            self.x += math.sin(self.age * 2 + self.ph) * 3 * dt
-        return self.age < 30
+        floor = ground_line(self.x) - 0.6
+        if self.age < self.float_for:                       # on the surface, bobbing with it
+            self.x += math.sin(self.age * 1.3 + self.ph) * 1.2 * dt
+            self.y = surface_y(self.x, self.age + self.ph) + 0.4
+        elif self.y < floor:
+            self.y += 4.2 * dt
+            self.x += math.sin(self.age * 2.2 + self.ph) * 4 * dt
+            self.ph += self.spin * dt
+        return self.age < 40
+
+    def draw(self, surf):
+        a = self.ph if self.age >= self.float_for else 0.0
+        flat = 0.45 + 0.55 * abs(math.cos(a)) if self.age >= self.float_for else 1.0   # tumbling: edge-on now and then
+        ca, sa = math.cos(a * 0.7), math.sin(a * 0.7)
+        pts = [P(self.x + (px * ca - py * sa) * self.size, self.y + (px * sa + py * ca) * self.size * flat)
+               for px, py in self.shape]
+        pygame.draw.polygon(surf, self.c, pts)
+        pygame.draw.aalines(surf, self.edge, True, pts)
 
 
 def draw_air_gear(surf):
@@ -1047,14 +1165,16 @@ def draw_ducks(surf, t):
 class Tank:
     def __init__(self):
         kinds = (("silver", 1.0, (40, 40)), ("gold", 0.95, (84, 30)), ("silver", 0.88, (62, 58)))
-        self.angels = [Fish(tilted_frames(angelfish_sprite, size, kind), x, y, 8.5, (16, 28, 112, 80), margin=15)
-                       for kind, size, (x, y) in kinds]
+        self.angels = [Fish(tilted_frames(angelfish_sprite, size, kind), x, y, 8.5, (16, 28, 112, 80), margin=15,
+                            nose=9.5 * size, low=11) for kind, size, (x, y) in kinds]
+        self.angel_peck = rng.uniform(8, 16)
         for f in self.angels:
             f.others = [g for g in self.angels if g is not f]
             f.pick_target()
         self.school = neon_school(11)
         self.glofish = glofish_school((GLO_ORANGE, GLO_LIME, GLO_PINK, GLO_ROSE, GLO_ORANGE))
-        self.platy = Fish(tilted_frames(platy_sprite, 1.0), 30, 88, 9, (12, 64, 70, 100), margin=4)
+        self.platy = Fish(tilted_frames(platy_sprite, 1.0), 30, 88, 9, (12, 64, 70, 100), margin=4, nose=5.6, low=1.5)
+        self.platy_peck = rng.uniform(4, 9)
         self.bubbles, self.food = [], []
         self.light, self.light_on = 0.0, True
         self.air_on, self.air_level = True, 0.0
@@ -1066,6 +1186,7 @@ class Tank:
         self.finger, self.finger_t, self.held = [64.0, 60.0], -99.0, set()   # the fingertip on the glass
         self.calm_t = -99.0             # after a tap the fish are too scared to be curious for a while
         self.taps = []                  # (x, y, when): rings spreading from a tap on the glass
+        self.splashes = []              # (x, when): rings on the surface where food was dropped
         self.charge = 0.6               # how much light the fluorescent stones have stored
         self.heater_on, self.heater_next = False, 8.0
 
@@ -1090,6 +1211,7 @@ class Tank:
             dx, dy = f.x - x, f.y - y
             d = math.hypot(dx, dy) or 0.1
             if d < 48:
+                f.forage, f.face_lock = None, None
                 kick = 40 * (1 - d / 48) + 8
                 f.vx += dx / d * kick
                 f.vy += dy / d * kick * 0.7
@@ -1099,7 +1221,10 @@ class Tank:
 
     def feed(self, t):
         x = self.finger[0] if self.finger_shown(t) else None
-        self.food += [Flake(x) for _ in range(6)]
+        new = [Flake(x) for _ in range(10)]
+        self.food += new
+        cx = sum(f.x for f in new) / len(new)
+        self.splashes += [(cx + rng.uniform(-4, 4), t + i * 0.15) for i in range(3)]
         lcd.play("chip")
 
     def update(self, now, dt):
@@ -1113,12 +1238,14 @@ class Tank:
         if self.finger_shown(t) and not self.food and t - self.calm_t > 3:
             fx, fy = self.finger
             for i, f in enumerate(self.angels):              # each at its own height beside the finger
+                f.forage, f.face_lock = None, None
                 side = 1 if f.x > fx else -1
                 f.tx, f.ty, f.rest = fx + side * (10 + 6 * (i % 2)), fy + (i - 1) * 17, 0
             self.platy.tx, self.platy.ty, self.platy.rest = fx + (7 if self.platy.x > fx else -7), fy + 6, 0
             for school in (self.school, self.glofish):
                 school.leader.tx, school.leader.ty, school.leader.rest = fx + (14 if school.leader.x > fx else -14), fy, 0
         self.taps = [tp for tp in self.taps if t - tp[2] < 0.8]
+        self.splashes = [sp for sp in self.splashes if t - sp[1] < 1.3]
         # the fluorescent stones charge in the light and fade slowly in the dark
         if self.light > 0.5:
             self.charge += (1 - self.charge) * dt / 25
@@ -1163,9 +1290,26 @@ class Tank:
                     g.vy -= uy / d * push * 1.3
                     if d < 0.6 and rng.random() < dt * 2:    # too close for long: one swims elsewhere
                         g.pick_target()
+        # the angelfish and the platy peck too: the angelfish at leaves and the tops of the stones
+        self.angel_peck -= dt
+        if self.angel_peck <= 0 and not self.food:
+            self.angel_peck = rng.uniform(10, 22)
+            f = rng.choice(self.angels)
+            if f.forage is None:
+                f.start_forage(*peck_spot(f.x, f.y, ("stone", "plant")))
+        self.platy_peck -= dt
+        if self.platy_peck <= 0 and not self.food and self.platy.forage is None:
+            self.platy_peck = rng.uniform(6, 14)
+            self.platy.start_forage(*peck_spot(self.platy.x, self.platy.y, ("ground", "stone", "plant")))
         self.school.update(dt, t, self.food)
         self.glofish.update(dt, t, self.food)
         self.platy.update(dt, self.food)
+        for p in PUFFS:                                       # sand grains drift up a little and settle
+            p[0] += p[2] * dt
+            p[1] += p[3] * dt
+            p[3] += 9 * dt
+            p[4] -= dt
+        PUFFS[:] = [p for p in PUFFS if p[4] > 0 and p[1] <= ground_line(p[0]) + 0.5]
 
     def draw(self, now):
         t = now - self.t0
@@ -1192,8 +1336,16 @@ class Tank:
             f.draw(surf)
         for g in GRASS:
             g.draw(surf, t)
+        for p in PUFFS:
+            pygame.draw.circle(surf, (150, 140, 118), P(p[0], p[1]), max(1, 0.4 * S))
         for fl in self.food:
-            pygame.draw.rect(surf, fl.c, (*P(fl.x - 0.6, fl.y - 0.4), max(1, 1.3 * S), max(1, 0.9 * S)))
+            fl.draw(surf)
+        for x, t0 in self.splashes:                           # rings where the food hit the surface
+            age = (t - t0) / 1.2
+            if 0 < age < 1:
+                w, h = (2 + age * 12) * S, (0.8 + age * 2.2) * S
+                pygame.draw.ellipse(surf, mix((60, 100, 120), (236, 252, 255), (1 - age) * self.light),
+                                    (x * S - w / 2, (SURFACE_Y + 0.4) * S - h / 2, w, h), max(1, int(0.35 * S)))
         for b in self.bubbles:
             r = b.r * S
             pygame.draw.circle(surf, (150, 206, 228), P(b.x, b.y), r, max(1, int(0.35 * S)))
