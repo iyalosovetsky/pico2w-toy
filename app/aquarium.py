@@ -41,7 +41,7 @@ W = H = 128                     # the logical tank
 SURFACE_Y = 9                   # the water line
 FONT_DIR = "/usr/share/fonts/truetype/dejavu/"
 CACHE = os.path.expanduser("~/.cache/lcdtoy")
-SCENE_VERSION = 9               # bump when the still scene changes (the cache is keyed on it)
+SCENE_VERSION = 10               # bump when the still scene changes (the cache is keyed on it)
 rng = random.Random()
 
 canvas = pygame.Surface((NW, NH))   # everything is drawn here in native pixels, then shown at once
@@ -387,27 +387,31 @@ def castle_layer(size, k, seed=4):
     sh = (((xx - 112) / 19) ** 2 + ((yy - 104.6) / 2.8) ** 2) < 1
     alpha[sh], rgb[sh] = 0.42, 0
 
-    def tower(cx, rad, top, base, petals, arches, dark_top=True):
-        """One round tower: top - the rim's height; petals - how many waves round the rim."""
+    def tower(cx, rad, top, base, petals, arches, cap="open"):
+        """One round tower seen a little from above: its top an ellipse (the wall's rim and the dark inside
+        of the ruin, or a flat roof), the foot, the bands and the arches curving round it.
+        top - the height of the rim ellipse's centre; base - where the front of its foot meets the ground."""
+        e = rad * 0.34                                       # the ellipses' half height (the view from above)
         u = (xx - cx) / rad
         inx = np.abs(u) < 1
         theta = np.arcsin(np.clip(u, -1, 1))
         nz = np.sqrt(np.clip(1 - u * u, 0, 1))
         lit = np.clip(-0.55 * u + 0.83 * nz, 0, 1)
-        rim = top - 1.6 * np.abs(np.sin(theta * petals / 2 + 0.6)) ** 0.7        # the wavy petal rim
-        body = inx & (yy >= rim) & (yy <= base)
-        relief = (bumps - 0.5) * 0.5 + 0.05 * np.sin(theta * 9)                   # bumps and moulded ridges
+        wav = 1.5 * np.abs(np.sin(theta * petals / 2 + 0.6)) ** 0.7 if cap == "open" else 0.0   # the petal rim
+        front_top = top + e * nz - wav                     # the near edge of the rim (curving down at the middle)
+        foot = base - e + e * nz                             # the foot: lowest in the middle, nearest to you
+        body = inx & (yy >= front_top) & (yy <= foot)
+        relief = (bumps - 0.5) * 0.5 + 0.05 * np.sin(theta * 9)
         shade = (0.38 + 0.72 * lit) * (1 + relief) * grain
-        band = np.abs(yy - (top + 3.2)) < 0.7                                     # a moulded band under the rim
-        shade = np.where(band, shade * (1.12 - 0.3 * (yy - top - 2.5)), shade)
-        shade *= 1 - 0.3 * np.clip((yy - (base - 5)) / 5, 0, 1)                   # dimmer at the foot
-        col = sand[None, None, :] * shade[..., None]
-        col = np.minimum(col, 255)
-        if dark_top:                                                              # the open top: the far inner wall
-            inner = inx & (yy >= rim) & (yy < top + 1.1) & (np.abs(u) < 0.88)
-            col[inner] = sand * (0.34 + 0.12 * lit[inner, None])
-        for ax, ay, aw, ah in arches:                                             # arched openings, deep
+        band_y = top + 3.4 + e * nz                          # a moulded band under the rim, curving round
+        band = np.abs(yy - band_y) < 0.7
+        shade = np.where(band, shade * (1.12 - 0.3 * (yy - band_y + 0.6)), shade)
+        shade *= 1 - 0.3 * np.clip((yy - (foot - 5)) / 5, 0, 1)
+        col = np.minimum(sand[None, None, :] * shade[..., None], 255)
+        for ax, ay, aw, ah in arches:                        # arched openings, following the curve
             ar = aw / 2
+            ua = np.clip((ax - cx) / rad, -0.99, 0.99)
+            ay = ay + e * math.sqrt(1 - ua * ua)
             hole = ((np.abs(xx - ax) < ar) & (yy > ay - ah / 2 + ar) & (yy < ay + ah / 2)) | \
                    ((((xx - ax) ** 2 + (yy - (ay - ah / 2 + ar)) ** 2) < ar * ar) & (yy <= ay - ah / 2 + ar))
             hole &= body
@@ -420,11 +424,28 @@ def castle_layer(size, k, seed=4):
         moss = body & (mossmap > 0.58) & (nr.random((size, size)) < 0.6)
         col[moss] = np.array([136, 150, 64], np.float32) * (0.6 + 0.6 * lit[moss, None])
         rgb[body], alpha[body] = col[body], 1
+        # the top, seen from above: an ellipse
+        r = np.sqrt(u * u + ((yy - top) / e) ** 2)
+        if cap == "open":                                    # the wall's rim, then the dark inside of the ruin
+            back_top = top - e * nz - wav
+            cap_m = inx & (r < 1.0) & (yy >= back_top) & (yy < front_top + 0.01)
+            rim = cap_m & (r > 0.8)
+            inside = cap_m & (r <= 0.8)
+            rimcol = np.minimum(sand * (1.05 + 0.25 * (1 - (yy - top + e) / (2 * e)))[..., None] * grain[..., None], 255)
+            rgb[rim], alpha[rim] = rimcol[rim], 1
+            dark = sand * 0.28 * (1 + 0.8 * np.clip((yy - (top - e)) / (2 * e), 0, 1))[..., None]   # lighter low in front
+            rgb[inside], alpha[inside] = dark[inside], 1
+        else:                                                # a flat roof, lit
+            cap_m = inx & (r < 1.0)
+            roof = np.minimum(sand * (1.12 + 0.18 * (bumps[..., None] - 0.5)) * grain[..., None], 255)
+            rgb[cap_m], alpha[cap_m] = roof[cap_m], 1
+            edge = cap_m & (r > 0.93)
+            rgb[edge] = sand * 0.85
 
-    # back to front: the tall back tower, the wide base, the low tower in front on the left
-    tower(113.5, 11.5, 44.0, 78.0, 7, [(110.0, 58, 4.2, 8.5), (118.8, 61, 3.4, 7)])
-    tower(112.0, 16.5, 73.0, 104.0, 9, [(104.5, 90, 4.6, 10), (115.5, 92, 5.2, 11), (124.5, 89, 3.6, 8)])
-    tower(92.0, 8.0, 79.0, 104.0, 6, [(91.0, 92, 3.6, 7.5)])
+    # the wide base with a flat roof, the tall tower standing on it, the lower tower in front on the left
+    tower(112.0, 16.5, 74.0, 104.0, 9, [(104.5, 89, 4.6, 10), (115.5, 91, 5.2, 11), (124.5, 88, 3.6, 8)], cap="flat")
+    tower(113.5, 10.5, 46.0, 76.5, 7, [(110.0, 58, 4.0, 8.5), (118.4, 60, 3.2, 7)])
+    tower(92.0, 7.5, 80.0, 104.0, 6, [(91.0, 92, 3.4, 7.5)])
     lay = pygame.Surface((size, size), pygame.SRCALPHA)
     pygame.surfarray.blit_array(lay, np.clip(rgb, 0, 255).astype(np.uint8).swapaxes(0, 1))
     a = pygame.surfarray.pixels_alpha(lay)
@@ -694,45 +715,16 @@ def angelfish_sprite(size, kind, tail):
     return finish(surf, size, X0, X1, Y0, Y1)
 
 
-def angelfish_front(size, kind, phase):
-    """The same angelfish looking at you through the glass: a narrow upright lens of a body, the tall thin fins,
-    an eye on each side of the head, the mouth in the middle, the pectoral fins fanning, the feelers hanging."""
-    X0, X1, Y0, Y1 = -6, 6, -18, 27
-    surf, T, k = sprite_canvas(X0, X1, Y0, Y1, size)
-    gold = kind == "gold"
-    fin = (244, 232, 214, 150) if gold else (226, 228, 216, 150)
-    fl = math.sin(phase * math.pi / 2)
-    # the tall fins, seen edge-on
-    pygame.draw.polygon(surf, fin, [T(-1.2, -6.2), T(-0.2, -12), T(0.1, -17.4), T(0.5, -12), T(1.3, -6.2)])
-    pygame.draw.polygon(surf, fin, [T(-1.3, 5.8), T(-0.4, 12), T(-0.1, 18.6), T(0.4, 12), T(1.3, 5.8)])
-    pygame.draw.line(surf, (40, 40, 44, 200) if not gold else (40, 30, 26, 200), T(0.05, -12), T(0.1, -17), max(1, int(0.3 * k)))
-    # the pectoral fins fanning on both sides
-    for sx in (-1, 1):
-        pygame.draw.polygon(surf, (236, 236, 228, 120), [T(sx * 2.2, 1.2), T(sx * (5.6 + fl * 0.4), -0.6 + fl), T(sx * (5.4 + fl * 0.4), 3.8 + fl), T(sx * 2.2, 3.2)])
-    # the body: a lens, light in the middle, darker at the edges (round, seen from the front)
-    for i in range(8, 0, -1):
-        f = i / 8
-        if gold:
-            c = mix((246, 150, 46), (255, 214, 120), 1 - f)
-        else:
-            c = mix((150, 156, 146), (240, 242, 236), 1 - f)
-        pygame.draw.ellipse(surf, c, (*T(-2.8 * f, -7.4 * (0.55 + 0.45 * f)), 5.6 * f * k, 14.8 * (0.55 + 0.45 * f) * k))
-    pygame.draw.ellipse(surf, mix(c, (255, 255, 255), 0.1), (*T(-2.9, -5.6), 5.8 * k, 6.2 * k))   # the broader head
-    if not gold:                                             # the dark bars at the edges, through the eyes
-        for sx in (-1, 1):
-            pygame.draw.line(surf, (30, 30, 34, 220), T(sx * 2.4, -5.4), T(sx * 2.2, 5.2), max(1, int(0.7 * k)))
-    # the eyes, bulging on both sides, and the mouth
-    for sx in (-1, 1):
-        pygame.draw.circle(surf, (200, 64, 36), T(sx * 2.6, -2.4), 1.45 * k)
-        pygame.draw.circle(surf, (10, 10, 10), T(sx * 2.55, -2.4), 0.8 * k)
-        pygame.draw.circle(surf, (255, 255, 255), T(sx * 2.3, -2.8), 0.28 * k)
-    pygame.draw.ellipse(surf, (90, 56, 44), (*T(-0.6, 0.0), 1.2 * k, 0.9 * k))
-    # the feelers hanging down in a V, swaying
-    for sx in (-1, 1):
-        pts = [T(sx * (0.9 + 2.2 * u + 0.5 * fl * u * u), 5.4 + 20 * u) for u in (i / 8 for i in range(9))]
-        pygame.draw.lines(surf, (70, 82, 96, 190), False, pts, max(2, int(1.05 * k)))
-        pygame.draw.lines(surf, (252, 240, 222, 235), False, pts, max(1, int(0.6 * k)))
-    return finish(surf, size, X0, X1, Y0, Y1)
+ANGEL_BOX = (-14, 9, -18, 27)    # the angelfish sprite's extent (logical, facing right)
+
+
+def far_eye(size):
+    """The other eye, seen past the snout when an angelfish turns three quarters to you."""
+    surf, T, k = sprite_canvas(-1.2, 1.2, -1.2, 1.2, size)
+    pygame.draw.circle(surf, (196, 60, 34), T(0, 0), 1.0 * k)
+    pygame.draw.circle(surf, (10, 10, 10), T(0.15, 0), 0.52 * k)
+    pygame.draw.circle(surf, (255, 255, 255), T(-0.1, -0.3), 0.17 * k)
+    return finish(surf, size, -1.2, 1.2, -1.2, 1.2)
 
 
 def neon_sprite(size, tail, glow=False):
@@ -855,7 +847,7 @@ class Fish:
         self.turn_rate = rng.uniform(1.4, 3.0)    # each fish turns at its own pace ...
         self.activity = 1.0              # 1 by day; at night the fish nearly sleep (see Tank.update)
         self.depth = 1.0                 # > 1 - up at the front glass (drawn a little bigger)
-        self.front, self.front_target, self.front_frames = 0.0, 0.0, None   # 1 - looking at you (front view)
+        self.front, self.front_target, self.eye2 = 0.0, 0.0, None   # 1 - turned three quarters to you
         self.flip_at = rng.uniform(0.6, 1.8)      # ... and only once it really swims the other way
         self.margin = margin             # half its height: how close it may come to the surface / the gravel
         self.others = []                 # fish it keeps away from when choosing where to swim
@@ -970,15 +962,19 @@ class Fish:
         return img
 
     def draw(self, surf):
-        if self.front_frames and self.front > 0.02:
-            if self.front >= 0.5:                            # the front view opening out
-                img = self.front_frames[int(self.tail * 0.7) % len(self.front_frames)]
-                img = pygame.transform.smoothscale(img, (max(1, int(img.get_width() * (self.front - 0.5) * 2)), img.get_height()))
-            else:                                            # the profile narrowing as it turns to you
-                img = self.image()
-                img = pygame.transform.smoothscale(img, (max(1, int(img.get_width() * (1 - self.front * 2))), img.get_height()))
-        else:
-            img = self.image()
+        img = self.image()
+        if self.eye2 is not None and self.front > 0.02:
+            # turning three quarters to you: the body foreshortens, the far eye shows past the snout
+            img = pygame.transform.smoothscale(img, (max(1, int(img.get_width() * (1 - 0.4 * self.front))), img.get_height()))
+            if self.front > 0.45:
+                x0, x1, y0, y1 = ANGEL_BOX
+                ex = (5.7 - x0) / (x1 - x0) * img.get_width()
+                if self.face < 0:
+                    ex = img.get_width() - ex
+                ey = (-2.6 - y0) / (y1 - y0) * img.get_height()
+                img = img.copy()
+                self.eye2.set_alpha(int(255 * min(1.0, (self.front - 0.45) * 2.5)))
+                img.blit(self.eye2, (ex - self.eye2.get_width() / 2, ey - self.eye2.get_height() / 2))
         if abs(self.depth - 1) > 0.01:
             img = pygame.transform.smoothscale(img, (int(img.get_width() * self.depth), int(img.get_height() * self.depth)))
         surf.blit(img, (self.x * S - img.get_width() / 2, self.y * S - img.get_height() / 2))
@@ -1257,7 +1253,7 @@ class Tank:
         for f, (kind, size, _) in zip(self.angels, kinds):
             f.others = [g for g in self.angels if g is not f]
             f.pick_target()
-            f.front_frames = [angelfish_front(size, kind, ph) for ph in range(4)]
+            f.eye2 = far_eye(size * 0.95)
         self.school = neon_school(11)
         self.glofish = glofish_school((GLO_ORANGE, GLO_LIME, GLO_PINK, GLO_ROSE, GLO_ORANGE))
         self.platy = Fish(tilted_frames(platy_sprite, 1.0), 30, 88, 9, (12, 64, 70, 100), margin=4, nose=5.6, low=1.5)
@@ -1440,7 +1436,7 @@ class Tank:
                 f.activity = max(f.activity, 0.7)
             near = visiting and math.hypot(f.x - f.tx, f.y - f.ty) < 5
             f.depth += ((1.14 if visiting and abs(f.x - f.tx) < 8 else 1.0) - f.depth) * min(1, dt * 0.7)
-            f.front_target = 1.0 if near else 0.0            # at the glass it turns to look at you
+            f.front_target = 1.0 if near else 0.0            # at the glass it turns three quarters to you
             f.front += max(-dt * 1.4, min(dt * 1.4, f.front_target - f.front))
             if f.front > 0.3:                                # while looking at you it hardly moves
                 f.vx *= 1 - min(1, dt * 3)
