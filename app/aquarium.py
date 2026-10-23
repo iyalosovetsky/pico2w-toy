@@ -37,7 +37,7 @@ W = H = 128                     # the logical tank
 SURFACE_Y = 9                   # the water line
 FONT_DIR = "/usr/share/fonts/truetype/dejavu/"
 CACHE = os.path.expanduser("~/.cache/lcdtoy")
-SCENE_VERSION = 7               # bump when the still scene changes (the cache is keyed on it)
+SCENE_VERSION = 8               # bump when the still scene changes (the cache is keyed on it)
 rng = random.Random()
 
 canvas = pygame.Surface((NW, NH))   # everything is drawn here in native pixels, then shown at once
@@ -271,17 +271,7 @@ def build_scene():
     glowing = [(x, y, rx, ry, r.choice((PHOSPHOR, PHOSPHOR, BLUE))) for x, y, rx, ry, *_ in pebbles if r.random() < 0.65]
     glowing.append((60, 99, 8.5, 7.5, BLUE))                                   # the light round stone
     layers["glow"] = glow_layer(size, k, glowing)
-    # the little shipwreck in the front left corner, lying on its side
-    fpen2 = Pen(front, k)
-    hull = [(3, 116), (5, 111), (13, 108), (19, 110), (17, 115), (9, 119)]
-    fpen2.poly((214, 212, 200), hull)
-    fpen2.poly((160, 158, 146), [(9, 119), (17, 115), (19, 110), (18.5, 113), (16, 117)])
-    fpen2.poly((120, 84, 54), [(6, 112.5), (12, 110.5), (12.5, 111.6), (6.5, 113.6)])      # the deck rail
-    fpen2.line((150, 110, 70), (10, 110), (12, 101), 0.6)                               # a broken mast
-    fpen2.line((150, 110, 70), (11.4, 104), (14.5, 104.6), 0.4)
-    for wx, wy in ((8, 115), (11, 114), (14, 112.6)):                                    # portholes
-        fpen2.circle((60, 60, 64), (wx, wy), 0.7)
-    fpen2.poly((80, 140, 70), [(4, 116.5), (6, 114), (7, 116.5)])                        # moss
+    shipwreck(Pen(front, k), r)
     layers["front"] = front
 
     native = (NW, NH)
@@ -289,6 +279,53 @@ def build_scene():
     for name, lay in layers.items():
         out[name] = pygame.transform.smoothscale(lay, native)
     return out
+
+
+def shipwreck(pen, r):
+    """The little wreck in the front left corner, like ours: a weathered cream hull, its bow raised to the
+    upper left and the stern sunk in the gravel, a deckhouse with dark windows, a rail along the bow deck,
+    a broken orange mast, a hole in the side, patches of algae."""
+    ax, ay, ang = 4.0, 103.0, math.radians(-24)          # where the bow's deck line starts, and the tilt
+    ca, sa = math.cos(ang), math.sin(ang)
+
+    def q(x, y):                                         # ship coords (x: bow 0 -> stern 20, y: down) -> tank
+        return (ax + x * ca - y * sa, ay + x * sa + y * ca)
+
+    def poly(c, pts):
+        pen.poly(c, [q(*p) for p in pts])
+
+    def line(c, a, b, w):
+        pen.line(c, q(*a), q(*b), w)
+    cream, light, shade, plank = (206, 198, 168), (232, 226, 200), (150, 142, 116), (172, 164, 136)
+    hull = [(0, -0.6), (20, 0), (20.4, 5.6), (16.5, 8.6), (5, 8.2), (1.2, 3.2)]
+    poly(shade, hull)
+    poly(cream, [(0, -0.6), (20, 0), (20.2, 3.4), (1.0, 2.2)])                    # the lit upper strakes
+    for y in (1.8, 3.6, 5.4, 7.0):                                                # the planks
+        line(plank, (1.2 + y * 0.25, y), (20.2, y + 0.1), 0.25)
+    for x in (5, 9.5, 14, 18):
+        line(plank, (x, 0.2), (x - 0.3, 8.2), 0.2)
+    pen.ellipse((34, 30, 26), *q(14.2, 5.0), 1.7, 2.1)                            # the hole in the side
+    poly((30, 26, 22), [(8.5, 6.2), (10.2, 6.0), (10.0, 8.0), (8.4, 8.1)])
+    # the deckhouse at the stern with its dark windows
+    poly(shade, [(9.5, 0.1), (19.2, 0.4), (19.6, -6.2), (10.0, -6.6)])
+    poly(light, [(9.5, 0.1), (17.8, 0.35), (18.1, -6.25), (10.0, -6.6)])
+    for wx in (11.0, 13.4, 15.8):
+        poly((40, 34, 28), [(wx, -1.4), (wx + 1.5, -1.35), (wx + 1.55, -4.6), (wx + 0.05, -4.7)])
+    line(light, (9.6, -7.2), (19.8, -6.8), 0.45)                                  # the roof rail
+    for x in (10.2, 12.6, 15.0, 17.4, 19.6):
+        line(light, (x, -6.7), (x, -7.2), 0.3)
+    # the rail along the bow deck: a little white fence
+    line(light, (0.6, -2.6), (9.4, -2.3), 0.4)
+    for x in (0.9, 2.6, 4.3, 6.0, 7.7, 9.2):
+        line(light, (x, -0.4), (x, -2.6), 0.4)
+    # the broken mast
+    poly((190, 112, 56), [(6.2, -0.4), (7.4, -0.4), (7.6, -6.0), (7.0, -7.4), (6.6, -6.2), (6.0, -6.6)])
+    line((226, 150, 86), (6.5, -0.5), (6.8, -6.2), 0.25)
+    # algae patches, thicker low on the hull
+    for _ in range(26):
+        x, y = r.uniform(1.5, 20), r.uniform(-6, 8)
+        if y > 2 or r.random() < 0.35:
+            pen.circle(r.choice(((74, 128, 58), (96, 150, 70), (60, 104, 48))), q(x, y), r.uniform(0.35, 0.9))
 
 
 def shaded_layer(size, k, stones, seed):
