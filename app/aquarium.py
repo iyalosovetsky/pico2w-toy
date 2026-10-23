@@ -541,6 +541,11 @@ GLOW.img = _g                                       # added on top in the dark (
 del _scene
 SCENE_EVERY = 0.15                                 # seconds between re-composing the swaying plants
 GLOW_CACHE = {}
+HAT_DIM = None
+if lcd.DEVICE == "hat144":                          # 30 % darker on the 1.44" HAT (its LCD is very bright)
+    HAT_DIM = pygame.Surface((NW, NH)).convert(canvas)
+    HAT_DIM.fill((0, 0, 0))
+    HAT_DIM.set_alpha(int(255 * 0.30))
 NIGHT = pygame.Surface((NW, NH)).convert(canvas)
 NIGHT.fill((2, 6, 18))
 STRIP = pygame.Surface((NW, NH // 4))              # the dark strip under the key hints
@@ -1187,6 +1192,7 @@ class Tank:
         self.calm_t = -99.0             # after a tap the fish are too scared to be curious for a while
         self.taps = []                  # (x, y, when): rings spreading from a tap on the glass
         self.splashes = []              # (x, when): rings on the surface where food was dropped
+        self.toast = None               # (text, when): a short note on the screen after a key
         self.charge = 0.6               # how much light the fluorescent stones have stored
         self.heater_on, self.heater_next = False, 8.0
 
@@ -1195,6 +1201,9 @@ class Tank:
         if on:
             self.flicker_until = now + 0.9
         lcd.play("click")
+
+    def say(self, text, t):
+        self.toast = (text, t)
 
     def fishes(self):
         return self.angels + [self.platy] + self.school.fish + self.glofish.fish + [self.school.leader, self.glofish.leader]
@@ -1270,7 +1279,7 @@ class Tank:
             lcd.play("move")
         want = 1.0 if (self.air_on and t > self.air_after) else 0.0
         self.air_level += (want - self.air_level) * min(1, dt * 1.5)
-        self.emit += dt * 7 * self.air_level
+        self.emit += dt * 9 * self.air_level
         while self.emit >= 1:
             self.emit -= 1
             self.bubbles.append(Bubble(STONE[0] + rng.uniform(-2.5, 2.5), STONE[1] - 1.5))
@@ -1348,8 +1357,8 @@ class Tank:
                                     (x * S - w / 2, (SURFACE_Y + 0.4) * S - h / 2, w, h), max(1, int(0.35 * S)))
         for b in self.bubbles:
             r = b.r * S
-            pygame.draw.circle(surf, (150, 206, 228), P(b.x, b.y), r, max(1, int(0.35 * S)))
-            pygame.draw.circle(surf, (226, 246, 250), (b.x * S - r * 0.3, b.y * S - r * 0.4), max(1, 0.25 * S))
+            pygame.draw.circle(surf, (196, 234, 248), P(b.x, b.y), max(r, 1.2), max(1, int(0.5 * S)))
+            pygame.draw.circle(surf, (248, 254, 255), (b.x * S - r * 0.3, b.y * S - r * 0.4), max(1, 0.3 * S))
         FRONT.draw(surf)
         draw_surface(surf, t, self.light)
         draw_ducks(surf, t)
@@ -1386,8 +1395,19 @@ class Tank:
 
 
 def draw_hud(tank, now):
-    """The name and the keys for the first seconds."""
+    """The name and the keys for the first seconds; a short note after the lamp / air keys."""
     t = now - tank.t0
+    if tank.toast and t - tank.toast[1] < 1.8:
+        text, t0 = tank.toast
+        img = f_hint.render(text, True, (240, 246, 244))
+        a = min(1.0, (1.8 - (t - t0)) / 0.5)
+        w, h = img.get_width() + 6, img.get_height() + 2
+        box = pygame.Surface((max(1, int(w * S)), max(1, int(h * S))))
+        box.fill((4, 14, 20))
+        box.set_alpha(int(170 * a))
+        pygame.Surface.blit(screen, box, (int((64 - w / 2) * S), int(60 * S)))
+        (img.img if hasattr(img, "img") else img).set_alpha(int(255 * a))
+        screen.blit(img, (64 - img.get_width() / 2, 61))
     a = 1.0 if t < 5 else max(0.0, 1 - (t - 5) / 1.5)
     if a <= 0:
         return
@@ -1429,8 +1449,10 @@ def handle_keys(tank, now):
             tank.finger_t = t
         elif ev.key in (pygame.K_1, pygame.K_l):
             tank.lamp(not tank.light_on, now)
-        elif ev.key in (pygame.K_2, pygame.K_a):
+            tank.say("світло увімкнено" if tank.light_on else "світло вимкнено", t)
+        elif ev.key == pygame.K_2:
             tank.air_on = not tank.air_on
+            tank.say("повітря увімкнено" if tank.air_on else "повітря вимкнено", t)
             lcd.play("move")
         elif ev.key in (pygame.K_t, pygame.K_4):
             tank.tap(t)
@@ -1452,6 +1474,8 @@ def main(seconds=None):
             return
         tank.update(now, dt)
         tank.draw(now)
+        if HAT_DIM:                                     # the HAT's panel is much brighter: tone the tank down
+            canvas.blit(HAT_DIM, (0, 0))
         pygame.Surface.blit(screen, canvas, (0, 0))
         draw_hud(tank, now)
         lcd.flip()
