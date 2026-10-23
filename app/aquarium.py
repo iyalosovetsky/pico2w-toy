@@ -8,7 +8,10 @@ resolution and smoothed down, then cached (~/.cache/lcdtoy/), so later starts ar
 pre-rendered antialiased sprites with a few tilts; the hair grass and the surface move every frame.
 
 Keys (PicoCalc / HAT):
-    1 / KEY1      - the lamp on/off (in the dark the neons, the GloFish and the fluorescent stones glow;
+    the lamp runs on a timer like ours: 07:00 it comes on slowly, full light by day, from 19:00 it dims and
+    turns green, from 21:30 a dim green evening, at 23:30 off for the night (AQUARIUM_CLOCK=HH:MM and
+    AQUARIUM_CLOCK_SPEED=600 try it out)
+    1 / KEY1      - the lamp on/off by hand until the timer's next change (in the dark the neons, the GloFish and the fluorescent stones glow;
                     the stones charge in the light and fade slowly in the dark)
     2 / KEY2      - the air pump on/off
     arrows / joystick - a fingertip on the glass: the fish come up to look at it
@@ -1167,6 +1170,29 @@ def draw_ducks(surf, t):
 
 # ---------------------------------------------------------------- the tank
 
+# the lamp's timer, like ours, in hours of the day: (from, to, light from -> to, green from -> to);
+# a smooth curve inside each stretch
+SCHEDULE = [
+    (0.0, 7.0, 0.0, 0.0, 1.0, 1.0),       # night: off
+    (7.0, 7.5, 0.0, 1.0, 1.0, 0.0),       # 07:00 the lamp comes on slowly
+    (7.5, 19.0, 1.0, 1.0, 0.0, 0.0),      # day: full light
+    (19.0, 21.5, 1.0, 0.38, 0.0, 1.0),    # 19:00 dimming, turning green
+    (21.5, 23.5, 0.38, 0.38, 1.0, 1.0),   # 21:30 a dim green evening light
+    (23.5, 23.6, 0.38, 0.0, 1.0, 1.0),    # 23:30 off for the night
+    (23.6, 24.0, 0.0, 0.0, 1.0, 1.0),
+]
+
+
+def timer_light(h):
+    """(light 0..1, green 0..1, which stretch, when it ends) at hour h."""
+    for i, (a, b, l0, l1, g0, g1) in enumerate(SCHEDULE):
+        if a <= h < b:
+            u = (h - a) / (b - a)
+            u = u * u * (3 - 2 * u)
+            return l0 + (l1 - l0) * u, g0 + (g1 - g0) * u, i, b
+    return 0.0, 1.0, 0, 7.0
+
+
 class Tank:
     def __init__(self):
         kinds = (("silver", 1.0, (40, 40)), ("gold", 0.95, (84, 30)), ("silver", 0.88, (62, 58)))
@@ -1181,7 +1207,12 @@ class Tank:
         self.platy = Fish(tilted_frames(platy_sprite, 1.0), 30, 88, 9, (12, 64, 70, 100), margin=4, nose=5.6, low=1.5)
         self.platy_peck = rng.uniform(4, 9)
         self.bubbles, self.food = [], []
-        self.light, self.light_on = 0.0, True
+        self.light, self.light_on, self.green = 0.0, True, 0.0
+        self.manual = None              # (on, the timer's stretch): the 1 key overrides it until the next stretch
+        start = os.environ.get("AQUARIUM_CLOCK")       # "HH:MM" - start the clock there (to try the timer)
+        lt = time.localtime()
+        self.clock0 = (int(start[:2]) + int(start[3:5]) / 60) if start else lt.tm_hour + lt.tm_min / 60 + lt.tm_sec / 3600
+        self.clock_speed = float(os.environ.get("AQUARIUM_CLOCK_SPEED", "1"))
         self.air_on, self.air_level = True, 0.0
         self.emit = 0.0
         self.flicker_until = 0.0
@@ -1196,11 +1227,18 @@ class Tank:
         self.charge = 0.6               # how much light the fluorescent stones have stored
         self.heater_on, self.heater_next = False, 8.0
 
+    def hours(self, now):
+        return (self.clock0 + (now - self.t0) * self.clock_speed / 3600) % 24
+
     def lamp(self, on, now):
+        """The 1 key: the lamp on / off by hand until the timer's next stretch."""
+        _, _, stretch, until = timer_light(self.hours(now))
+        self.manual = (on, stretch)
         self.light_on = on
         if on:
             self.flicker_until = now + 0.9
         lcd.play("click")
+        return until
 
     def say(self, text, t):
         self.toast = (text, t)
@@ -1264,15 +1302,24 @@ class Tank:
         if t >= self.heater_next:
             self.heater_on = not self.heater_on
             self.heater_next = t + (rng.uniform(12, 35) if self.heater_on else rng.uniform(25, 80))
-        # the lamp: off at first, then a fluorescent flicker, then steady
+        # the lamp follows the timer (or the 1 key until the timer's next stretch); when it comes on from
+        # dark it flickers like a fluorescent tube
+        lit, green, stretch, _ = timer_light(self.hours(now))
+        if self.manual and self.manual[1] != stretch:
+            self.manual = None
+        if self.manual:
+            lit = 1.0 if self.manual[0] else 0.0
+            green = 0.0 if self.manual[0] else green
+        self.light_on = lit > 0.5
         if t < 0.7:
             target = 0.0
-        elif self.light_on and now < max(self.flicker_until, self.t0 + 1.6):
-            target = 1.0 if rng.random() < 0.45 else 0.15
+        elif lit > 0.5 and now < max(self.flicker_until, self.t0 + 1.6):
+            target = lit if rng.random() < 0.45 else 0.15
         else:
-            target = 1.0 if self.light_on else 0.0
-        if t > 0.7 and t - dt <= 0.7:
+            target = lit
+        if t > 0.7 and t - dt <= 0.7 and lit > 0.5:
             lcd.play("click")
+        self.green += (green - self.green) * min(1, dt * 2)
         self.light += (target - self.light) * min(1, dt * (14 if target > self.light else 3))
         # the pump
         if t > self.air_after and t - dt <= self.air_after:
@@ -1363,6 +1410,10 @@ class Tank:
         draw_surface(surf, t, self.light)
         draw_ducks(surf, t)
         if self.light < 0.999:                               # night: an opaque dark-blue sheet, whole-surface alpha
+            col = mix((2, 6, 18), (6, 30, 12), self.green)    # evening green from the timer, night blue
+            if col != getattr(self, "night_col", None):
+                NIGHT.fill(col)
+                self.night_col = col
             NIGHT.set_alpha(int(178 * (1 - self.light)))      # (2 ms on the Zero; per-pixel alpha took 32 ms)
             surf.blit(NIGHT, (0, 0))
         if self.light < 0.5:                                 # only the neons' stripes are seen in the dark
@@ -1448,8 +1499,9 @@ def handle_keys(tank, now):
             tank.held.add(ev.key)
             tank.finger_t = t
         elif ev.key in (pygame.K_1, pygame.K_l):
-            tank.lamp(not tank.light_on, now)
-            tank.say("світло увімкнено" if tank.light_on else "світло вимкнено", t)
+            until = tank.lamp(not tank.light_on, now)
+            hh = int(until) % 24
+            tank.say("світло %s до %02d:%02d" % ("увімкнено" if tank.light_on else "вимкнено", hh, round((until - int(until)) * 60)), t)
         elif ev.key == pygame.K_2:
             tank.air_on = not tank.air_on
             tank.say("повітря увімкнено" if tank.air_on else "повітря вимкнено", t)
