@@ -1942,7 +1942,9 @@ def show_camera():
     scale = "scale=%d:%d:force_original_aspect_ratio=decrease%s,pad=%d:%d:(ow-iw)/2:(oh-ih)/2" % (
         frame_w, frame_h, "" if monitor else ":flags=fast_bilinear", frame_w, frame_h)
     cmd = ["ffmpeg", "-loglevel", "error", *rtsp,
-           "-fflags", "nobuffer", "-flags", "low_delay", "-i", CAMERA_URL, "-an",
+           "-fflags", "nobuffer", "-flags", "low_delay", "-i", CAMERA_URL, "-map", "0:v:0", "-an",
+           # (map the video by hand: with so little probing its size may be unknown yet and ffmpeg would skip it -
+           # "Output file does not contain any stream", the camera "unavailable", since the stream got a data track)
            "-vf", scale, "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
     latest = {"frame": None, "n": 0}
