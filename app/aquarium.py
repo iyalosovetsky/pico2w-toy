@@ -14,6 +14,7 @@ Keys (PicoCalc / HAT):
     1 / KEY1      - the lamp on/off by hand until the timer's next change (in the dark the neons, the GloFish and the fluorescent stones glow;
                     the stones charge in the light and fade slowly in the dark)
     2 / KEY2      - the air pump on/off
+    any key        - someone is at the tank: the angelfish come up to the front glass and wait there (~25 s)
     arrows / joystick - a fingertip on the glass: the fish come up to look at it
     T, 4          - knock on the glass at the finger: the fish nearby dart away
     Enter, Space / PRESS - feed the fish (at the finger if it is shown; the fish go after the flakes)
@@ -812,6 +813,7 @@ class Fish:
         self.face_lock = None            # faces this way while pecking (it backs off without turning)
         self.turn_rate = rng.uniform(1.4, 3.0)    # each fish turns at its own pace ...
         self.activity = 1.0              # 1 by day; at night the fish nearly sleep (see Tank.update)
+        self.depth = 1.0                 # > 1 - up at the front glass (drawn a little bigger)
         self.flip_at = rng.uniform(0.6, 1.8)      # ... and only once it really swims the other way
         self.margin = margin             # half its height: how close it may come to the surface / the gravel
         self.others = []                 # fish it keeps away from when choosing where to swim
@@ -927,6 +929,8 @@ class Fish:
 
     def draw(self, surf):
         img = self.image()
+        if abs(self.depth - 1) > 0.01:
+            img = pygame.transform.smoothscale(img, (int(img.get_width() * self.depth), int(img.get_height() * self.depth)))
         surf.blit(img, (self.x * S - img.get_width() / 2, self.y * S - img.get_height() / 2))
         return img
 
@@ -1221,6 +1225,7 @@ class Tank:
         self.air_after = 2.2           # the pump starts a moment after the lamp
         self.scene, self.scene_t = None, -1.0
         self.activity = 1.0
+        self.visitor_t = 0.0            # when someone was last at the tank (a key; the start counts too)
         self.finger, self.finger_t, self.held = [64.0, 60.0], -99.0, set()   # the fingertip on the glass
         self.calm_t = -99.0             # after a tap the fish are too scared to be curious for a while
         self.taps = []                  # (x, y, when): rings spreading from a tap on the glass
@@ -1373,6 +1378,16 @@ class Tank:
         if self.platy_peck <= 0 and not self.food and self.platy.forage is None:
             self.platy_peck = rng.uniform(6, 14)
             self.platy.start_forage(*peck_spot(self.platy.x, self.platy.y, ("ground", "stone", "plant")))
+        # the angelfish know people: while someone is at the tank they come up to the front glass and wait
+        visiting = t - self.visitor_t < 25 and not self.food and not self.finger_shown(t) and t - self.calm_t > 3
+        for i, f in enumerate(sorted(self.angels, key=lambda a: a.x)):
+            if visiting:
+                f.forage, f.face_lock = None, None
+                f.tx = 44 + i * 20 + 3 * math.sin(t * 0.4 + i * 2)
+                f.ty = 44 + (i % 2) * 12 + 4 * math.sin(t * 0.6 + i)
+                f.rest = 0
+                f.activity = max(f.activity, 0.7)
+            f.depth += ((1.14 if visiting and abs(f.x - f.tx) < 8 else 1.0) - f.depth) * min(1, dt * 0.7)
         self.school.update(dt, t, self.food)
         self.glofish.update(dt, t, self.food)
         self.platy.update(dt, self.food)
@@ -1509,6 +1524,7 @@ def handle_keys(tank, now):
             continue
         if ev.type != pygame.KEYDOWN:
             continue
+        tank.visitor_t = t                                   # someone is at the tank
         if ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE, pygame.K_q) or (ev.key == pygame.K_3 and getattr(ev, "hat", False)):
             return False
         if ev.key in ARROWS:                                 # the finger on the glass
