@@ -3,6 +3,7 @@
 Supported devices (detected from the framebuffer size):
   * Waveshare 1.44" LCD HAT  - 128x128, joystick + KEY1-3 (gpio-key)
   * PicoCalc with a Zero 2 W - 320x320, I2C keyboard, PWM sound
+  * a monitor through SDL with LCD_DISPLAY=kms (full screen, e.g. a kiosk) or window, LCD_SIZE=640x640
 
 Usage:
     import lcd, pygame
@@ -31,7 +32,13 @@ import time
 
 import numpy as np
 
-os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+# LCD_DISPLAY=kms (or window): draw on a real display through SDL (a monitor on HDMI, e.g. the aquarium as a
+# kiosk) instead of an LCD framebuffer; LCD_SIZE gives the size drawn in, scaled up to the screen by the GPU
+DISPLAY_MODE = os.environ.get("LCD_DISPLAY", "")
+if not DISPLAY_MODE:
+    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+elif DISPLAY_MODE == "kms":
+    os.environ.setdefault("SDL_VIDEODRIVER", "kmsdrm")
 
 
 def _find_fb():
@@ -54,7 +61,7 @@ def _fb_size(path):
         return 128, 128
 
 
-_FB_SYS = _find_fb()
+_FB_SYS = None if DISPLAY_MODE else _find_fb()
 NATIVE_W, NATIVE_H = (int(v) for v in os.environ["LCD_SIZE"].split("x")) if "LCD_SIZE" in os.environ \
     else _fb_size(_FB_SYS)
 WIDTH = HEIGHT = 128                     # logical size every app draws in
@@ -415,6 +422,8 @@ def _scan_inputs():
 
 def _pump_buttons():
     global _caps
+    if DISPLAY_MODE:                      # on a real display SDL reads the keyboard itself
+        return
     if time.monotonic() - _last_scan > RESCAN_SECONDS:
         _scan_inputs()
     if not _inputs:
@@ -472,11 +481,22 @@ def _pump_buttons():
 
 # ---------------------------------------------------------------- display
 
+_display = None
+
+
 def init():
-    global _fb, _screen
+    global _fb, _screen, _display
     if S != 1:
         _install_scaling()
     pygame.init()
+    if DISPLAY_MODE:
+        flags = pygame.SCALED | (pygame.FULLSCREEN if DISPLAY_MODE == "kms" else 0)
+        _display = pygame.display.set_mode((NATIVE_W, NATIVE_H), flags)
+        pygame.mouse.set_visible(False)
+        _screen = Surface((WIDTH, HEIGHT)) if S != 1 else pygame.Surface((WIDTH, HEIGHT))
+        _orig = pygame.event.get
+        pygame.event.get = lambda *a, **kw: _orig(*a, **kw)
+        return _screen
     pygame.display.set_mode((1, 1))
     if _FB_SYS is None and "LCD_SIZE" not in os.environ:
         raise RuntimeError("LCD framebuffer not found (is the mipi-dbi-spi overlay loaded?)")
@@ -494,7 +514,20 @@ def init():
     return _screen
 
 
+def reopen_display():
+    """After another full-screen view (the aquarium's camera) took the display: set the app's mode again."""
+    global _display
+    if DISPLAY_MODE:
+        flags = pygame.SCALED | (pygame.FULLSCREEN if DISPLAY_MODE == "kms" else 0)
+        _display = pygame.display.set_mode((NATIVE_W, NATIVE_H), flags)
+        pygame.mouse.set_visible(False)
+
+
 def flip():
+    if _display is not None:
+        pygame.Surface.blit(_display, _screen, (0, 0))
+        pygame.display.flip()
+        return
     if _fb is None:
         return
     rgb = pygame.surfarray.pixels3d(_screen).swapaxes(0, 1).astype(np.uint16)

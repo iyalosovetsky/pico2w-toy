@@ -14,6 +14,8 @@ Keys (PicoCalc / HAT):
     1 / KEY1      - the lamp on/off by hand until the timer's next change (in the dark the neons, the GloFish and the fluorescent stones glow;
                     the stones charge in the light and fade slowly in the dark)
     2 / KEY2      - the air pump on/off
+    a touch (on a monitor with LCD_DISPLAY=kms and AQUARIUM_CAMERA=rtsp://...) - the camera full screen,
+                     another touch or a key - back to the tank
     any key        - someone is at the tank: the angelfish come up to the front glass and wait there (~25 s)
     arrows / joystick - a fingertip on the glass: the fish come up to look at it
     T, 4          - knock on the glass at the finger: the fish nearby dart away
@@ -1356,6 +1358,7 @@ class Tank:
         self.scene, self.scene_t = None, -1.0
         self.activity = 1.0
         self.visitor_t = 0.0            # when someone was last at the tank (a key; the start counts too)
+        self.want_camera = False
         self.finger, self.finger_t, self.held = [64.0, 60.0], -99.0, set()   # the fingertip on the glass
         self.calm_t = -99.0             # after a tap the fish are too scared to be curious for a while
         self.taps = []                  # (x, y, when): rings spreading from a tap on the glass
@@ -1647,6 +1650,72 @@ def draw_hud(tank, now):
         screen.blit(img, ((128 - img.get_width()) / 2, top + 1 + k * lh))
 
 
+# ---------------------------------------------------------------- the camera (on a monitor with a touch screen)
+
+CAMERA_URL = os.environ.get("AQUARIUM_CAMERA", "")   # e.g. rtsp://10.80.39.161:8888/stream1; a touch shows it
+CAMERA_FOR = 180                                     # seconds before it goes back to the tank by itself
+CAM_W, CAM_H = 1280, 800
+
+
+def show_camera():
+    """The camera full screen until a touch or a key (or CAMERA_FOR seconds): ffmpeg decodes the stream
+    (the same options as ffplay -reorder_queue_size 4000 -max_delay 10000000) into raw frames we show."""
+    import subprocess
+    import threading
+    disp = pygame.display.set_mode((CAM_W, CAM_H), pygame.SCALED | (pygame.FULLSCREEN if lcd.DISPLAY_MODE == "kms" else 0))
+    pygame.mouse.set_visible(False)
+    cmd = ["ffmpeg", "-loglevel", "error", "-reorder_queue_size", "4000", "-max_delay", "10000000",
+           "-fflags", "nobuffer", "-flags", "low_delay", "-i", CAMERA_URL, "-an",
+           "-vf", "scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2" % (CAM_W, CAM_H, CAM_W, CAM_H),
+           "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
+    latest = {"frame": None, "n": 0}
+    size = CAM_W * CAM_H * 3
+
+    def reader():
+        buf = bytearray()
+        while True:
+            chunk = proc.stdout.read(size - len(buf))
+            if not chunk:
+                return
+            buf += chunk
+            if len(buf) == size:
+                latest["frame"], latest["n"] = bytes(buf), latest["n"] + 1
+                buf = bytearray()
+    threading.Thread(target=reader, daemon=True).start()
+    Font = pygame.font.Font.__bases__[0] if S != 1 else pygame.font.Font   # the plain font: this screen is not scaled
+    f_msg = Font(FONT_DIR + "DejaVuSans.ttf", 28) if os.path.exists(FONT_DIR + "DejaVuSans.ttf") else Font(None, 32)
+    t0 = time.monotonic()
+    shown = -1
+    pygame.event.clear()
+    try:
+        while time.monotonic() - t0 < CAMERA_FOR:
+            for ev in pygame.event.get():
+                if ev.type == pygame.QUIT:
+                    return False
+                if ev.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN, pygame.FINGERDOWN) and time.monotonic() - t0 > 0.6:
+                    return True
+            if latest["n"] != shown and latest["frame"] is not None:
+                shown = latest["n"]
+                pygame.Surface.blit(disp, pygame.image.frombuffer(latest["frame"], (CAM_W, CAM_H), "RGB"), (0, 0))
+                pygame.display.flip()
+            elif latest["frame"] is None:
+                disp.fill((0, 0, 0))
+                text = "камера: з'єднання..." if proc.poll() is None else "камера недоступна"
+                img = Font.render(f_msg, text, True, (220, 230, 230))
+                pygame.Surface.blit(disp, img, ((CAM_W - img.get_width()) // 2, (CAM_H - img.get_height()) // 2))
+                pygame.display.flip()
+                if proc.poll() is not None and time.monotonic() - t0 > 4:
+                    return True
+            clock.tick(30)
+        return True
+    finally:
+        proc.kill()
+        proc.wait()
+        lcd.reopen_display()
+        pygame.event.clear()
+
+
 ARROWS = (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN)
 
 
@@ -1657,6 +1726,11 @@ def handle_keys(tank, now):
             return False
         if ev.type == pygame.KEYUP:
             tank.held.discard(ev.key)
+            continue
+        if ev.type in (pygame.MOUSEBUTTONDOWN, pygame.FINGERDOWN):   # a touch on the screen: the camera
+            tank.visitor_t = t
+            if CAMERA_URL and lcd.DISPLAY_MODE:
+                tank.want_camera = True
             continue
         if ev.type != pygame.KEYDOWN:
             continue
@@ -1701,6 +1775,11 @@ def main(seconds=None):
         lcd.flip()
         if not handle_keys(tank, now):
             return
+        if tank.want_camera:
+            tank.want_camera = False
+            if not show_camera():
+                return
+            last = time.monotonic()
         clock.tick(FPS)
 
 
