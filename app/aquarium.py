@@ -41,7 +41,7 @@ W = H = 128                     # the logical tank
 SURFACE_Y = 9                   # the water line
 FONT_DIR = "/usr/share/fonts/truetype/dejavu/"
 CACHE = os.path.expanduser("~/.cache/lcdtoy")
-SCENE_VERSION = 13               # bump when the still scene changes (the cache is keyed on it)
+SCENE_VERSION = 14               # bump when the still scene changes (the cache is keyed on it)
 rng = random.Random()
 
 canvas = pygame.Surface((NW, NH))   # everything is drawn here in native pixels, then shown at once
@@ -230,33 +230,35 @@ def build_scene():
         pygame.draw.aalines(lay, (100, 176, 90), False, [lp.p(*q) for q in pts[:9]])
     layers["broad"] = lay
 
-    # the round-leaved bush by the castle (pennywort): layered for depth - the far leaves small and dark, the near
-    # ones big and light, each a shaded tilted disc with veins from the middle
+    # the round-leaved bush by the castle (pennywort), in depth: the far leaves small, dark and hazed with the
+    # water's blue-green, high up at the back; the near ones three to four times bigger, light and juicy, low in front
     lay, lp = layer()
     leaves = []
-    for _ in range(64):
-        z = r.random() ** 0.8                            # 0 far .. 1 near
-        x = r.uniform(78, 106)
-        top = 68 + (1 - z) * 6
-        y = r.uniform(top, 101)
+    for _ in range(70):
+        z = r.random() ** 1.4                            # 0 far .. 1 near (more far leaves than near ones)
+        x = r.uniform(80, 104) + (r.uniform(-3, 3) * z)
+        y = 70 + 14 * z + r.uniform(0, 16 - 4 * z)       # far ones high at the back, near ones low in front
         leaves.append((z, x, y))
     leaves.sort()
+    haze = (44, 96, 98)                                  # the water between you and the far leaves
     for z, x, y in leaves:
-        rad = (1.8 + 1.6 * z) * r.uniform(0.85, 1.15)
-        tilt = r.uniform(0.55, 0.85)                     # a disc on its stalk, tipped towards you
-        base = mix((24, 70, 36), (70, 150, 60), z)
-        light = mix((60, 120, 60), (150, 222, 110), z)
-        rim = mix((14, 44, 24), (40, 104, 44), z)
-        lp.line(mix((30, 80, 40), (70, 140, 60), z), (x + r.uniform(-1, 1), ground_line(x) + 1), (x, y + rad * tilt * 0.3), 0.35 + 0.15 * z)
+        rad = (0.9 + 3.4 * z ** 1.3) * r.uniform(0.9, 1.1)
+        tilt = 0.62 + 0.16 * z
+        far = 1 - z
+        base = mix(mix((92, 186, 68), (34, 92, 46), far), haze, 0.45 * far)
+        light = mix(mix((168, 232, 116), (52, 118, 60), far), haze, 0.4 * far)
+        rim = mix(mix((44, 116, 42), (20, 54, 34), far), haze, 0.45 * far)
+        stalk = mix(mix((76, 150, 60), (26, 66, 40), far), haze, 0.45 * far)
+        lp.line(stalk, (x + r.uniform(-1, 1), ground_line(x) + 1), (x, y + rad * tilt * 0.3), 0.25 + 0.35 * z)
         lp.ellipse(rim, x, y, rad, rad * tilt)
-        lp.ellipse(base, x - rad * 0.06, y - rad * tilt * 0.06, rad * 0.9, rad * tilt * 0.88)
-        lp.ellipse(light, x - rad * 0.28, y - rad * tilt * 0.3, rad * 0.5, rad * tilt * 0.45)
-        cx, cy = x + rad * 0.05, y + rad * tilt * 0.12   # where the stalk joins: the veins run out from there
-        for j in range(7):
-            a = j / 7 * 2 * math.pi + 0.3
-            lp.line(mix(base, (200, 240, 160), 0.35), (cx, cy), (cx + math.cos(a) * rad * 0.8, cy + math.sin(a) * rad * tilt * 0.8), 0.14 + 0.06 * z)
-        if z > 0.6:
-            lp.circle((230, 250, 210), (x - rad * 0.4, y - rad * tilt * 0.42), 0.25 + 0.15 * z)   # a glint
+        lp.ellipse(base, x - rad * 0.05, y - rad * tilt * 0.05, rad * 0.9, rad * tilt * 0.88)
+        lp.ellipse(light, x - rad * 0.22, y - rad * tilt * 0.24, rad * 0.55, rad * tilt * 0.5)
+        if z > 0.5:                                      # veins only where you can see them
+            cx, cy = x + rad * 0.05, y + rad * tilt * 0.12
+            vein = mix(base, (190, 236, 150), 0.25)
+            for j in range(7):
+                a = j / 7 * 2 * math.pi + 0.3
+                lp.line(vein, (cx, cy), (cx + math.cos(a) * rad * 0.78, cy + math.sin(a) * rad * tilt * 0.78), 0.12)
     layers["round"] = lay
 
     # the red-purple bush at the bottom left
