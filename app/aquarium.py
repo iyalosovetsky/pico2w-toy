@@ -49,7 +49,7 @@ CX = 0.75 * W                   # the castle's tall tower, three quarters across
 SURFACE_Y = 9                   # the water line
 FONT_DIR = "/usr/share/fonts/truetype/dejavu/"
 CACHE = os.path.expanduser("~/.cache/lcdtoy")
-SCENE_VERSION = 23               # bump when the still scene changes (the cache is keyed on it)
+SCENE_VERSION = 24               # bump when the still scene changes (the cache is keyed on it)
 rng = random.Random()
 
 canvas = pygame.Surface((NW, NH))   # everything is drawn here in native pixels, then shown at once
@@ -253,11 +253,17 @@ def build_scene():
     row = np.arange(sh, dtype=np.float32)[:, None]
     below = row >= gl[None, :]
     depth = np.clip((row - gl[None, :]) / ((H - 100) * k), 0, 1)[..., None]
-    gravel = np.array([58, 54, 46], np.float32) * (1 - depth) + np.array([104, 96, 80], np.float32) * depth
-    grain = nr.random((sh, sw))
-    speck = np.where(grain[..., None] > 0.82, np.array([150, 140, 120], np.float32),
-                     np.where(grain[..., None] < 0.15, np.array([30, 28, 24], np.float32), gravel))
-    gravel = gravel * 0.45 + speck * 0.55
+    # fine light gravel like ours: beige, light brown, pinkish, greenish and white grains, darker at the back
+    gravel = np.array([138, 120, 88], np.float32) * (1 - depth) + np.array([200, 180, 134], np.float32) * depth
+    gr = np.random.default_rng(41)
+    gsz = max(1, int(round(k * 0.6)))                 # a grain is about 0.6 logical pixels
+    palette = np.array([(214, 192, 140), (186, 160, 112), (232, 214, 170), (160, 130, 96), (204, 156, 132),
+                        (150, 164, 112), (242, 238, 222), (112, 98, 76)], np.float32)
+    pick = gr.choice(len(palette), size=(sh // gsz + 1, sw // gsz + 1), p=(0.24, 0.2, 0.14, 0.14, 0.07, 0.07, 0.07, 0.07))
+    grains = np.repeat(np.repeat(palette[pick], gsz, axis=0), gsz, axis=1)[:sh, :sw]
+    grains *= (0.78 + 0.34 * gr.random((sh // gsz + 1, sw // gsz + 1)))[..., None].repeat(gsz, 0).repeat(gsz, 1)[:sh, :sw]
+    lumps = smooth_noise(gr, sw, sh, 40)[..., None]
+    gravel = (gravel * 0.3 + grains * 0.7) * (0.55 + 0.45 * depth) * (0.9 + 0.2 * lumps)
     img[below] = gravel[below]
     night[below] = gravel[below]
     surf = pygame.Surface((sw, sh))
@@ -305,6 +311,11 @@ def build_scene():
         x = r.uniform(1, 40) if i < n * 14 // 18 else r.uniform(40, 52)
         stem_plant(lp, X(x), ground_line(X(x)) + 1, r.uniform(48, 92) if x < 36 else r.uniform(26, 40), r.uniform(-7, 7),
                    (34, 112, 46), (132, 208, 92), r)
+    # and a clump in the right corner, between the castle and the wall, bright green like ours
+    rr = random.Random(12)
+    for _ in range(max(5, int((W - CX - 13) / 3))):
+        x = rr.uniform(CX + 13, W - 2)
+        stem_plant(lp, x, ground_line(x) + 1, rr.uniform(52, 84), rr.uniform(-6, 3), (40, 126, 50), (150, 222, 100), rr)
     layers["stem"] = lay
 
     # the lemon plant (Nomaphila) in the middle: thick stems with pairs of ovate light-green leaves, big low down,
