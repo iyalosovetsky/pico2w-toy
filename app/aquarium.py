@@ -169,7 +169,7 @@ def lava_rocks(sw, sh, k):
 
 def backdrops(sw, sh, k):
     """The backdrop behind the plants, by day and by night (float (sh, sw, 3) arrays, before the gravel).
-    By day like the printed one in our tank: turquoise water, deep blue at the sides, a bright patch where the
+    By day like the printed one in our tank: saturated blue water, deep blue at the sides, a bright patch where the
     lamp shines through, wavy light ripples up high, soft silhouettes of underwater plants and, faintly, stones.
     By night like the night reference: nearly black water, the porous stones dark with a cold rim of light."""
     nr = np.random.default_rng(21)
@@ -181,23 +181,23 @@ def backdrops(sw, sh, k):
     tex = noise2(nr, sw, sh, 12, 8) * 0.6 + noise2(nr, sw, sh, 30, 20) * 0.4
     b = np.clip(blob(0.62, 0.42, 0.34, 0.40) + 0.6 * blob(0.24, 0.62, 0.20, 0.30) + 0.5 * blob(0.88, 0.25, 0.15, 0.25), 0, 1)
     b = np.clip(b * (0.72 + 0.55 * tex), 0, 1)[..., None]
-    day = np.array([22, 76, 158], np.float32) * (1 - b) + np.array([46, 178, 204], np.float32) * b
+    day = np.array([8, 64, 168], np.float32) * (1 - b) + np.array([24, 140, 222], np.float32) * b
     hi = np.clip((b - 0.62) / 0.38, 0, 1) ** 1.5
-    day = day * (1 - hi * 0.55) + np.array([150, 232, 228], np.float32) * hi * 0.55
+    day = day * (1 - hi * 0.55) + np.array([110, 206, 242], np.float32) * hi * 0.55
     # the ripples of light from the surface: thin wavy bright lines, mostly up high
     warp = noise2(nr, sw, sh, 20, 10)
     breakup = noise2(nr, sw, sh, max(8, int(W / 4)), 16)
     yl = yy * sh / k
     line = np.exp(-(np.sin(yl * 0.55 + 11 * warp + 3 * np.sin(xx * W * 0.035 + 4 * warp)) / 0.09) ** 2)
     line *= np.clip(1.1 - yy * 1.6, 0, 1) * np.clip((breakup - 0.38) * 3, 0, 1)
-    day += line[..., None] * np.array([46, 62, 56], np.float32)
+    day += line[..., None] * np.array([44, 60, 66], np.float32)
     # printed silhouettes of underwater plants: tall soft fronds, darker teal, in the lower two thirds
     fr = noise2(nr, sw, sh, max(8, int(W / 2.5)), 6) * 0.6 + noise2(nr, sw, sh, max(6, int(W / 6)), 10) * 0.4
     plants = (np.clip((fr - 0.52) * 5, 0, 1) * np.clip((yy - 0.3) / 0.4, 0, 1))[..., None]
-    day = day * (1 - plants * 0.45) + np.array([18, 98, 94], np.float32) * plants * 0.45
+    day = day * (1 - plants * 0.45) + np.array([12, 70, 140], np.float32) * plants * 0.45
     mask, lit, pores = lava_rocks(sw, sh, k)
     m, l, po = mask[..., None], lit[..., None], pores[..., None]
-    rock_day = np.array([28, 92, 138], np.float32) * (0.6 + 0.6 * l) * (1 - 0.4 * po)
+    rock_day = np.array([20, 74, 146], np.float32) * (0.6 + 0.6 * l) * (1 - 0.4 * po)
     day = day * (1 - m * 0.45) + rock_day * m * 0.45
     day *= (1 - 0.22 * (xx * 2 - 1) ** 2)[..., None]
 
