@@ -37,7 +37,7 @@ W = H = 128                     # the logical tank
 SURFACE_Y = 9                   # the water line
 FONT_DIR = "/usr/share/fonts/truetype/dejavu/"
 CACHE = os.path.expanduser("~/.cache/lcdtoy")
-SCENE_VERSION = 8               # bump when the still scene changes (the cache is keyed on it)
+SCENE_VERSION = 9               # bump when the still scene changes (the cache is keyed on it)
 rng = random.Random()
 
 canvas = pygame.Surface((NW, NH))   # everything is drawn here in native pixels, then shown at once
@@ -367,74 +367,60 @@ def stem_plant(pen, x, y0, h, lean, dark, light, r, alpha=255):
 
 
 def castle_layer(size, k, seed=4):
-    """The ruins: a round tower shaded as a cylinder lit from the front left, courses of stone curving round
-    it, deep arched windows; a low wall in front of it with a lit top face; moss; a shadow on the gravel."""
+    """Our castle ruins: sculpted sandstone-like ceramic, several round towers of different heights - a tall
+    one at the back with a wavy petal rim, a wide base with arches, a lower one in front on the left; each
+    shaded as a cylinder lit from the front left, with a bumpy moulded surface, deep arches and moss."""
     nr = np.random.default_rng(seed)
     rgb = np.zeros((size, size, 3), np.float32)
     alpha = np.zeros((size, size), np.float32)
     yy, xx = np.mgrid[0:size, 0:size].astype(np.float32) / k
-    stone = np.array([206, 186, 138], np.float32)
-    grain = 1 + nr.normal(0, 0.05, (size, size)).astype(np.float32)
+    sand = np.array([234, 186, 116], np.float32)
+    bumps = smooth_noise(nr, size, 34) * 0.6 + smooth_noise(nr, size, 70) * 0.4      # the moulded relief
+    grain = 1 + nr.normal(0, 0.04, (size, size)).astype(np.float32)
+    mossmap = smooth_noise(nr, size, 26)
 
-    # the shadow it throws on the gravel (drawn first, everything else covers it)
-    sh = (((xx - 112) / 13) ** 2 + ((yy - 104.5) / 2.6) ** 2) < 1
-    alpha[sh], rgb[sh] = 0.45, 0
+    # its shadow on the gravel
+    sh = (((xx - 112) / 19) ** 2 + ((yy - 104.6) / 2.8) ** 2) < 1
+    alpha[sh], rgb[sh] = 0.42, 0
 
-    # the tower: a cylinder, centre x 106, radius 10
-    cx, rad, base = 106.0, 10.0, 104.0
-    u = (xx - cx) / rad
-    inside_x = np.abs(u) < 1
-    theta = np.arcsin(np.clip(u, -1, 1))
-    nz = np.sqrt(np.clip(1 - u * u, 0, 1))
-    lit = np.clip(-0.55 * u + 0.83 * nz, 0, 1)
-    # the top: merlons every 30 degrees, a broken stretch on the left
-    merlon = (np.floor((theta + np.pi / 2) / (np.pi / 6)) % 2) == 0
-    top = np.where(merlon, 57.0, 60.0)
-    broken = xx < 100.5
-    top = np.where(broken, 61.5 + 2.2 * np.sin(xx * 2.1) + (100.5 - xx) * 0.8, top)
-    tower = inside_x & (yy >= top) & (yy <= base)
-    course = (yy - 57) / 4.0
-    row_i = np.floor(course)
-    joint_v = ((theta + np.pi / 2) / (np.pi / 9) + (row_i % 2) * 0.5) % 1
-    mortar = (course % 1 < 0.09) | (joint_v < 0.06 * (0.4 + nz))   # joints thin out towards the edges
-    shade = (0.34 + 0.78 * lit) * grain
-    shade = np.where(mortar, shade * 0.72, shade)
-    shade *= 1 - 0.35 * np.clip((yy - (base - 4)) / 4, 0, 1)        # dimmer at the foot (in the plants)
-    col = stone[None, None, :] * shade[..., None]
-    # the cylinder's open top: the inside of the far wall, darker, seen over the near rim
-    rim = inside_x & (yy >= 58.5) & (yy < 60) & ~merlon & ~broken & (np.abs(u) < 0.86)
-    col[rim] = stone * 0.42
-    # arched windows: dark depth, a lit sill and the arch's lit inner edge on the right
-    for wx, wy, ww, wh in ((104.5, 70, 3.6, 7), (99.5, 84, 3.0, 5.5), (110.5, 87, 3.0, 5.5)):
-        ax, ay = wx, wy - wh / 2 + ww / 2
-        hole = (np.abs(xx - wx) < ww / 2) & (yy > ay) & (yy < wy + wh / 2) | (((xx - ax) ** 2 + (yy - ay) ** 2) < (ww / 2) ** 2) & (yy <= ay)
-        depth = np.clip((yy - (wy - wh / 2)) / wh, 0, 1)
-        col[hole & tower] = np.array([34, 28, 24], np.float32) * (0.7 + 0.5 * depth[hole & tower, None])
-        edge = (np.abs(xx - (wx + ww / 2 - 0.35)) < 0.35) & (yy > ay) & (yy < wy + wh / 2) & tower
-        col[edge] = stone * 1.05
-        sill = (np.abs(xx - wx) < ww / 2 + 0.5) & (np.abs(yy - (wy + wh / 2 + 0.3)) < 0.35) & tower
-        col[sill] = stone * 1.15
-    rgb[tower], alpha[tower] = col[tower], 1
+    def tower(cx, rad, top, base, petals, arches, dark_top=True):
+        """One round tower: top - the rim's height; petals - how many waves round the rim."""
+        u = (xx - cx) / rad
+        inx = np.abs(u) < 1
+        theta = np.arcsin(np.clip(u, -1, 1))
+        nz = np.sqrt(np.clip(1 - u * u, 0, 1))
+        lit = np.clip(-0.55 * u + 0.83 * nz, 0, 1)
+        rim = top - 1.6 * np.abs(np.sin(theta * petals / 2 + 0.6)) ** 0.7        # the wavy petal rim
+        body = inx & (yy >= rim) & (yy <= base)
+        relief = (bumps - 0.5) * 0.5 + 0.05 * np.sin(theta * 9)                   # bumps and moulded ridges
+        shade = (0.38 + 0.72 * lit) * (1 + relief) * grain
+        band = np.abs(yy - (top + 3.2)) < 0.7                                     # a moulded band under the rim
+        shade = np.where(band, shade * (1.12 - 0.3 * (yy - top - 2.5)), shade)
+        shade *= 1 - 0.3 * np.clip((yy - (base - 5)) / 5, 0, 1)                   # dimmer at the foot
+        col = sand[None, None, :] * shade[..., None]
+        col = np.minimum(col, 255)
+        if dark_top:                                                              # the open top: the far inner wall
+            inner = inx & (yy >= rim) & (yy < top + 1.1) & (np.abs(u) < 0.88)
+            col[inner] = sand * (0.34 + 0.12 * lit[inner, None])
+        for ax, ay, aw, ah in arches:                                             # arched openings, deep
+            ar = aw / 2
+            hole = ((np.abs(xx - ax) < ar) & (yy > ay - ah / 2 + ar) & (yy < ay + ah / 2)) | \
+                   ((((xx - ax) ** 2 + (yy - (ay - ah / 2 + ar)) ** 2) < ar * ar) & (yy <= ay - ah / 2 + ar))
+            hole &= body
+            depth = np.clip((yy - (ay - ah / 2)) / ah, 0, 1)
+            col[hole] = np.array([40, 30, 22], np.float32) * (0.8 + 0.5 * depth[hole, None])
+            edge = (np.abs(xx - (ax + ar - 0.35)) < 0.4) & (yy > ay - ah / 2 + ar) & (yy < ay + ah / 2) & body
+            col[edge] = sand * 1.05
+            lip = (((xx - ax) ** 2 + (yy - (ay - ah / 2 + ar)) ** 2) < (ar + 0.7) ** 2) & ~hole & body & (yy < ay - ah / 2 + ar)
+            col[lip] = np.minimum(col[lip] * 1.18, 255)
+        moss = body & (mossmap > 0.58) & (nr.random((size, size)) < 0.6)
+        col[moss] = np.array([136, 150, 64], np.float32) * (0.6 + 0.6 * lit[moss, None])
+        rgb[body], alpha[body] = col[body], 1
 
-    # the low wall in front of the tower: a block with a lit top face and a shaded right face
-    wx0, wx1, wtop = 83.5, 96.5, 85.0
-    front = (xx >= wx0) & (xx <= wx1) & (yy >= wtop) & (yy <= base)
-    cren = (np.floor((xx - wx0) / 2.6) % 2 == 0) & (yy >= wtop - 2.4) & (yy < wtop) & (xx >= wx0) & (xx <= wx1 - 1)
-    topface = (xx >= wx0 + 0.8) & (xx <= wx1 + 0.8) & (yy >= wtop - 1.2 - 2.4 * cren) & (yy < wtop - 2.4 * cren) & ~(front)
-    side = (xx > wx1) & (xx <= wx1 + 1.6) & (yy >= wtop - 0.6 + (xx - wx1) * -0.6) & (yy <= base) & ~tower
-    wcourse = (yy - wtop) / 3.4
-    wjoint = ((xx - wx0) / 3.0 + (np.floor(wcourse) % 2) * 0.5) % 1
-    wm = (wcourse % 1 < 0.1) | (wjoint < 0.07)
-    wshade = (0.95 * grain) * np.where(wm, 0.75, 1.0)
-    for m, f in ((front | cren, wshade), (topface, 1.25 * grain), (side, 0.55 * grain)):
-        rgb[m] = stone * f[m, None] if np.ndim(f) else stone * f
-        alpha[m] = 1
-    # a doorway in the wall
-    door = (np.abs(xx - 89.5) < 2.0) & (yy > 96.5) & (yy <= base) | (((xx - 89.5) ** 2 + (yy - 96.5) ** 2) < 4) & (yy <= 96.5)
-    rgb[door & front] = np.array([30, 26, 22], np.float32)
-    # moss on the stones' edges, thicker low down
-    mossy = (alpha > 0.9) & (nr.random((size, size)) < 0.06 + 0.25 * np.clip((yy - 92) / 12, 0, 1) * (smooth_noise(nr, size, 30) > 0.55))
-    rgb[mossy] = np.array([70, 140, 64], np.float32) * (0.7 + 0.5 * lit[mossy, None])
+    # back to front: the tall back tower, the wide base, the low tower in front on the left
+    tower(113.5, 11.5, 44.0, 78.0, 7, [(110.0, 58, 4.2, 8.5), (118.8, 61, 3.4, 7)])
+    tower(112.0, 16.5, 73.0, 104.0, 9, [(104.5, 90, 4.6, 10), (115.5, 92, 5.2, 11), (124.5, 89, 3.6, 8)])
+    tower(92.0, 8.0, 79.0, 104.0, 6, [(91.0, 92, 3.6, 7.5)])
     lay = pygame.Surface((size, size), pygame.SRCALPHA)
     pygame.surfarray.blit_array(lay, np.clip(rgb, 0, 255).astype(np.uint8).swapaxes(0, 1))
     a = pygame.surfarray.pixels_alpha(lay)
