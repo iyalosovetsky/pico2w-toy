@@ -1860,8 +1860,9 @@ def show_camera():
 
 # ---------------------------------------------------------------- the clock cut into the castle (on a monitor)
 
-CASTLE_CLOCK = bool(lcd.DISPLAY_MODE) or os.environ.get("AQUARIUM_CASTLE_CLOCK") == "1"
+CASTLE_CLOCK = os.environ.get("AQUARIUM_CASTLE_CLOCK", "1" if lcd.DISPLAY_MODE or lcd.DEVICE == "picocalc" else "0") == "1"
 DAYS = ["понеділок", "вівторок", "середа", "четвер", "п'ятниця", "субота", "неділя"]
+DAYS_SHORT = ["пн", "вт", "ср", "чт", "пт", "сб", "нд"]   # the square tank: the bush hides the base's left half
 
 
 def plain_font(name, px):
@@ -1931,7 +1932,9 @@ class CastleClock:
             self.key = key
             self.night = {}
             self.parts = [carve(time.strftime("%H:%M", now), 8.0, 113.5 + DC, 69.6, 10.5, 0.78),
-                          carve("%s, %d" % (DAYS[now.tm_wday], now.tm_mday), 4.4, 112.0 + DC, 83.7, 16.5, 0.85)]
+                          carve("%s, %d" % (DAYS[now.tm_wday], now.tm_mday), 4.4, 112.0 + DC, 83.7, 16.5, 0.85)
+                          if W > 150 else
+                          carve("%s, %d" % (DAYS_SHORT[now.tm_wday], now.tm_mday), 4.8, 116.0, 83.7, 16.5, 0.85)]
         for mul, add, _, pos in self.parts:
             dst.blit(mul, pos, special_flags=pygame.BLEND_RGB_MULT)
             dst.blit(add, pos, special_flags=pygame.BLEND_RGB_ADD)
