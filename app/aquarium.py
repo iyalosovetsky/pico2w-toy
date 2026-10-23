@@ -8,9 +8,12 @@ resolution and smoothed down, then cached (~/.cache/lcdtoy/), so later starts ar
 pre-rendered antialiased sprites with a few tilts; the hair grass and the surface move every frame.
 
 Keys (PicoCalc / HAT):
-    1 / KEY1      - the lamp on/off (in the dark the neons' blue stripe still glows)
+    1 / KEY1      - the lamp on/off (in the dark the neons, the GloFish and the fluorescent stones glow;
+                    the stones charge in the light and fade slowly in the dark)
     2 / KEY2      - the air pump on/off
-    Enter, Space / PRESS - feed the fish (flakes sink, the fish go after them)
+    arrows / joystick - a fingertip on the glass: the fish come up to look at it
+    T, 4          - knock on the glass at the finger: the fish nearby dart away
+    Enter, Space / PRESS - feed the fish (at the finger if it is shown; the fish go after the flakes)
     Esc / KEY3    - back to the menu
 
 The menu runs it from its own item and once after the device boots (see menu.py); the file
@@ -34,7 +37,7 @@ W = H = 128                     # the logical tank
 SURFACE_Y = 9                   # the water line
 FONT_DIR = "/usr/share/fonts/truetype/dejavu/"
 CACHE = os.path.expanduser("~/.cache/lcdtoy")
-SCENE_VERSION = 5               # bump when the still scene changes (the cache is keyed on it)
+SCENE_VERSION = 6               # bump when the still scene changes (the cache is keyed on it)
 rng = random.Random()
 
 canvas = pygame.Surface((NW, NH))   # everything is drawn here in native pixels, then shown at once
@@ -188,7 +191,7 @@ def build_scene():
                    (60, 150, 130), (120, 200, 170), r, alpha=120)
     surf.blit(far, (0, 0))
 
-    castle(pen, r)
+    surf.blit(castle_layer(size, k), (0, 0))
 
     # the heater in the back right corner
     pen.poly((190, 220, 230), [(119.5, 14), (122.5, 14), (122.5, 66), (119.5, 66)])
@@ -263,6 +266,11 @@ def build_scene():
                            ((90, 92, 86), (196, 198, 186))))
         pebbles.append((x, y, rad, rad * 0.75, lo, hi, []))
     front = shaded_layer(size, k, pebbles, seed=3)
+    # the fluorescent ones: a bluish and the usual phosphor green, about two thirds of the pebbles
+    PHOSPHOR, BLUE = (150, 255, 100), (70, 190, 255)
+    glowing = [(x, y, rx, ry, r.choice((PHOSPHOR, PHOSPHOR, BLUE))) for x, y, rx, ry, *_ in pebbles if r.random() < 0.65]
+    glowing.append((60, 99, 8.5, 7.5, BLUE))                                   # the light round stone
+    layers["glow"] = glow_layer(size, k, glowing)
     # the little shipwreck in the front left corner, lying on its side
     fpen2 = Pen(front, k)
     hull = [(3, 116), (5, 111), (13, 108), (19, 110), (17, 115), (9, 119)]
@@ -321,38 +329,108 @@ def stem_plant(pen, x, y0, h, lean, dark, light, r, alpha=255):
             pen.line((*cc, alpha), (cx, cy), (cx + dx, cy + dy), 0.3)
 
 
-def castle(pen, r):
-    """The ruins of a castle on the right: a tall tower and a lower wall, with arches and moss."""
-    stone, dark, line, shade = (196, 176, 128), (52, 46, 38), (160, 140, 100), (150, 130, 94)
-    # the low wall in front-left of the tower
-    pen.poly(shade, [(84, 104), (84, 84), (87, 82), (90, 84), (93, 82), (96, 84), (98, 83), (98, 104)])
-    pen.poly(stone, [(84.5, 104), (84.5, 85), (87, 83), (90, 85), (93, 83), (95.5, 85), (95.5, 104)])
-    # the tower
-    tw = [(96, 104), (96, 60), (98, 60), (98, 57), (101, 57), (101, 60), (104, 60), (104, 57), (107, 57),
-          (107, 60), (110, 60), (110, 57), (113, 57), (113, 60), (116, 60), (116, 104)]
-    pen.poly(stone, tw)
-    pen.poly(shade, [(111, 60), (116, 60), (116, 104), (111, 104)])
-    for y in range(62, 104, 4):                           # the stone courses
-        pen.line(line, (96, y), (116, y), 0.3)
-        off = 0 if (y // 4) % 2 else 2.5
-        for x in range(96, 116, 5):
-            pen.line(line, (x + off, y), (x + off, y + 4), 0.3)
-    for y in range(87, 104, 4):
-        pen.line(line, (84.5, y), (95.5, y), 0.3)
-    # arched windows and a door
-    for cx, cy, w, h in ((106, 70, 4, 7), (101, 84, 3.2, 5.5), (110, 88, 3.2, 5.5), (90, 96, 4, 8)):
-        pen.poly(dark, [(cx - w / 2, cy + h / 2), (cx - w / 2, cy - h / 2 + w / 2), (cx + w / 2, cy - h / 2 + w / 2),
-                        (cx + w / 2, cy + h / 2)])
-        pen.circle(dark, (cx, cy - h / 2 + w / 2), w / 2)
-    # a broken top edge and moss
-    pen.poly((70, 150, 70), [(96, 60), (99, 59), (101, 62), (97, 64)])
-    for _ in range(30):
-        x, y = r.uniform(96, 111), r.uniform(58, 104)
-        if r.random() < 0.5:
-            pen.circle(r.choice(((80, 150, 70), (60, 130, 60))), (x, y), r.uniform(0.4, 1.0))
+def castle_layer(size, k, seed=4):
+    """The ruins: a round tower shaded as a cylinder lit from the front left, courses of stone curving round
+    it, deep arched windows; a low wall in front of it with a lit top face; moss; a shadow on the gravel."""
+    nr = np.random.default_rng(seed)
+    rgb = np.zeros((size, size, 3), np.float32)
+    alpha = np.zeros((size, size), np.float32)
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32) / k
+    stone = np.array([206, 186, 138], np.float32)
+    grain = 1 + nr.normal(0, 0.05, (size, size)).astype(np.float32)
+
+    # the shadow it throws on the gravel (drawn first, everything else covers it)
+    sh = (((xx - 112) / 13) ** 2 + ((yy - 104.5) / 2.6) ** 2) < 1
+    alpha[sh], rgb[sh] = 0.45, 0
+
+    # the tower: a cylinder, centre x 106, radius 10
+    cx, rad, base = 106.0, 10.0, 104.0
+    u = (xx - cx) / rad
+    inside_x = np.abs(u) < 1
+    theta = np.arcsin(np.clip(u, -1, 1))
+    nz = np.sqrt(np.clip(1 - u * u, 0, 1))
+    lit = np.clip(-0.55 * u + 0.83 * nz, 0, 1)
+    # the top: merlons every 30 degrees, a broken stretch on the left
+    merlon = (np.floor((theta + np.pi / 2) / (np.pi / 6)) % 2) == 0
+    top = np.where(merlon, 57.0, 60.0)
+    broken = xx < 100.5
+    top = np.where(broken, 61.5 + 2.2 * np.sin(xx * 2.1) + (100.5 - xx) * 0.8, top)
+    tower = inside_x & (yy >= top) & (yy <= base)
+    course = (yy - 57) / 4.0
+    row_i = np.floor(course)
+    joint_v = ((theta + np.pi / 2) / (np.pi / 9) + (row_i % 2) * 0.5) % 1
+    mortar = (course % 1 < 0.09) | (joint_v < 0.06 * (0.4 + nz))   # joints thin out towards the edges
+    shade = (0.34 + 0.78 * lit) * grain
+    shade = np.where(mortar, shade * 0.72, shade)
+    shade *= 1 - 0.35 * np.clip((yy - (base - 4)) / 4, 0, 1)        # dimmer at the foot (in the plants)
+    col = stone[None, None, :] * shade[..., None]
+    # the cylinder's open top: the inside of the far wall, darker, seen over the near rim
+    rim = inside_x & (yy >= 58.5) & (yy < 60) & ~merlon & ~broken & (np.abs(u) < 0.86)
+    col[rim] = stone * 0.42
+    # arched windows: dark depth, a lit sill and the arch's lit inner edge on the right
+    for wx, wy, ww, wh in ((104.5, 70, 3.6, 7), (99.5, 84, 3.0, 5.5), (110.5, 87, 3.0, 5.5)):
+        ax, ay = wx, wy - wh / 2 + ww / 2
+        hole = (np.abs(xx - wx) < ww / 2) & (yy > ay) & (yy < wy + wh / 2) | (((xx - ax) ** 2 + (yy - ay) ** 2) < (ww / 2) ** 2) & (yy <= ay)
+        depth = np.clip((yy - (wy - wh / 2)) / wh, 0, 1)
+        col[hole & tower] = np.array([34, 28, 24], np.float32) * (0.7 + 0.5 * depth[hole & tower, None])
+        edge = (np.abs(xx - (wx + ww / 2 - 0.35)) < 0.35) & (yy > ay) & (yy < wy + wh / 2) & tower
+        col[edge] = stone * 1.05
+        sill = (np.abs(xx - wx) < ww / 2 + 0.5) & (np.abs(yy - (wy + wh / 2 + 0.3)) < 0.35) & tower
+        col[sill] = stone * 1.15
+    rgb[tower], alpha[tower] = col[tower], 1
+
+    # the low wall in front of the tower: a block with a lit top face and a shaded right face
+    wx0, wx1, wtop = 83.5, 96.5, 85.0
+    front = (xx >= wx0) & (xx <= wx1) & (yy >= wtop) & (yy <= base)
+    cren = (np.floor((xx - wx0) / 2.6) % 2 == 0) & (yy >= wtop - 2.4) & (yy < wtop) & (xx >= wx0) & (xx <= wx1 - 1)
+    topface = (xx >= wx0 + 0.8) & (xx <= wx1 + 0.8) & (yy >= wtop - 1.2 - 2.4 * cren) & (yy < wtop - 2.4 * cren) & ~(front)
+    side = (xx > wx1) & (xx <= wx1 + 1.6) & (yy >= wtop - 0.6 + (xx - wx1) * -0.6) & (yy <= base) & ~tower
+    wcourse = (yy - wtop) / 3.4
+    wjoint = ((xx - wx0) / 3.0 + (np.floor(wcourse) % 2) * 0.5) % 1
+    wm = (wcourse % 1 < 0.1) | (wjoint < 0.07)
+    wshade = (0.95 * grain) * np.where(wm, 0.75, 1.0)
+    for m, f in ((front | cren, wshade), (topface, 1.25 * grain), (side, 0.55 * grain)):
+        rgb[m] = stone * f[m, None] if np.ndim(f) else stone * f
+        alpha[m] = 1
+    # a doorway in the wall
+    door = (np.abs(xx - 89.5) < 2.0) & (yy > 96.5) & (yy <= base) | (((xx - 89.5) ** 2 + (yy - 96.5) ** 2) < 4) & (yy <= 96.5)
+    rgb[door & front] = np.array([30, 26, 22], np.float32)
+    # moss on the stones' edges, thicker low down
+    mossy = (alpha > 0.9) & (nr.random((size, size)) < 0.06 + 0.25 * np.clip((yy - 92) / 12, 0, 1) * (smooth_noise(nr, size, 30) > 0.55))
+    rgb[mossy] = np.array([70, 140, 64], np.float32) * (0.7 + 0.5 * lit[mossy, None])
+    lay = pygame.Surface((size, size), pygame.SRCALPHA)
+    pygame.surfarray.blit_array(lay, np.clip(rgb, 0, 255).astype(np.uint8).swapaxes(0, 1))
+    a = pygame.surfarray.pixels_alpha(lay)
+    a[:] = (np.clip(alpha, 0, 1) * 255).astype(np.uint8).T
+    del a
+    return lay
 
 
-LAYERS = ("bg", "stem", "broad", "round", "red", "stones", "front")
+def glow_layer(size, k, stones):
+    """What the fluorescent stones give off in the dark: their own colour inside plus a soft halo."""
+    core = np.zeros((size, size, 3), np.float32)
+    yy, xx = np.ogrid[:size, :size]
+    for cx, cy, rx, ry, color in stones:
+        d = ((xx / k - cx) / rx) ** 2 + ((yy / k - cy) / ry) ** 2
+        m = d < 1
+        f = (1.15 - 0.45 * d)[m]
+        core[m] = np.array(color, np.float32) * f[:, None]
+    small = pygame.surfarray.make_surface(np.clip(core, 0, 255).astype(np.uint8).swapaxes(0, 1))
+    q = max(8, size // 40)
+    halo = pygame.transform.smoothscale(pygame.transform.smoothscale(small, (q, q)), (size, size))
+    halo2 = pygame.transform.smoothscale(pygame.transform.smoothscale(small, (q * 3, q * 3)), (size, size))
+    h = pygame.surfarray.array3d(halo).swapaxes(0, 1).astype(np.float32) * 2.2
+    h2 = pygame.surfarray.array3d(halo2).swapaxes(0, 1).astype(np.float32) * 1.4
+    out = np.clip(core + h + h2, 0, 255)
+    lay = pygame.Surface((size, size), pygame.SRCALPHA)
+    pygame.surfarray.blit_array(lay, out.astype(np.uint8).swapaxes(0, 1))
+    a = pygame.surfarray.pixels_alpha(lay)
+    a[:] = np.clip(out.max(axis=2) * 3, 0, 255).astype(np.uint8).T
+    del a
+    return lay
+
+
+LAYERS = ("bg", "stem", "broad", "round", "red", "stones", "front", "glow")
 
 
 def load_scene():
@@ -432,9 +510,16 @@ PLANTS = [Sway(_scene["stem"], 104, 95, 2.4, 0.55, 0.0), Sway(_scene["broad"], 1
           Sway(_scene["red"], 104, 24, 0.9, 0.8, 2.1), Sway(_scene["round"], 103, 22, 0.7, 0.9, 3.0)]
 STONES = Layer(_scene["stones"])
 FRONT = Layer(_scene["front"])
+GLOW = Layer(_scene["glow"])
+_g = pygame.Surface(GLOW.img.get_size())
+_g.fill((0, 0, 0))
+_g.blit(GLOW.img, (0, 0))
+GLOW.img = _g                                       # added on top in the dark (BLEND_RGB_ADD)
 del _scene
 SCENE_EVERY = 0.15                                 # seconds between re-composing the swaying plants
-DARK = pygame.Surface((NW, NH), pygame.SRCALPHA)
+GLOW_CACHE = {}
+NIGHT = pygame.Surface((NW, NH)).convert(canvas)
+NIGHT.fill((2, 6, 18))
 STRIP = pygame.Surface((NW, NH // 4))              # the dark strip under the key hints
 STRIP.fill((4, 14, 20))
 
@@ -811,7 +896,6 @@ class School:
             g = gs[0] if f.face >= 0 else gs[1]
             if img.get_width() != g.get_width():
                 g = pygame.transform.smoothscale(g, (img.get_width(), g.get_height()))
-            g = g.copy()
             g.set_alpha(int(255 * strength))
             surf.blit(g, (f.x * S - g.get_width() / 2, f.y * S - g.get_height() / 2))
 
@@ -860,8 +944,8 @@ class Bubble:
 
 
 class Flake:
-    def __init__(self):
-        self.x = rng.uniform(30, 100)
+    def __init__(self, x=None):
+        self.x = rng.uniform(30, 100) if x is None else max(8, min(120, x + rng.uniform(-6, 6)))
         self.y = SURFACE_Y + rng.uniform(-1, 2)
         self.c = rng.choice(((214, 120, 50), (196, 70, 44), (226, 182, 82)))
         self.ph = rng.uniform(0, 6.3)
@@ -877,11 +961,40 @@ class Flake:
 
 
 def draw_air_gear(surf):
-    w = max(1, int(0.7 * S))
-    pygame.draw.line(surf, (200, 230, 236), P(118, 0), P(118, 104), w)
-    pygame.draw.line(surf, (200, 230, 236), P(118, 104), P(STONE[0] + 3, STONE[1]), w)
+    """The air stone on the gravel (its tube runs behind the castle)."""
     pygame.draw.ellipse(surf, (78, 86, 96), (*P(STONE[0] - 4, STONE[1] - 1.8), 8 * S, 3.6 * S))
     pygame.draw.ellipse(surf, (122, 130, 140), (*P(STONE[0] - 3, STONE[1] - 1.5), 5 * S, 1.6 * S))
+
+
+HEATER_LED = (121, 18)
+
+
+def finger_sprite():
+    """A fingertip pressed to the front glass: pale, with a lighter middle and a few ridges."""
+    surf, T, k = sprite_canvas(-6, 6, -7, 7, 1)
+    pygame.draw.ellipse(surf, (236, 198, 182, 120), (*T(-5, -6.4), 10 * k, 12.8 * k))
+    pygame.draw.ellipse(surf, (248, 222, 210, 120), (*T(-3.2, -4.6), 6.4 * k, 8.4 * k))
+    for i in range(4):
+        rr = 1.2 + i * 1.1
+        pygame.draw.arc(surf, (214, 170, 156, 110), (*T(-rr, -rr * 1.2), 2 * rr * k, 2.4 * rr * k), 0.3, 2.8, max(1, int(0.25 * k)))
+    pygame.draw.ellipse(surf, (196, 150, 136, 160), (*T(-5, -6.4), 10 * k, 12.8 * k), max(1, int(0.35 * k)))
+    return finish(surf, 1, -6, 6, -7, 7)
+
+
+FINGER = finger_sprite()
+
+
+def draw_heater_led(surf, on, light=1.0):
+    """The heater's thermostat lamp: orange with a little halo while it heats."""
+    x, y = P(*HEATER_LED)
+    if on:
+        for rr, a in ((2.6, 40), (1.7, 80), (1.0, 160)):
+            g = pygame.Surface((int(rr * 2 * S) + 2, int(rr * 2 * S) + 2), pygame.SRCALPHA)
+            pygame.draw.circle(g, (255, 150, 40, a), (g.get_width() / 2, g.get_height() / 2), rr * S)
+            surf.blit(g, (x - g.get_width() / 2, y - g.get_height() / 2))
+        pygame.draw.circle(surf, (255, 230, 150), (x, y), max(1, 0.55 * S))
+    else:
+        pygame.draw.circle(surf, mix((24, 16, 14), (110, 60, 40), light), (x, y), max(1, 0.55 * S))
 
 
 def surface_y(x, t):
@@ -924,6 +1037,11 @@ class Tank:
         self.t0 = time.monotonic()
         self.air_after = 2.2           # the pump starts a moment after the lamp
         self.scene, self.scene_t = None, -1.0
+        self.finger, self.finger_t, self.held = [64.0, 60.0], -99.0, set()   # the fingertip on the glass
+        self.calm_t = -99.0             # after a tap the fish are too scared to be curious for a while
+        self.taps = []                  # (x, y, when): rings spreading from a tap on the glass
+        self.charge = 0.6               # how much light the fluorescent stones have stored
+        self.heater_on, self.heater_next = False, 8.0
 
     def lamp(self, on, now):
         self.light_on = on
@@ -931,8 +1049,59 @@ class Tank:
             self.flicker_until = now + 0.9
         lcd.play("click")
 
+    def fishes(self):
+        return self.angels + [self.platy] + self.school.fish + self.glofish.fish + [self.school.leader, self.glofish.leader]
+
+    def finger_shown(self, t):
+        return t - self.finger_t < 5.5
+
+    def tap(self, t):
+        """A knock on the glass at the finger: a ring spreads, the fish nearby dart away."""
+        x, y = self.finger
+        self.taps.append((x, y, t))
+        self.finger_t, self.calm_t = t, t
+        for f in self.fishes():
+            dx, dy = f.x - x, f.y - y
+            d = math.hypot(dx, dy) or 0.1
+            if d < 48:
+                kick = 40 * (1 - d / 48) + 8
+                f.vx += dx / d * kick
+                f.vy += dy / d * kick * 0.7
+                f.pick_target()
+                f.rest = 0
+        lcd.play("hit")
+
+    def feed(self, t):
+        x = self.finger[0] if self.finger_shown(t) else None
+        self.food += [Flake(x) for _ in range(6)]
+        lcd.play("chip")
+
     def update(self, now, dt):
         t = now - self.t0
+        # the finger moves while an arrow is held; the fish come up to look at it when it is still
+        if self.held:
+            sp = 46 * dt
+            self.finger[0] = max(6, min(122, self.finger[0] + sp * ((pygame.K_RIGHT in self.held) - (pygame.K_LEFT in self.held))))
+            self.finger[1] = max(SURFACE_Y + 6, min(118, self.finger[1] + sp * ((pygame.K_DOWN in self.held) - (pygame.K_UP in self.held))))
+            self.finger_t = t
+        if self.finger_shown(t) and not self.food and t - self.calm_t > 3:
+            fx, fy = self.finger
+            for i, f in enumerate(self.angels):              # each at its own height beside the finger
+                side = 1 if f.x > fx else -1
+                f.tx, f.ty, f.rest = fx + side * (10 + 6 * (i % 2)), fy + (i - 1) * 17, 0
+            self.platy.tx, self.platy.ty, self.platy.rest = fx + (7 if self.platy.x > fx else -7), fy + 6, 0
+            for school in (self.school, self.glofish):
+                school.leader.tx, school.leader.ty, school.leader.rest = fx + (14 if school.leader.x > fx else -14), fy, 0
+        self.taps = [tp for tp in self.taps if t - tp[2] < 0.8]
+        # the fluorescent stones charge in the light and fade slowly in the dark
+        if self.light > 0.5:
+            self.charge += (1 - self.charge) * dt / 25
+        else:
+            self.charge -= self.charge * dt / 90
+        # the heater's thermostat switches it on now and then
+        if t >= self.heater_next:
+            self.heater_on = not self.heater_on
+            self.heater_next = t + (rng.uniform(12, 35) if self.heater_on else rng.uniform(25, 80))
         # the lamp: off at first, then a fluorescent flicker, then steady
         if t < 0.7:
             target = 0.0
@@ -1006,12 +1175,36 @@ class Tank:
         FRONT.draw(surf)
         draw_surface(surf, t, self.light)
         draw_ducks(surf, t)
-        if self.light < 0.999:
-            DARK.fill((2, 6, 16, int(225 * (1 - self.light))))
-            surf.blit(DARK, (0, 0))
+        if self.light < 0.999:                               # night: an opaque dark-blue sheet, whole-surface alpha
+            NIGHT.set_alpha(int(228 * (1 - self.light)))      # (2 ms on the Zero; per-pixel alpha took 32 ms)
+            surf.blit(NIGHT, (0, 0))
         if self.light < 0.5:                                 # only the neons' stripes are seen in the dark
             self.school.draw_glow(surf, 1 - self.light * 2)
             self.glofish.draw_glow(surf, (1 - self.light * 2) * 0.75)
+        glow = self.charge * (1 - self.light) ** 1.5
+        if glow > 0.02:                                      # the fluorescent stones, added light
+            v = int(255 * min(1.0, glow * (0.94 + 0.06 * math.sin(t * 1.3)))) // 6 * 6
+            g = GLOW_CACHE.get(v)
+            if g is None:                                    # one copy per brightness step, made once
+                g = GLOW.img.copy()
+                g.fill((v, v, v), special_flags=pygame.BLEND_RGB_MULT)
+                if len(GLOW_CACHE) > 48:
+                    GLOW_CACHE.clear()
+                GLOW_CACHE[v] = g
+            surf.blit(g, GLOW.rect.topleft, special_flags=pygame.BLEND_RGB_ADD)
+        draw_heater_led(surf, self.heater_on, self.light)
+        for x, y, t0 in self.taps:                           # the knock: rings on the glass
+            age = (t - t0) / 0.8
+            for j in range(2):
+                a = age - j * 0.2
+                if 0 < a < 1:
+                    pygame.draw.circle(surf, mix((40, 60, 80), (235, 248, 255), (1 - a) * max(0.4, self.light)),
+                                       P(x, y), (3 + a * 16) * S, max(1, int(0.4 * S)))
+        if self.finger_shown(t):
+            fade = min(1.0, max(0.0, (5.5 - (t - self.finger_t)) / 1.5))
+            img = FINGER.copy()
+            img.set_alpha(int(255 * fade * max(0.35, self.light)))
+            surf.blit(img, (self.finger[0] * S - img.get_width() / 2, self.finger[1] * S - img.get_height() / 2))
 
 
 def draw_hud(tank, now):
@@ -1025,9 +1218,9 @@ def draw_hud(tank, now):
         (title.img if hasattr(title, "img") else title).set_alpha(int(255 * min(1.0, (t - 1.0) / 0.8) * a))
         screen.blit(title, ((128 - title.get_width()) / 2, 24))
     if lcd.DEVICE == "picocalc":
-        hints = ("1 - світло   2 - повітря", "Enter - годувати   Esc - меню")
+        hints = ("1 світло  2 повітря  T постукати", "стрілки - палець  Enter - корм  Esc")
     else:
-        hints = ("K1 світло  K2 повітря", "OK годувати  K3 меню")
+        hints = ("K1 світло  K2 повітря", "джойстик палець  OK корм  K3")
     imgs = [f_hint.render(h, True, (226, 236, 232)) for h in hints]
     lh = imgs[0].get_height()
     top = 128 - lh * len(imgs) - 2
@@ -1038,22 +1231,33 @@ def draw_hud(tank, now):
         screen.blit(img, ((128 - img.get_width()) / 2, top + 1 + k * lh))
 
 
+ARROWS = (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN)
+
+
 def handle_keys(tank, now):
+    t = now - tank.t0
     for ev in pygame.event.get():
         if ev.type == pygame.QUIT:
             return False
+        if ev.type == pygame.KEYUP:
+            tank.held.discard(ev.key)
+            continue
         if ev.type != pygame.KEYDOWN:
             continue
         if ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE, pygame.K_q) or (ev.key == pygame.K_3 and getattr(ev, "hat", False)):
             return False
-        if ev.key in (pygame.K_1, pygame.K_l):
+        if ev.key in ARROWS:                                 # the finger on the glass
+            tank.held.add(ev.key)
+            tank.finger_t = t
+        elif ev.key in (pygame.K_1, pygame.K_l):
             tank.lamp(not tank.light_on, now)
         elif ev.key in (pygame.K_2, pygame.K_a):
             tank.air_on = not tank.air_on
             lcd.play("move")
-        elif ev.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_f, pygame.K_RIGHT):
-            tank.food += [Flake() for _ in range(6)]
-            lcd.play("chip")
+        elif ev.key in (pygame.K_t, pygame.K_4):
+            tank.tap(t)
+        elif ev.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_f):
+            tank.feed(t)
     return True
 
 
