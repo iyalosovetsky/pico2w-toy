@@ -811,6 +811,7 @@ class Fish:
         self.forage = None               # pecking at something: {"x", "y", "kind", "t", "pecks", ...}
         self.face_lock = None            # faces this way while pecking (it backs off without turning)
         self.turn_rate = rng.uniform(1.4, 3.0)    # each fish turns at its own pace ...
+        self.activity = 1.0              # 1 by day; at night the fish nearly sleep (see Tank.update)
         self.flip_at = rng.uniform(0.6, 1.8)      # ... and only once it really swims the other way
         self.margin = margin             # half its height: how close it may come to the surface / the gravel
         self.others = []                 # fish it keeps away from when choosing where to swim
@@ -829,12 +830,12 @@ class Fish:
             self.tx, self.ty = rng.uniform(x0, x1), rng.uniform(y0, y1)
             if all(((o.tx - self.tx) / 26) ** 2 + ((o.ty - self.ty) / 30) ** 2 > 1 for o in self.others):
                 break
-        self.rest = rng.uniform(0.3, 2.5)
+        self.rest = rng.uniform(0.3, 2.5) / max(0.15, self.activity) ** 1.5
 
     def steer(self, tx, ty, dt, speed, accel=1.6):
         dx, dy = tx - self.x, ty - self.y
         d = math.hypot(dx, dy) or 1
-        want = min(speed, d * 1.2)
+        want = min(speed * self.activity, d * 1.2)
         self.vx += (dx / d * want - self.vx) * min(1, accel * dt)
         self.vy += (dy / d * want * 0.55 - self.vy) * min(1, accel * dt)
         return d
@@ -911,7 +912,7 @@ class Fish:
         if self.forage is not None and self.forage["phase"] == 1:   # nose down to peck
             climb = 0.85 if self.forage["kind"] != "plant" else 0.4
         self.tilt += (climb - self.tilt) * min(1, dt * 3)
-        self.tail += dt * (2.2 + abs(self.vx) * 0.3 + abs(self.vy) * 0.2)
+        self.tail += dt * ((0.6 + 1.6 * self.activity) + abs(self.vx) * 0.3 + abs(self.vy) * 0.2)
 
     def tilt_row(self, rows):
         return rows[min(len(rows) - 1, max(0, int(round((self.tilt + 1) / 2 * (len(rows) - 1)))))]
@@ -983,7 +984,7 @@ class School:
         if len(self.hist) > 40 and self.hist[0][0] < t - 1.6:
             del self.hist[:10]
         # now and then one fish drops out of the shoal to peck at something near it, then catches up
-        self.next_forage -= dt
+        self.next_forage -= dt * self.leader.activity ** 2
         if self.next_forage <= 0 and not food:
             self.next_forage = rng.uniform(5, 12)
             idle = [f for f in self.fish if f.forage is None]
@@ -1219,6 +1220,7 @@ class Tank:
         self.t0 = time.monotonic()
         self.air_after = 2.2           # the pump starts a moment after the lamp
         self.scene, self.scene_t = None, -1.0
+        self.activity = 1.0
         self.finger, self.finger_t, self.held = [64.0, 60.0], -99.0, set()   # the fingertip on the glass
         self.calm_t = -99.0             # after a tap the fish are too scared to be curious for a while
         self.taps = []                  # (x, y, when): rings spreading from a tap on the glass
@@ -1320,6 +1322,14 @@ class Tank:
         if t > 0.7 and t - dt <= 0.7 and lit > 0.5:
             lcd.play("click")
         self.green += (green - self.green) * min(1, dt * 2)
+        # how lively the fish are: by day 1, in the green evening sleepy, at night they nearly hang in the water
+        # (food, a tap or the finger wake them up for a while)
+        want = 0.16 + 0.84 * min(1.0, max(0.0, (self.light - 0.05) / 0.85))
+        if self.food or t - self.calm_t < 6 or self.finger_shown(t):
+            want = max(want, 0.85)
+        self.activity += (want - self.activity) * min(1, dt * 0.6)
+        for f in self.fishes():
+            f.activity = self.activity
         self.light += (target - self.light) * min(1, dt * (14 if target > self.light else 3))
         # the pump
         if t > self.air_after and t - dt <= self.air_after:
@@ -1347,13 +1357,13 @@ class Tank:
                     if d < 0.6 and rng.random() < dt * 2:    # too close for long: one swims elsewhere
                         g.pick_target()
         # the angelfish and the platy peck too: the angelfish at leaves and the tops of the stones
-        self.angel_peck -= dt
+        self.angel_peck -= dt * self.activity ** 2
         if self.angel_peck <= 0 and not self.food:
             self.angel_peck = rng.uniform(10, 22)
             f = rng.choice(self.angels)
             if f.forage is None:
                 f.start_forage(*peck_spot(f.x, f.y, ("stone", "plant")))
-        self.platy_peck -= dt
+        self.platy_peck -= dt * self.activity ** 2
         if self.platy_peck <= 0 and not self.food and self.platy.forage is None:
             self.platy_peck = rng.uniform(6, 14)
             self.platy.start_forage(*peck_spot(self.platy.x, self.platy.y, ("ground", "stone", "plant")))
