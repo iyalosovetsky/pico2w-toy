@@ -49,7 +49,7 @@ DB = max(0.0, DC - 12)          # the round-leaved bush in front of it, a little
 SURFACE_Y = 9                   # the water line
 FONT_DIR = "/usr/share/fonts/truetype/dejavu/"
 CACHE = os.path.expanduser("~/.cache/lcdtoy")
-SCENE_VERSION = 21               # bump when the still scene changes (the cache is keyed on it)
+SCENE_VERSION = 22               # bump when the still scene changes (the cache is keyed on it)
 rng = random.Random()
 
 canvas = pygame.Surface((NW, NH))   # everything is drawn here in native pixels, then shown at once
@@ -136,6 +136,82 @@ def smooth_noise(r, w, h, cells):
     return pygame.surfarray.array3d(big)[..., 0].T.astype(np.float32) / 255
 
 
+def noise2(r, w, h, cx, cy):
+    """Smooth value noise 0..1, h rows of w, from a cx-across by cy-down random grid (stretched cells: fronds)."""
+    vals = (r.random((cx, cy)) * 255).astype(np.uint8)
+    small = pygame.surfarray.make_surface(np.repeat(vals[..., None], 3, axis=2))
+    big = pygame.transform.smoothscale(pygame.transform.smoothscale(small, (cx * 4, cy * 4)), (w, h))
+    return pygame.surfarray.array3d(big)[..., 0].T.astype(np.float32) / 255
+
+
+def lava_rocks(sw, sh, k):
+    """The porous dark stones piled at the back, like on the night reference: (mask, light, pores), each 0..1."""
+    nr = np.random.default_rng(31)
+    yy, xx = np.mgrid[0:sh, 0:sw].astype(np.float32) / k
+    mask = np.zeros((sh, sw), np.float32)
+    lit = np.zeros((sh, sw), np.float32)
+    edge = noise2(nr, sw, sh, max(8, int(W / 3)), 40)               # a bumpy outline
+    # (x, half width, height): where the plants leave the back open - a pile between the lemon plant and the
+    # hair grass, low ones by the stems on the left, two behind the castle
+    for cx, rx, ry in ((X(4), 7, 12), (X(58), 10, 16), (X(67), 13, 24), (X(77), 9, 14), (X(84), 6, 8),
+                       (W - 44, 16, 30), (W - 14, 13, 22)):
+        base = ground_line(cx) + 1.5
+        u, v = (xx - cx) / rx, (yy - base) / ry
+        d = u * u + v * v
+        inside = (d < 1 + (edge - 0.5) * 0.6) & (v <= 0.05)
+        nz = np.sqrt(np.clip(1 - d, 0, 1))
+        light = np.clip(-0.35 * u - 0.55 * v + 0.55 * nz, 0, 1)
+        mask[inside], lit[inside] = 1.0, light[inside]
+    pores = noise2(nr, sw, sh, max(16, int(W * 1.1)), int(H * 1.1))
+    pores = np.clip((0.36 - pores) * 7, 0, 1) * mask
+    return mask, lit, pores
+
+
+def backdrops(sw, sh, k):
+    """The backdrop behind the plants, by day and by night (float (sh, sw, 3) arrays, before the gravel).
+    By day like the printed one in our tank: turquoise water, deep blue at the sides, a bright patch where the
+    lamp shines through, wavy light ripples up high, soft silhouettes of underwater plants and, faintly, stones.
+    By night like the night reference: nearly black water, the porous stones dark with a cold rim of light."""
+    nr = np.random.default_rng(21)
+    yy = np.linspace(0, 1, sh, dtype=np.float32)[:, None]
+    xx = np.linspace(0, 1, sw, dtype=np.float32)[None, :]
+
+    def blob(cx, cy, rx, ry):
+        return np.exp(-(((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2))
+    tex = noise2(nr, sw, sh, 12, 8) * 0.6 + noise2(nr, sw, sh, 30, 20) * 0.4
+    b = np.clip(blob(0.62, 0.42, 0.34, 0.40) + 0.6 * blob(0.24, 0.62, 0.20, 0.30) + 0.5 * blob(0.88, 0.25, 0.15, 0.25), 0, 1)
+    b = np.clip(b * (0.72 + 0.55 * tex), 0, 1)[..., None]
+    day = np.array([22, 76, 158], np.float32) * (1 - b) + np.array([46, 178, 204], np.float32) * b
+    hi = np.clip((b - 0.62) / 0.38, 0, 1) ** 1.5
+    day = day * (1 - hi * 0.55) + np.array([150, 232, 228], np.float32) * hi * 0.55
+    # the ripples of light from the surface: thin wavy bright lines, mostly up high
+    warp = noise2(nr, sw, sh, 20, 10)
+    breakup = noise2(nr, sw, sh, max(8, int(W / 4)), 16)
+    yl = yy * sh / k
+    line = np.exp(-(np.sin(yl * 0.55 + 11 * warp + 3 * np.sin(xx * W * 0.035 + 4 * warp)) / 0.09) ** 2)
+    line *= np.clip(1.1 - yy * 1.6, 0, 1) * np.clip((breakup - 0.38) * 3, 0, 1)
+    day += line[..., None] * np.array([46, 62, 56], np.float32)
+    # printed silhouettes of underwater plants: tall soft fronds, darker teal, in the lower two thirds
+    fr = noise2(nr, sw, sh, max(8, int(W / 2.5)), 6) * 0.6 + noise2(nr, sw, sh, max(6, int(W / 6)), 10) * 0.4
+    plants = (np.clip((fr - 0.52) * 5, 0, 1) * np.clip((yy - 0.3) / 0.4, 0, 1))[..., None]
+    day = day * (1 - plants * 0.45) + np.array([18, 98, 94], np.float32) * plants * 0.45
+    mask, lit, pores = lava_rocks(sw, sh, k)
+    m, l, po = mask[..., None], lit[..., None], pores[..., None]
+    rock_day = np.array([28, 92, 138], np.float32) * (0.6 + 0.6 * l) * (1 - 0.4 * po)
+    day = day * (1 - m * 0.45) + rock_day * m * 0.45
+    day *= (1 - 0.22 * (xx * 2 - 1) ** 2)[..., None]
+
+    night = np.array([10, 24, 50], np.float32) * (1 - 0.45 * yy[..., None]) + \
+        blob(0.5, 0.0, 0.45, 0.35)[..., None] * np.array([14, 30, 52], np.float32)   # a little light from above
+    night *= (0.85 + 0.3 * tex[..., None])
+    night = night * (1 - plants * 0.5) + np.array([8, 34, 34], np.float32) * plants * 0.5
+    rock = np.array([62, 68, 80], np.float32) * (0.3 + 0.9 * l) * (1 - 0.75 * po)
+    rim = np.clip((l - 0.72) / 0.28, 0, 1) * (1 - po)
+    rock += rim * np.array([30, 58, 100], np.float32)
+    night = night * (1 - m) + rock * m
+    return day, night
+
+
 def shade_ellipses(arr, k, stones, light=(-0.45, -0.65, 0.62), seed=1):
     """Round stones / pebbles with sphere shading and grain, straight into an (H, W, 3) float array."""
     r = np.random.default_rng(seed)
@@ -169,15 +245,8 @@ def build_scene():
     r = random.Random(11)
     nr = np.random.default_rng(5)
 
-    # the blue backdrop with a soft stone-and-water pattern, lighter up under the lamp
-    yy = np.linspace(0, 1, sh, dtype=np.float32)[:, None]
-    base_top, base_bot = np.array([104, 186, 232], np.float32), np.array([30, 104, 176], np.float32)
-    img = base_top * (1 - yy[..., None]) + base_bot * yy[..., None]
-    tex = smooth_noise(nr, sw, sh, 10) * 0.6 + smooth_noise(nr, sw, sh, 28) * 0.4
-    waves = np.sin(np.arange(sh, dtype=np.float32)[:, None] / k * 0.55 + tex * 9) * 0.5 + 0.5
-    img = img * (0.78 + 0.32 * tex[..., None]) + 18 * (waves[..., None] - 0.5)
-    xx = np.linspace(-1, 1, sw, dtype=np.float32)[None, :, None]
-    img *= 1 - 0.18 * xx ** 2
+    # the backdrop: by day turquoise like the printed one in our tank, by night dark with the porous stones
+    img, night = backdrops(sw, sh, k)
 
     # the gravel: dark, speckled, lighter towards the front glass
     gl = np.array([ground_line(x / k) * k for x in range(sw)], np.float32)
@@ -190,9 +259,12 @@ def build_scene():
                      np.where(grain[..., None] < 0.15, np.array([30, 28, 24], np.float32), gravel))
     gravel = gravel * 0.45 + speck * 0.55
     img[below] = gravel[below]
+    night[below] = gravel[below]
     surf = pygame.Surface((sw, sh))
     pygame.surfarray.blit_array(surf, np.clip(img, 0, 255).astype(np.uint8).swapaxes(0, 1))
     pen = Pen(surf, k)
+    surf_n = pygame.Surface((sw, sh))
+    pygame.surfarray.blit_array(surf_n, np.clip(night, 0, 255).astype(np.uint8).swapaxes(0, 1))
 
     # the lamp's reflection just under the surface
     band = pygame.Surface((sw, int(6 * k)), pygame.SRCALPHA)
@@ -207,12 +279,17 @@ def build_scene():
         stem_plant(fpen, X(r.uniform(36, 96)), ground_line(X(60)) - 2, r.uniform(26, 54), r.uniform(-5, 5),
                    (60, 150, 130), (120, 200, 170), r, alpha=120)
     surf.blit(far, (0, 0))
+    far.set_alpha(90)                                    # at night the far plants hardly show
+    surf_n.blit(far, (0, 0))
 
     # the heater, small, at the back: its top with the thermostat lamp shows above the tower
-    for c, x0, x1, y0, y1 in (((176, 206, 218), 108.6, 110.8, 30, 66), ((96, 102, 108), 109.3, 110.1, 36, 64),
-                              ((44, 48, 54), 108.2, 111.2, 28, 31)):
-        pen.poly(c, [(x0 + DC, y0), (x1 + DC, y0), (x1 + DC, y1), (x0 + DC, y1)])
-    surf.blit(castle_layer(sw, sh, k, DC), (0, 0))
+    castle = castle_layer(sw, sh, k, DC)
+    for target in (pen, Pen(surf_n, k)):
+        for c, x0, x1, y0, y1 in (((176, 206, 218), 108.6, 110.8, 30, 66), ((96, 102, 108), 109.3, 110.1, 36, 64),
+                                  ((44, 48, 54), 108.2, 111.2, 28, 31)):
+            target.poly(c, [(x0 + DC, y0), (x1 + DC, y0), (x1 + DC, y1), (x0 + DC, y1)])
+    surf.blit(castle, (0, 0))
+    surf_n.blit(castle, (0, 0))
 
 
     # the plants that sway: each group on its own layer (moved in bands every frame, see Sway)
@@ -330,7 +407,7 @@ def build_scene():
     layers["front"] = front
 
     native = (NW, NH)
-    out = {"bg": pygame.transform.smoothscale(surf, native)}
+    out = {"bg": pygame.transform.smoothscale(surf, native), "bgnight": pygame.transform.smoothscale(surf_n, native)}
     for name, lay in layers.items():
         out[name] = pygame.transform.smoothscale(lay, native)
     return out
@@ -591,7 +668,7 @@ def glow_layer(sw, sh, k, stones):
     return lay
 
 
-LAYERS = ("bg", "stem", "broad", "round", "red", "stones", "front", "glow")
+LAYERS = ("bg", "bgnight", "stem", "broad", "round", "red", "stones", "front", "glow")
 
 
 def load_scene():
@@ -634,6 +711,7 @@ for _layer in build_rays():
     _layer.set_alpha(190)
     BACKGROUND.blit(_layer, (0, 0))
 BACKGROUND = BACKGROUND.convert(canvas)            # the canvas' pixel format: no conversion on every blit
+BG_NIGHT = _scene["bgnight"].convert(canvas)       # the night backdrop, faded in over the day one as the lamp dims
 
 
 class Layer:
@@ -1608,10 +1686,12 @@ class Tank:
             self.scene_t = t
             if self.scene is None:
                 self.scene = BACKGROUND.copy()
-                if CLOCK:
-                    CLOCK.draw(self.scene)
             else:
                 self.scene.blit(BACKGROUND, (0, 0))
+            night = int(255 * (1 - self.light)) // 8 * 8
+            if night > 0:
+                BG_NIGHT.set_alpha(night)
+                self.scene.blit(BG_NIGHT, (0, 0))
             if CLOCK:
                 CLOCK.draw(self.scene)
             for plant in PLANTS:
@@ -1646,7 +1726,8 @@ class Tank:
         draw_surface(surf, t, self.light)
         draw_ducks(surf, t)
         if self.light < 0.999:                               # night: an opaque dark-blue sheet, whole-surface alpha
-            col = mix((2, 6, 18), (6, 30, 12), self.green)    # evening green from the timer, night blue
+            # the timer's green evening light tints it green; with the lamp quite off the night is blue-black
+            col = mix((2, 6, 18), (6, 30, 12), self.green * min(1.0, self.light / 0.25))
             if col != getattr(self, "night_col", None):
                 NIGHT.fill(col)
                 self.night_col = col
