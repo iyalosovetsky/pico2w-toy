@@ -1,4 +1,4 @@
-"""Aquarium - our planted tank: two silver and one golden angelfish, neon tetras, red GloFish tetras,
+"""Aquarium - our planted tank: two silver and one golden angelfish, neon tetras, GloFish tetras in four colours,
 a golden platy, stem plants,
 a red bush, a hair-grass tuft, round stones and pebbles, the castle ruins, an air stone, rubber ducks.
 
@@ -724,7 +724,8 @@ def neon_sprite(size, tail, glow=False):
     return finish(surf, size, X0, X1, Y0, Y1)
 
 
-GLO_RED, GLO_PINK = (255, 76, 64), (255, 96, 170)
+# our GloFish: coral orange, lime, hot pink and a pale pearly pink (each glows its own colour in the dark)
+GLO_ORANGE, GLO_LIME, GLO_PINK, GLO_ROSE = (255, 108, 62), (212, 226, 64), (255, 92, 168), (230, 156, 182)
 
 
 def glofish_sprite(size, color, tail, glow=False):
@@ -1066,7 +1067,7 @@ class Tank:
             f.others = [g for g in self.angels if g is not f]
             f.pick_target()
         self.school = neon_school(11)
-        self.glofish = glofish_school((GLO_RED, GLO_RED, GLO_RED, GLO_PINK, GLO_RED))
+        self.glofish = glofish_school((GLO_ORANGE, GLO_LIME, GLO_PINK, GLO_ROSE, GLO_ORANGE))
         self.platy = Fish(tilted_frames(platy_sprite, 1.0), 30, 88, 9, (12, 64, 70, 100), margin=4)
         self.bubbles, self.food = [], []
         self.light, self.light_on = 0.0, True
