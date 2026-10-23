@@ -1739,7 +1739,7 @@ def draw_panels(disp, left, right):
         path = FONT_DIR + "DejaVuSans.ttf"
         bold = FONT_DIR + "DejaVuSans-Bold.ttf"
         ok = os.path.exists(path) and os.path.exists(bold)
-        big = max(24, left.width // 3)
+        big = max(20, int(left.width / 4.4))
         _panel["fonts"] = (Font(bold if ok else None, big), Font(path if ok else None, max(12, big // 3)),
                            Font(path if ok else None, max(11, big // 4)))
     f_big, f_mid, f_small = _panel["fonts"]
