@@ -1330,6 +1330,12 @@ class Tank:
         self.activity += (want - self.activity) * min(1, dt * 0.6)
         for f in self.fishes():
             f.activity = self.activity
+        # the shoals sleep deeper: another 1.5 times slower at night (unless woken up)
+        night = 1 - min(1.0, max(0.0, (self.light - 0.05) / 0.85))
+        if not (self.food or t - self.calm_t < 6 or self.finger_shown(t)):
+            for school in (self.school, self.glofish):
+                for f in school.fish + [school.leader]:
+                    f.activity = self.activity / (1 + 0.5 * night)
         self.light += (target - self.light) * min(1, dt * (14 if target > self.light else 3))
         # the pump
         if t > self.air_after and t - dt <= self.air_after:
