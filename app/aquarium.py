@@ -11,7 +11,7 @@ Keys (PicoCalc / HAT):
     1 / KEY1      - the lamp on/off (in the dark the neons' blue stripe still glows)
     2 / KEY2      - the air pump on/off
     Enter, Space / PRESS - feed the fish (flakes sink, the fish go after them)
-    Esc, 3 / KEY3 - back to the menu
+    Esc / KEY3    - back to the menu
 
 The menu runs it from its own item and once after the device boots (see menu.py); the file
 ~/.config/lcdtoy/aquarium-on-boot with 0 in it turns the boot start off.
@@ -34,7 +34,7 @@ W = H = 128                     # the logical tank
 SURFACE_Y = 9                   # the water line
 FONT_DIR = "/usr/share/fonts/truetype/dejavu/"
 CACHE = os.path.expanduser("~/.cache/lcdtoy")
-SCENE_VERSION = 4               # bump when the still scene changes (the cache is keyed on it)
+SCENE_VERSION = 5               # bump when the still scene changes (the cache is keyed on it)
 rng = random.Random()
 
 canvas = pygame.Surface((NW, NH))   # everything is drawn here in native pixels, then shown at once
@@ -195,56 +195,65 @@ def build_scene():
     pen.poly((90, 96, 100), [(120.4, 22), (121.6, 22), (121.6, 62), (120.4, 62)])
     pen.poly((40, 44, 50), [(119, 12), (123, 12), (123, 16), (119, 16)])
 
+    # the plants that sway: each group on its own layer (moved in bands every frame, see Sway)
+    def layer():
+        lay = pygame.Surface((size, size), pygame.SRCALPHA)
+        return lay, Pen(lay, k)
+    layers = {}
+
     # the dense stem plants on the left, up to the surface
+    lay, lp = layer()
     for i in range(18):
         x = r.uniform(1, 40) if i < 14 else r.uniform(40, 52)
-        stem_plant(pen, x, ground_line(x) + 1, r.uniform(48, 92) if x < 36 else r.uniform(26, 40), r.uniform(-7, 7),
+        stem_plant(lp, x, ground_line(x) + 1, r.uniform(48, 92) if x < 36 else r.uniform(26, 40), r.uniform(-7, 7),
                    (34, 112, 46), (132, 208, 92), r)
+    layers["stem"] = lay
 
     # broad-leaved plants in the middle (anubias-like)
+    lay, lp = layer()
     for _ in range(14):
         a = r.uniform(-1.1, 1.1)
         x0 = r.uniform(40, 54)
         base = ground_line(x0)
         ln = r.uniform(5, 13)
         tip = (x0 + math.sin(a) * ln, base - math.cos(a) * ln)
-        pen.line((46, 110, 50), (x0, base), tip, 0.5)
-        lp = leaf_pts(*tip, r.uniform(8, 12), r.uniform(3.6, 5.0), a * 0.8, r.uniform(-1.5, 1.5))
-        pen.poly(r.choice(((38, 124, 52), (50, 140, 60), (30, 104, 46))), lp)
-        pygame.draw.aalines(surf, (100, 176, 90), False, [pen.p(*q) for q in lp[:9]])
+        lp.line((46, 110, 50), (x0, base), tip, 0.5)
+        pts = leaf_pts(*tip, r.uniform(8, 12), r.uniform(3.6, 5.0), a * 0.8, r.uniform(-1.5, 1.5))
+        lp.poly(r.choice(((38, 124, 52), (50, 140, 60), (30, 104, 46))), pts)
+        pygame.draw.aalines(lay, (100, 176, 90), False, [lp.p(*q) for q in pts[:9]])
+    layers["broad"] = lay
 
     # small round leaves by the castle
+    lay, lp = layer()
     for _ in range(40):
         x, y = r.uniform(84, 100), r.uniform(84, 102)
-        pen.line((60, 130, 60), (x, ground_line(x)), (x, y), 0.3)
-        pen.circle(r.choice(((86, 182, 72), (70, 164, 64), (110, 200, 90))), (x, y), r.uniform(1.3, 2.1))
+        lp.line((60, 130, 60), (x, ground_line(x)), (x, y), 0.3)
+        lp.circle(r.choice(((86, 182, 72), (70, 164, 64), (110, 200, 90))), (x, y), r.uniform(1.3, 2.1))
+    layers["round"] = lay
 
     # the red-purple bush at the bottom left
+    lay, lp = layer()
     for _ in range(26):
         x0 = r.uniform(16, 34)
         base = ground_line(x0)
         h = r.uniform(10, 22)
         lean = r.uniform(-5, 5)
-        pen.line((90, 40, 60), (x0, base), (x0 + lean, base - h), 0.4)
+        lp.line((90, 40, 60), (x0, base), (x0 + lean, base - h), 0.4)
         for j in range(6):
             t = (j + 1) / 7
             cx, cy = x0 + lean * t, base - h * t
             for side in (-1, 1):
-                lp = leaf_pts(cx, cy, r.uniform(2.6, 3.8), r.uniform(1.4, 2.0), side * r.uniform(0.7, 1.4))
-                pen.poly(r.choice(((150, 40, 92), (124, 32, 84), (178, 66, 112), (100, 58, 72))), lp)
+                pts = leaf_pts(cx, cy, r.uniform(2.6, 3.8), r.uniform(1.4, 2.0), side * r.uniform(0.7, 1.4))
+                lp.poly(r.choice(((150, 40, 92), (124, 32, 84), (178, 66, 112), (100, 58, 72))), pts)
+    layers["red"] = lay
 
-    # the stones: a dark mossy one with pits and a light rounded one
-    arr = pygame.surfarray.pixels3d(surf).swapaxes(0, 1).astype(np.float32)
-    shade_ellipses(arr, k, [
+    # the stones over the plants' feet: a dark mossy one with pits and a light rounded one
+    layers["stones"] = shaded_layer(size, k, [
         (34, 100, 11, 8, (34, 48, 32), (120, 142, 92), [(29, 98, 1.6), (36, 96, 1.2), (40, 101, 1.5), (31, 103, 1.0)]),
         (60, 99, 8.5, 7.5, (130, 120, 86), (236, 226, 190), []),
     ], seed=2)
-    pygame.surfarray.blit_array(surf, np.clip(arr, 0, 255).astype(np.uint8).swapaxes(0, 1))
 
-    # the front pebbles: a separate layer over the fish swimming low
-    front = pygame.Surface((size, size), pygame.SRCALPHA)
-    farr = np.zeros((size, size, 3), np.float32)
-    mask = np.zeros((size, size), bool)
+    # the front pebbles: over the fish swimming low
     pebbles = []
     for _ in range(60):
         x = r.uniform(14, 96)
@@ -253,14 +262,7 @@ def build_scene():
         lo, hi = r.choice((((70, 86, 64), (178, 196, 160)), ((112, 104, 84), (232, 222, 192)),
                            ((90, 92, 86), (196, 198, 186))))
         pebbles.append((x, y, rad, rad * 0.75, lo, hi, []))
-    shade_ellipses(farr, k, pebbles, seed=3)
-    for cx, cy, rx, ry, *_ in pebbles:
-        yy2, xx2 = np.ogrid[:size, :size]
-        mask |= (((xx2 / k - cx) / rx) ** 2 + ((yy2 / k - cy) / ry) ** 2) < 1
-    pygame.surfarray.blit_array(front, np.clip(farr, 0, 255).astype(np.uint8).swapaxes(0, 1))
-    a = pygame.surfarray.pixels_alpha(front)
-    a[:] = (mask.T * 255).astype(np.uint8)
-    del a
+    front = shaded_layer(size, k, pebbles, seed=3)
     # the little shipwreck in the front left corner, lying on its side
     fpen2 = Pen(front, k)
     hull = [(3, 116), (5, 111), (13, 108), (19, 110), (17, 115), (9, 119)]
@@ -272,9 +274,29 @@ def build_scene():
     for wx, wy in ((8, 115), (11, 114), (14, 112.6)):                                    # portholes
         fpen2.circle((60, 60, 64), (wx, wy), 0.7)
     fpen2.poly((80, 140, 70), [(4, 116.5), (6, 114), (7, 116.5)])                        # moss
+    layers["front"] = front
 
     native = (NW, NH)
-    return pygame.transform.smoothscale(surf, native), pygame.transform.smoothscale(front, native)
+    out = {"bg": pygame.transform.smoothscale(surf, native)}
+    for name, lay in layers.items():
+        out[name] = pygame.transform.smoothscale(lay, native)
+    return out
+
+
+def shaded_layer(size, k, stones, seed):
+    """Shaded round stones on a transparent layer (supersampled: smooth edges once scaled down)."""
+    lay = pygame.Surface((size, size), pygame.SRCALPHA)
+    arr = np.zeros((size, size, 3), np.float32)
+    shade_ellipses(arr, k, stones, seed=seed)
+    mask = np.zeros((size, size), bool)
+    yy, xx = np.ogrid[:size, :size]
+    for cx, cy, rx, ry, *_ in stones:
+        mask |= (((xx / k - cx) / rx) ** 2 + ((yy / k - cy) / ry) ** 2) < 1
+    pygame.surfarray.blit_array(lay, np.clip(arr, 0, 255).astype(np.uint8).swapaxes(0, 1))
+    a = pygame.surfarray.pixels_alpha(lay)
+    a[:] = (mask.T * 255).astype(np.uint8)
+    del a
+    return lay
 
 
 def stem_plant(pen, x, y0, h, lean, dark, light, r, alpha=255):
@@ -330,21 +352,24 @@ def castle(pen, r):
             pen.circle(r.choice(((80, 150, 70), (60, 130, 60))), (x, y), r.uniform(0.4, 1.0))
 
 
+LAYERS = ("bg", "stem", "broad", "round", "red", "stones", "front")
+
+
 def load_scene():
-    """The still scene from the cache, or built (a few seconds on the Zero) and cached."""
+    """The still scene's layers from the cache, or built (a few seconds on the Zero) and cached."""
     name = os.path.join(CACHE, "aquarium-v%d-%dx%d" % (SCENE_VERSION, NW, NH))
     try:
-        return pygame.image.load(name + "-bg.png"), pygame.image.load(name + "-front.png")
+        return {n: pygame.image.load("%s-%s.png" % (name, n)) for n in LAYERS}
     except (pygame.error, FileNotFoundError, OSError):
         pass
-    bg, front = build_scene()
+    out = build_scene()
     try:
         os.makedirs(CACHE, exist_ok=True)
-        pygame.image.save(bg, name + "-bg.png")
-        pygame.image.save(front, name + "-front.png")
+        for n in LAYERS:
+            pygame.image.save(out[n], "%s-%s.png" % (name, n))
     except (pygame.error, OSError):
         pass
-    return bg, front
+    return out
 
 
 def build_rays():
@@ -362,15 +387,53 @@ def build_rays():
     return layers
 
 
-BACKGROUND, FRONT = load_scene()
+_scene = load_scene()
+BACKGROUND = _scene["bg"]
 # the light rays are baked into the backdrop (two full-screen alpha layers per frame were too slow on the Zero)
 for _layer in build_rays():
     _layer.set_alpha(190)
     BACKGROUND.blit(_layer, (0, 0))
 BACKGROUND = BACKGROUND.convert(canvas)            # the canvas' pixel format: no conversion on every blit
-FRONT = FRONT.convert_alpha()
-FRONT_RECT = FRONT.get_bounding_rect()             # the pebbles cover only the bottom: blend just that
-FRONT = FRONT.subsurface(FRONT_RECT).copy()
+
+
+class Layer:
+    """A still layer cut to what it covers (blending a whole transparent screen is slow on the Zero)."""
+
+    def __init__(self, surf):
+        surf = surf.convert_alpha()
+        self.rect = surf.get_bounding_rect()
+        self.img = surf.subsurface(self.rect).copy()
+
+    def draw(self, dst):
+        dst.blit(self.img, self.rect.topleft)
+
+
+class Sway(Layer):
+    """A plant group swaying in the current: drawn in horizontal bands, each shifted more the higher it is,
+    with the phase lagging upwards - a slow wave runs up the stems."""
+    BAND = 6                                       # native pixels per band
+
+    def __init__(self, surf, base, height, amp, speed, phase):
+        super().__init__(surf)
+        self.base, self.height = base * S, height * S
+        self.amp, self.speed, self.phase = amp * S, speed, phase
+
+    def draw(self, dst, t=0.0):
+        x0, y0 = self.rect.topleft
+        w, h = self.img.get_size()
+        for r in range(0, h, self.BAND):
+            f = min(1.0, max(0.0, (self.base - (y0 + r + self.BAND / 2)) / self.height))
+            dx = self.amp * f ** 1.6 * (math.sin(t * self.speed + self.phase - f * 1.4)
+                                        + 0.3 * math.sin(t * self.speed * 2.3 + self.phase * 1.7 - f * 2.0))
+            dst.blit(self.img, (x0 + dx, y0 + r), (0, r, w, min(self.BAND, h - r)))
+
+
+PLANTS = [Sway(_scene["stem"], 104, 95, 2.4, 0.55, 0.0), Sway(_scene["broad"], 103, 30, 1.0, 0.7, 1.3),
+          Sway(_scene["red"], 104, 24, 0.9, 0.8, 2.1), Sway(_scene["round"], 103, 22, 0.7, 0.9, 3.0)]
+STONES = Layer(_scene["stones"])
+FRONT = Layer(_scene["front"])
+del _scene
+SCENE_EVERY = 0.15                                 # seconds between re-composing the swaying plants
 DARK = pygame.Surface((NW, NH), pygame.SRCALPHA)
 STRIP = pygame.Surface((NW, NH // 4))              # the dark strip under the key hints
 STRIP.fill((4, 14, 20))
@@ -428,7 +491,7 @@ def finish(surf, size, xmin, xmax, ymin, ymax):
 
 def angelfish_sprite(size, kind, tail):
     """An angelfish facing right; kind 'silver' (black bars) or 'gold' (koi: orange with black blotches)."""
-    X0, X1, Y0, Y1 = -14, 9, -18, 19
+    X0, X1, Y0, Y1 = -14, 9, -18, 27
     surf, T, k = sprite_canvas(X0, X1, Y0, Y1, size)
 
     def body_h(x):
@@ -495,9 +558,16 @@ def angelfish_sprite(size, kind, tail):
     del alpha
     # a soft outline, the ventral filaments, the eye and the mouth
     pygame.draw.aalines(surf, (150, 120, 90) if gold else (120, 124, 116), True, [T(*p) for p in body])
-    for dx in (0, 0.9):
-        pygame.draw.line(surf, (*((252, 236, 210) if gold else (236, 228, 204)), 220), T(2.4 + dx, 4.6),
-                         T(0.2 + dx, 15.5 + dx), max(1, int(0.42 * k)))
+    # the ventral fins: two long thin feelers from under the chest, past the anal fin, curving back
+    feeler = (*((255, 244, 226) if gold else (244, 240, 226)), 235)
+    for j, dx in enumerate((0.0, 1.1)):
+        sw = tail * 0.8 * (1 if j else 0.7)
+        pts = []
+        for i in range(9):
+            u = i / 8
+            pts.append(T(2.6 + dx - 3.2 * u - 2.6 * u * u + sw * u * u, 5.0 + 19.5 * u + dx * 0.8 * u))
+        pygame.draw.lines(surf, feeler, False, pts, max(1, int(0.5 * k)))
+        pygame.draw.circle(surf, feeler, pts[-1], max(1, 0.32 * k))
     pygame.draw.circle(surf, (196, 60, 34), T(4.9, -1.7), 1.25 * k)
     pygame.draw.circle(surf, (10, 10, 10), T(5.0, -1.7), 0.62 * k)
     pygame.draw.circle(surf, (255, 255, 255), T(5.25, -2.0), 0.2 * k)
@@ -524,6 +594,7 @@ def neon_sprite(size, tail, glow=False):
     pygame.draw.polygon(surf, (196, 204, 212, 235), [T(*p) for p in body])
     pygame.draw.polygon(surf, (222, 34, 48, 245), [T(x, 0.15) for x in xs[2:30]] + [T(x, h(x) * 0.92) for x in xs[2:30][::-1]])
     pygame.draw.polygon(surf, (30, 190, 255, 255), stripe)
+    pygame.draw.lines(surf, (110, 240, 250, 230), False, stripe[: len(xs[4:-6])], max(1, int(0.22 * k)))
     pygame.draw.circle(surf, (200, 210, 220), T(2.55, -0.25), 0.62 * k)
     pygame.draw.circle(surf, (8, 8, 12), T(2.6, -0.25), 0.4 * k)
     return finish(surf, size, X0, X1, Y0, Y1)
@@ -770,18 +841,21 @@ STONE = (88, 106)           # the air stone (logical): bubbles come from here
 
 
 class Bubble:
+    """Rises from the air stone; grows on the way up and wobbles wider and wider (after Codex's version)."""
+
     def __init__(self, x, y):
-        self.x0, self.y = x, y
-        self.r = rng.uniform(0.45, 1.0)
-        self.v = rng.uniform(16, 24)
+        self.x0, self.y0, self.y = x, y, y
+        self.r0 = rng.uniform(0.5, 1.2)
+        self.v = rng.uniform(14, 20)
         self.ph = rng.uniform(0, 6.3)
-        self.x = x
+        self.x, self.r = x, self.r0
 
     def update(self, dt):
         self.y -= self.v * dt
-        self.r += dt * 0.12
-        self.ph += dt * 7
-        self.x = self.x0 + math.sin(self.ph) * 0.7 + (106 - self.y) * 0.03
+        age = (self.y0 - self.y) / (self.y0 - SURFACE_Y)
+        self.ph += dt * 1.6
+        self.r = self.r0 * (0.6 + age * 0.65)
+        self.x = self.x0 + math.sin(age * 15 + self.ph) * (1 + age * 2.5)
         return self.y > SURFACE_Y + 1
 
 
@@ -849,6 +923,7 @@ class Tank:
         self.flicker_until = 0.0
         self.t0 = time.monotonic()
         self.air_after = 2.2           # the pump starts a moment after the lamp
+        self.scene, self.scene_t = None, -1.0
 
     def lamp(self, on, now):
         self.light_on = on
@@ -873,7 +948,7 @@ class Tank:
             lcd.play("move")
         want = 1.0 if (self.air_on and t > self.air_after) else 0.0
         self.air_level += (want - self.air_level) * min(1, dt * 1.5)
-        self.emit += dt * 14 * self.air_level
+        self.emit += dt * 7 * self.air_level
         while self.emit >= 1:
             self.emit -= 1
             self.bubbles.append(Bubble(STONE[0] + rng.uniform(-2.5, 2.5), STONE[1] - 1.5))
@@ -900,7 +975,18 @@ class Tank:
     def draw(self, now):
         t = now - self.t0
         surf = canvas
-        surf.blit(BACKGROUND, (0, 0))
+        if t - self.scene_t >= SCENE_EVERY or self.scene is None:
+            # the swaying plants change slowly: the backdrop with them and the stones is composed a few times
+            # a second, ordinary frames copy it in one opaque blit (sway on every frame cost 13 ms on the Zero)
+            self.scene_t = t
+            if self.scene is None:
+                self.scene = BACKGROUND.copy()
+            else:
+                self.scene.blit(BACKGROUND, (0, 0))
+            for plant in PLANTS:
+                plant.draw(self.scene, t)
+            STONES.draw(self.scene)
+        surf.blit(self.scene, (0, 0))
         draw_air_gear(surf)
         order = sorted(self.angels, key=lambda f: f.y)
         order[0].draw(surf)                                  # the highest one swims behind the neons
@@ -915,9 +1001,9 @@ class Tank:
             pygame.draw.rect(surf, fl.c, (*P(fl.x - 0.6, fl.y - 0.4), max(1, 1.3 * S), max(1, 0.9 * S)))
         for b in self.bubbles:
             r = b.r * S
-            pygame.draw.circle(surf, (206, 236, 250), P(b.x, b.y), r, max(1, int(r * 0.3)))
-            pygame.draw.circle(surf, (250, 255, 255), (b.x * S - r * 0.35, b.y * S - r * 0.35), max(1, r * 0.25))
-        surf.blit(FRONT, FRONT_RECT.topleft)
+            pygame.draw.circle(surf, (150, 206, 228), P(b.x, b.y), r, max(1, int(0.35 * S)))
+            pygame.draw.circle(surf, (226, 246, 250), (b.x * S - r * 0.3, b.y * S - r * 0.4), max(1, 0.25 * S))
+        FRONT.draw(surf)
         draw_surface(surf, t, self.light)
         draw_ducks(surf, t)
         if self.light < 0.999:
@@ -958,7 +1044,7 @@ def handle_keys(tank, now):
             return False
         if ev.type != pygame.KEYDOWN:
             continue
-        if ev.key in (pygame.K_ESCAPE, pygame.K_3, pygame.K_BACKSPACE, pygame.K_q):
+        if ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE, pygame.K_q) or (ev.key == pygame.K_3 and getattr(ev, "hat", False)):
             return False
         if ev.key in (pygame.K_1, pygame.K_l):
             tank.lamp(not tank.light_on, now)
