@@ -41,7 +41,7 @@ W = H = 128                     # the logical tank
 SURFACE_Y = 9                   # the water line
 FONT_DIR = "/usr/share/fonts/truetype/dejavu/"
 CACHE = os.path.expanduser("~/.cache/lcdtoy")
-SCENE_VERSION = 10               # bump when the still scene changes (the cache is keyed on it)
+SCENE_VERSION = 12               # bump when the still scene changes (the cache is keyed on it)
 rng = random.Random()
 
 canvas = pygame.Surface((NW, NH))   # everything is drawn here in native pixels, then shown at once
@@ -370,6 +370,11 @@ def stem_plant(pen, x, y0, h, lean, dark, light, r, alpha=255):
             pen.line((*cc, alpha), (cx, cy), (cx + dx, cy + dy), 0.3)
 
 
+# how far down we look at the castle: only a little (about 10 degrees) - in the real tank the water and the bowed front
+# glass flatten the view a lot, so the tops show as narrow ellipses
+VIEW_DOWN = 0.17
+
+
 def castle_layer(size, k, seed=4):
     """Our castle ruins: sculpted sandstone-like ceramic, several round towers of different heights - a tall
     one at the back with a wavy petal rim, a wide base with arches, a lower one in front on the left; each
@@ -391,7 +396,7 @@ def castle_layer(size, k, seed=4):
         """One round tower seen a little from above: its top an ellipse (the wall's rim and the dark inside
         of the ruin, or a flat roof), the foot, the bands and the arches curving round it.
         top - the height of the rim ellipse's centre; base - where the front of its foot meets the ground."""
-        e = rad * 0.34                                       # the ellipses' half height (the view from above)
+        e = rad * VIEW_DOWN                                  # the ellipses' half height (the view from above)
         u = (xx - cx) / rad
         inx = np.abs(u) < 1
         theta = np.arcsin(np.clip(u, -1, 1))
@@ -444,7 +449,7 @@ def castle_layer(size, k, seed=4):
 
     # the wide base with a flat roof, the tall tower standing on it, the lower tower in front on the left
     tower(112.0, 16.5, 74.0, 104.0, 9, [(104.5, 89, 4.6, 10), (115.5, 91, 5.2, 11), (124.5, 88, 3.6, 8)], cap="flat")
-    tower(113.5, 10.5, 46.0, 76.5, 7, [(110.0, 58, 4.0, 8.5), (118.4, 60, 3.2, 7)])
+    tower(113.5, 10.5, 46.0, 75.5, 7, [(110.0, 58, 4.0, 8.5), (118.4, 60, 3.2, 7)])
     tower(92.0, 7.5, 80.0, 104.0, 6, [(91.0, 92, 3.4, 7.5)])
     lay = pygame.Surface((size, size), pygame.SRCALPHA)
     pygame.surfarray.blit_array(lay, np.clip(rgb, 0, 255).astype(np.uint8).swapaxes(0, 1))
