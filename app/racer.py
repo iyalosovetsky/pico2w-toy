@@ -37,7 +37,9 @@ DEPTH = 1.0                           # 1 / tan(fov / 2), fov 90 degrees
 PLAYER_Z = CAM_H * DEPTH              # the car's distance in front of the camera
 DRAW = 90                             # segments drawn ahead
 MAX_SPEED = SEG * 60                  # world units / s (shown as 290 km/h)
-ACCEL, BRAKE, DECEL = MAX_SPEED / 4.5, -MAX_SPEED, -MAX_SPEED / 5
+ACCEL, BRAKE = MAX_SPEED / 4.5, -MAX_SPEED
+DECEL = -MAX_SPEED / 22               # coasting off the gas: a slow roll-out (~13 km/h a second)
+GRAVITY = MAX_SPEED * 0.22            # a slope pulls: uphill slows, downhill speeds up
 OFFROAD_DECEL, OFFROAD_LIMIT = -MAX_SPEED / 2, MAX_SPEED / 4
 CENTRIFUGAL = 0.3
 REVERSE_MAX, REVERSE_ACCEL = MAX_SPEED / 10, MAX_SPEED / 6   # the reverse gear: up to ~30 km/h
@@ -596,6 +598,7 @@ class Game:
         self.msg_t = 0.0
         self.shake = 0.0
         self.passed_check = set()
+        self.hit_t = 0.0
         self.top_speed = 0.0
         self.crashes = 0
         self.overtakes = 0
@@ -636,6 +639,9 @@ class Game:
             self.speed = max(0.0, self.speed + DECEL * dt)
         else:
             self.speed = min(0.0, self.speed - DECEL * dt)
+        if self.speed > 0 or not down:                  # the hill: downhill rolls faster, uphill holds back
+            slope = (pseg.y2 - pseg.y1) / SEG
+            self.speed -= slope * GRAVITY * dt
         if abs(self.x) > 1.05 and self.speed > OFFROAD_LIMIT:   # off the road: the sand / the pavement
             self.speed += OFFROAD_DECEL * dt
         # collisions over the whole way travelled this frame (at speed that is 2-3 segments - checking only
@@ -653,11 +659,11 @@ class Game:
                         break
                 if hit:
                     break
-            if hit:
-                if self.speed > MAX_SPEED / 5:
-                    self.crash(0.0)
-                self.speed = 0.0
-                self.pos = (hit.z - PLAYER_Z - SEG * 0.3) % tr.length
+            now = time.monotonic()
+            if hit and now - self.hit_t > 0.6:            # a knock: much slower, pushed back towards the road
+                self.hit_t = now
+                self.crash(max(MAX_SPEED * 0.12, self.speed * 0.45))
+                self.x += 0.18 if self.x < 0 else -0.18
         for c in self.cars:                             # rear-ending a car
             rel = (c.z - oz) % tr.length
             if rel < moved + CAR_LEN and self.speed > c.speed and abs(self.x - c.x) < CAR_W * 1.8:
@@ -670,8 +676,8 @@ class Game:
         lo, hi = tr.walls                               # the railing / the guard rail / the rock / the sea
         if self.x - CAR_W < lo or self.x + CAR_W > hi:
             self.x = lo + CAR_W + 0.03 if self.x - CAR_W < lo else hi - CAR_W - 0.03
-            if self.speed > MAX_SPEED * 0.15:
-                self.speed -= MAX_SPEED * 0.9 * dt      # scraping along it
+            if self.speed > MAX_SPEED * 0.25:
+                self.speed = max(MAX_SPEED * 0.25, self.speed - MAX_SPEED * 0.9 * dt)   # scraping along it
                 self.shake = max(self.shake, 0.35)
                 now = time.monotonic()
                 if now - getattr(self, "_scrape_t", 0) > 0.5:
