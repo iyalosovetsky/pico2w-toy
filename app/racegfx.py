@@ -151,7 +151,8 @@ def _sign(h, variant):
     s = pygame.Surface((w, h), pygame.SRCALPHA)
     pygame.draw.line(s, (90, 96, 104), (w * 0.2, h), (w * 0.2, h * 0.4), max(2, int(h * 0.04)))
     pygame.draw.line(s, (90, 96, 104), (w * 0.8, h), (w * 0.8, h * 0.4), max(2, int(h * 0.04)))
-    board = [((24, 110, 200), "PICO RUSH"), ((220, 60, 40), "ZERO 2 W"), ((30, 150, 90), "COAST 1")][variant % 3]
+    board = [((24, 110, 200), "PICO RUSH"), ((220, 60, 40), "ZERO 2 W"), ((30, 150, 90), "COAST 1"),
+             ((30, 120, 60), "ПЕРЕВАЛ"), ((40, 90, 170), "1850 м")][variant % 5]
     pygame.draw.rect(s, board[0], (0, 0, w, h * 0.45), border_radius=int(h * 0.04))
     pygame.draw.rect(s, (255, 255, 255), (0, 0, w, h * 0.45), max(1, int(h * 0.02)), border_radius=int(h * 0.04))
     f = font("DejaVuSans-BoldOblique.ttf", h * 0.2)
@@ -172,6 +173,103 @@ def _umbrella(h, variant):
     return s
 
 
+def _pine(h):
+    """A fir: a trunk and four layered skirts, darker inside, a light edge."""
+    w = int(h * 0.5)
+    s = pygame.Surface((w, h), pygame.SRCALPHA)
+    pygame.draw.rect(s, (78, 56, 40), (w * 0.45, h * 0.82, w * 0.1, h * 0.18))
+    for k in range(5):
+        y = h * (0.02 + k * 0.16)
+        ww = w * (0.3 + k * 0.17)
+        col = lerp((28, 84, 52), (18, 60, 40), k / 4)
+        pts = [(w / 2, y), (w / 2 + ww / 2, y + h * 0.26), (w / 2 + ww * 0.15, y + h * 0.22),
+               (w / 2 - ww * 0.15, y + h * 0.22), (w / 2 - ww / 2, y + h * 0.26)]
+        pygame.draw.polygon(s, col, pts)
+        pygame.draw.line(s, (70, 140, 90), (w / 2, y), (w / 2 + ww / 2, y + h * 0.26), max(1, int(h * 0.012)))
+    return s
+
+
+def _boulder(h, variant):
+    rnd = random.Random(variant * 13 + 1)
+    w = int(h * 1.5)
+    s = pygame.Surface((w, h), pygame.SRCALPHA)
+    pts = []
+    for i in range(12):
+        a = math.pi + i / 11 * math.pi
+        r = rnd.uniform(0.75, 1.0)
+        pts.append((w / 2 + math.cos(a) * w * 0.48 * r, h + math.sin(a) * h * 0.95 * r))
+    pygame.draw.polygon(s, (128, 120, 110), pts)
+    pygame.draw.polygon(s, (162, 154, 142), pts[3:8] + [(w * 0.55, h * 0.55)])
+    pygame.draw.lines(s, (84, 78, 72), False, pts, max(1, int(h * 0.03)))
+    return s
+
+
+def _chevron(h, variant):
+    """A black and yellow bend marker on a post: arrows to the right (0) or the left (1)."""
+    w = int(h * 0.9)
+    s = pygame.Surface((w, h), pygame.SRCALPHA)
+    pygame.draw.line(s, (60, 60, 64), (w / 2, h), (w / 2, h * 0.5), max(2, int(h * 0.05)))
+    pygame.draw.rect(s, (250, 210, 30), (0, 0, w, h * 0.55))
+    pygame.draw.rect(s, (20, 20, 20), (0, 0, w, h * 0.55), max(1, int(h * 0.03)))
+    d = 1 if variant == 0 else -1
+    for k in (-0.22, 0.12):
+        cx = w / 2 + k * w * d
+        pts = [(cx - d * w * 0.12, h * 0.08), (cx + d * w * 0.14, h * 0.275), (cx - d * w * 0.12, h * 0.47),
+               (cx - d * w * 0.02, h * 0.47), (cx + d * w * 0.24, h * 0.275), (cx - d * w * 0.02, h * 0.08)]
+        pygame.draw.polygon(s, (20, 20, 20), pts)
+    return s
+
+
+def make_sky_mountains(w, hor, seed=21):
+    """A deep blue sky, a far snowy range, a nearer forested ridge (2x wide)."""
+    sw = w * 2
+    k = w / 320
+    s = pygame.Surface((sw, hor + 2))
+    for y in range(hor + 2):
+        s.fill(lerp((30, 90, 200), (170, 205, 240), (y / (hor + 1)) ** 1.1), (0, y, sw, 1))
+    rnd = random.Random(seed)
+    for _ in range(5):                                 # thin clouds
+        cx, cy = rnd.uniform(0, sw), rnd.uniform(hor * 0.1, hor * 0.45)
+        for _ in range(16):
+            r = max(2, int(rnd.randint(5, 14) * k))
+            x, y = cx + rnd.gauss(0, 26 * k), cy + rnd.gauss(0, 4 * k)
+            puff = pygame.Surface((2 * r, 2 * r), pygame.SRCALPHA)
+            pygame.draw.circle(puff, (255, 255, 255, 50), (r, r), r)
+            s.blit(puff, (x - r, y - r))
+    # the far range: peaks with snow caps
+    peaks = []
+    x = -20 * k
+    while x < sw + 40 * k:
+        peaks.append((x, hor - rnd.uniform(30, 64) * k))
+        x += rnd.uniform(26, 48) * k
+    pts = [(-20 * k, hor)]
+    for i, (px, py) in enumerate(peaks):
+        pts.append((px, py))
+        if i + 1 < len(peaks):
+            nx, ny = peaks[i + 1]
+            pts.append(((px + nx) / 2, max(py, ny) + rnd.uniform(10, 22) * k))
+    pts.append((sw + 40 * k, hor))
+    pygame.draw.polygon(s, (120, 140, 176), pts)
+    for i in range(1, len(pts) - 2, 2):                # snow on each summit
+        px, py = pts[i]
+        lx, ly = pts[i - 1] if i > 1 else (px - 20 * k, py + 20 * k)
+        rx, ry = pts[i + 1]
+        t = 0.32
+        cap = [(px, py), (px + (rx - px) * t, py + (ry - py) * t), (px + (rx - px) * t * 0.5, py + (ry - py) * t * 0.8),
+               (px + (lx - px) * t * 0.5, py + (ly - py) * t * 0.8), (px + (lx - px) * t, py + (ly - py) * t)]
+        pygame.draw.polygon(s, (242, 246, 252), cap)
+    # the near forested ridge
+    pts = [(0, hor)]
+    x, y = 0.0, hor - 14 * k
+    while x <= sw:
+        y = max(hor - 26 * k, min(hor - 4 * k, y + rnd.uniform(-4, 4) * k))
+        pts.append((x, y))
+        x += 6 * k
+    pts.append((sw, hor))
+    pygame.draw.polygon(s, (46, 90, 70), pts)
+    return s
+
+
 # world sizes (road half width = 1000): height of the sprite, and a painter
 KINDS = {
     "palm": (2600, lambda h, v: _palm(h)),
@@ -179,6 +277,9 @@ KINDS = {
     "lamp": (2600, lambda h, v: _lamp(h)),
     "sign": (1400, _sign),
     "umbrella": (900, _umbrella),
+    "pine": (3000, lambda h, v: _pine(h)),
+    "boulder": (700, _boulder),
+    "chevron": (700, _chevron),
 }
 LEVELS = sorted(set(int(3 * 1.09 ** i) for i in range(60) if 3 * 1.09 ** i <= 330))   # 3 .. 330 px, 9 % apart
 _masters = {}
@@ -355,10 +456,10 @@ def traffic_car(variant, width, haze):
     return img
 
 
-VARIANTS = {"palm": 1, "building": 6, "lamp": 1, "sign": 3, "umbrella": 3}
+VARIANTS = {"palm": 1, "building": 6, "lamp": 1, "sign": 5, "umbrella": 3, "pine": 1, "boulder": 2, "chevron": 2}
 
 
-def prewarm_jobs(haze, scale=1.0):
+def prewarm_jobs(haze, scale=1.0, kinds=None, done=None):
     """Every sprite and car size the road can ask for (up to the screen's size), as small jobs to run while
     the title shows - so the race never stops to scale a picture."""
     top = 330 * scale + 2
@@ -367,10 +468,14 @@ def prewarm_jobs(haze, scale=1.0):
         if lv > top:
             break
         for kind, n in VARIANTS.items():
+            if kinds is not None and kind not in kinds:
+                continue
             for v in range(n):
-                jobs.append((sprite, (kind, v, lv, haze)))
+                if (kind, v, lv) not in _cache:
+                    jobs.append((sprite, (kind, v, lv, haze)))
         for v in range(len(TRAFFIC)):
-            jobs.append((traffic_car, (v, lv, haze)))
+            if (v, lv) not in _car_cache:
+                jobs.append((traffic_car, (v, lv, haze)))
     return jobs
 
 

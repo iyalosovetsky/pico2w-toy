@@ -41,6 +41,8 @@ ACCEL, BRAKE, DECEL = MAX_SPEED / 4.5, -MAX_SPEED, -MAX_SPEED / 5
 OFFROAD_DECEL, OFFROAD_LIMIT = -MAX_SPEED / 2, MAX_SPEED / 4
 CENTRIFUGAL = 0.3
 REVERSE_MAX, REVERSE_ACCEL = MAX_SPEED / 10, MAX_SPEED / 6   # the reverse gear: up to ~30 km/h
+SOLID = ("palm", "lamp", "sign", "boulder", "chevron")
+CAR_LEN = 300.0                       # a car's length (world units): the bumper-to-bumper reach
 CAR_W = 0.235                         # a car's half width, in road half widths (150 px of a 320 px half road)
 HAZE = (190, 215, 240)
 KMH = 290
@@ -64,36 +66,24 @@ def ease_inout(a, b, p):
 
 
 class Track:
-    """The coast: straights, sweeping curves, S-bends, gentle hills; three checkpoints and the finish."""
+    """A stage: segments with curves and heights, its sprites, checkpoints, how it is painted."""
+    key, name = "", ""
+    lanes = (-2 / 3, 0.0, 2 / 3)
+    n_cars, start_time, bonus = 26, 45.0, 20.0
+    kinds = ()
+    walls = (-3.0, 3.0)                   # where the car cannot go (road half widths): rails, rocks, water
 
     def __init__(self, seed=1):
         self.segs = []
-        rnd = random.Random(seed)
-        self.rnd = rnd
-        add = self.add_road
-        add(40, 40, 40, 0, 0)                          # the start straight
-        add(50, 60, 50, 2, 10)
-        add(30, 30, 30, 0, 0)
-        add(40, 80, 40, -3, -10)
-        add(40, 40, 40, 0, 20)
-        self.s_bends()
-        add(50, 100, 50, 4, 0)
-        add(30, 40, 30, 0, -20)
-        add(40, 60, 40, -2, 10)
-        self.s_bends()
-        add(60, 120, 60, 3, 0)
-        add(30, 30, 30, 0, -10)
-        add(50, 80, 50, -4, 20)
-        add(40, 60, 40, 0, -20)
-        self.s_bends()
-        add(50, 100, 50, -3, 0)
-        add(40, 50, 40, 2, 10)
-        add(50, 60, 50, 0, -10)                        # the finish straight
+        self.rnd = random.Random(seed)
+        self.build()
         self.length = len(self.segs) * SEG
         n = len(self.segs)
         for k in (1, 2, 3):
             self.segs[int(n * k / 4)].check = True
         self.decorate()
+        for sg in self.segs:
+            sg.sprites.sort(key=lambda sp: -abs(sp[2]))
 
     def last_y(self):
         return self.segs[-1].y2 if self.segs else 0.0
@@ -113,14 +103,44 @@ class Track:
             yb = ease_inout(y0, y1, (i + 1) / total)
             self.segs.append(Seg(len(self.segs), ya, yb, c))
 
-    def s_bends(self):
-        for c, h in ((-2, 0), (3, 10), (2, 0), (-3, -10), (-2, 0)):
-            self.add_road(25, 25, 25, c, h)
+    def s_bends(self, k=1.0, h=10):
+        for c, hh in ((-2, 0), (3, h), (2, 0), (-3, -h), (-2, 0)):
+            self.add_road(25, 25, 25, c * k, hh)
+
+    def find(self, z):
+        return self.segs[int(z // SEG) % len(self.segs)]
+
+
+class Coast(Track):
+    """Stage 1, the coast: sweeping curves, S-bends, gentle hills; the sea on the left, a city on the right."""
+    key, name = "coast", "УЗБЕРЕЖЖЯ"
+    walls = (-2.3, 1.33)                  # the sea beyond the beach, the railing
+    kinds = ("palm", "building", "lamp", "sign", "umbrella")
+
+    def build(self):
+        add = self.add_road
+        add(40, 40, 40, 0, 0)                          # the start straight
+        add(50, 60, 50, 2, 10)
+        add(30, 30, 30, 0, 0)
+        add(40, 80, 40, -3, -10)
+        add(40, 40, 40, 0, 20)
+        self.s_bends()
+        add(50, 100, 50, 4, 0)
+        add(30, 40, 30, 0, -20)
+        add(40, 60, 40, -2, 10)
+        self.s_bends()
+        add(60, 120, 60, 3, 0)
+        add(30, 30, 30, 0, -10)
+        add(50, 80, 50, -4, 20)
+        add(40, 60, 40, 0, -20)
+        self.s_bends()
+        add(50, 100, 50, -3, 0)
+        add(40, 50, 40, 2, 10)
+        add(50, 60, 50, 0, -10)                        # the finish straight
 
     def decorate(self):
         """Palms on both sides, buildings and lamps on the right, umbrellas on the beach, signs."""
         rnd = self.rnd
-        n = len(self.segs)
         for i, s in enumerate(self.segs):
             city = (i // 160) % 3 != 2                 # city blocks, then a palm boulevard
             if i % 6 == 0:
@@ -135,11 +155,68 @@ class Track:
                 s.sprites.append(("umbrella", rnd.randrange(3), -1.6 - rnd.uniform(0, 1.0)))
             if i % 150 == 75:
                 s.sprites.append(("sign", rnd.randrange(3), -1.45))
-        for k in range(n):
-            self.segs[k].sprites.sort(key=lambda sp: -abs(sp[2]))
 
-    def find(self, z):
-        return self.segs[int(z // SEG) % len(self.segs)]
+    def paint(self, f, n, s, x1, y1, k1, x2, y2, k2):
+        paint_coast(f, n, s, x1, y1, k1, x2, y2, k2)
+
+
+class Mountains(Track):
+    """Stage 2, a mountain pass: steep climbs and drops, hairpins, a cliff on the left, a guard rail, pines and
+    the valley on the right; a two-lane road with a yellow centre line."""
+    key, name = "mountains", "ГОРИ"
+    walls = (-1.23, 1.18)                 # the rock face, the guard rail
+    lanes = (-0.5, 0.5)
+    n_cars, start_time, bonus = 16, 50.0, 22.0
+    kinds = ("pine", "boulder", "chevron", "sign")
+
+    def build(self):
+        add = self.add_road
+        add(30, 30, 30, 0, 0)                          # the start
+        add(40, 60, 40, 2, 40)                         # a long climb round to the right
+        add(30, 30, 30, -3, 20)
+        self.hairpins(3)
+        add(40, 40, 40, 0, -50)                        # over the crest and down
+        add(40, 80, 40, -4, -20)
+        add(30, 30, 30, 3, 30)
+        self.s_bends(1.6, 25)
+        add(50, 60, 50, 5, 40)
+        add(30, 30, 30, 0, -60)                        # a big drop
+        self.hairpins(2)
+        add(40, 60, 40, -3, 30)
+        add(30, 30, 30, 4, -20)
+        self.s_bends(1.8, 30)
+        add(40, 80, 40, -5, -30)
+        add(40, 40, 40, 2, 50)
+        self.hairpins(2)
+        add(40, 50, 40, 0, -70)                        # down to the finish
+        add(40, 40, 40, 0, 0)
+
+    def hairpins(self, n):
+        for i in range(n):
+            c = 6 if i % 2 == 0 else -6
+            self.add_road(25, 45, 25, c, 12)
+
+    def decorate(self):
+        """Pines down the valley side, boulders at the cliff, chevrons round sharp bends, pass signs."""
+        rnd = self.rnd
+        for i, s in enumerate(self.segs):
+            if i % 4 == 0:
+                s.sprites.append(("pine", 0, 1.55 + rnd.uniform(0, 1.6)))
+            if i % 7 == 1:
+                s.sprites.append(("pine", 0, 2.6 + rnd.uniform(0, 1.8)))
+            if i % 23 == 9:
+                s.sprites.append(("boulder", rnd.randrange(2), -1.18))
+            if abs(s.curve) >= 4.5 and i % 7 == 0:     # chevrons on the outside of a sharp bend
+                side = -1.14 if s.curve > 0 else 1.14
+                s.sprites.append(("chevron", 0 if s.curve > 0 else 1, side))
+            if i % 260 == 130:
+                s.sprites.append(("sign", 3 + rnd.randrange(2), 1.3))
+
+    def paint(self, f, n, s, x1, y1, k1, x2, y2, k2):
+        paint_mountains(f, n, s, x1, y1, k1, x2, y2, k2)
+
+
+TRACKS = [Coast, Mountains]
 
 
 # ---------------------------------------------------------------- traffic
@@ -151,17 +228,15 @@ class Car:
         self.z, self.x, self.speed, self.variant, self.passed = z, x, speed, variant, False
 
 
-LANES = (-2 / 3, 0.0, 2 / 3)
-
-
-def make_traffic(track, n=26, seed=2):
+def make_traffic(track, seed=2):
+    n = track.n_cars
     rnd = random.Random(seed)
     for s in track.segs:                              # the last game's cars off the road
         s.cars.clear()
     cars = []
     for i in range(n):
         z = (i + 1) / (n + 1) * track.length + rnd.uniform(-400, 400)
-        cars.append(Car(z % track.length, rnd.choice(LANES), MAX_SPEED * rnd.uniform(0.32, 0.55),
+        cars.append(Car(z % track.length, rnd.choice(track.lanes), MAX_SPEED * rnd.uniform(0.32, 0.55),
                         rnd.randrange(len(gfx.TRAFFIC))))
     return cars
 
@@ -261,6 +336,15 @@ ASPHALT = [pal((112, 118, 126)), pal((104, 110, 118))]
 KERB = pal((232, 232, 232))
 RAIL = pal((70, 74, 80))
 CHECK = pal((40, 200, 255))
+GRASS = [pal((86, 136, 64)), pal((78, 126, 58))]
+VALLEY = pal((46, 86, 50), (60, 96, 70))
+ROCK = [pal((138, 126, 112)), pal((124, 112, 100))]
+ROCK_TOP = pal((176, 166, 150))
+ROCK_DARK = pal((92, 84, 76))
+ASPHALT_M = [pal((92, 96, 104)), pal((86, 90, 98))]
+YELLOW = pal((240, 196, 40))
+METAL = pal((210, 216, 224))
+METAL_D = pal((116, 122, 130))
 
 
 def render_road(track, cars, pos, player_x, player_y):
@@ -299,37 +383,77 @@ def render_road(track, cars, pos, player_x, player_y):
         if y2 >= y1 or y2 > H:
             draw_sprites(s, x1, y1, k1, n, cars, pos)
             continue
-        st = s.stripe
-        w1, w2 = ROAD * k1, ROAD * k2
-        h = y1 - y2 + 1
-        fill(SEA[n], (0, y2, W, h))
-        if n % 5 == 0 and n > 4:
-            line(f, FOAM[n], (x1 - w1 * 3.2, y1), (x2 - w2 * 3.2, y2), 1)
-        sx1, sx2 = x1 - w1 * 2.4, x2 - w2 * 2.4
-        poly(f, SAND[n], ((sx1, y1), (x1 - w1 * 1.05, y1), (x2 - w2 * 1.05, y2), (sx2, y2)))
-        poly(f, SAND_HI[n], ((sx1, y1), (sx1 + w1 * 0.25, y1), (sx2 + w2 * 0.25, y2), (sx2, y2)))
-        rx = min(x1 + w1 * 1.05, x2 + w2 * 1.05)
-        if rx < W:
-            poly(f, PAVE[(s.i // 2) % 2][n], ((x1 + w1 * 1.05, y1), (W, y1), (W, y2), (x2 + w2 * 1.05, y2)))
-        poly(f, ASPHALT[st][n], ((x1 - w1 * 1.05, y1), (x1 + w1 * 1.05, y1), (x2 + w2 * 1.05, y2), (x2 - w2 * 1.05, y2)))
-        kc = KERB[n]
-        if n < 70:
-            for e in (-1.05, 1.05):
-                a1, a2 = x1 + w1 * e, x2 + w2 * e
-                poly(f, kc, ((a1 - w1 * 0.02, y1), (a1 + w1 * 0.02, y1), (a2 + w2 * 0.02, y2), (a2 - w2 * 0.02, y2)))
-            if (s.i // 2) % 3 and n < 55:
-                for e in (-1 / 3, 1 / 3):
-                    a1, a2 = x1 + w1 * e, x2 + w2 * e
-                    l1, l2 = w1 * 0.013, w2 * 0.013
-                    poly(f, kc, ((a1 - l1, y1), (a1 + l1, y1), (a2 + l2, y2), (a2 - l2, y2)))
-        if s.check:                                    # a checkpoint stripe across the road
-            poly(f, CHECK[n], ((x1 - w1, y1), (x1 + w1, y1), (x2 + w2, y2), (x2 - w2, y2)))
-        r1, r2 = 380 * k1, 380 * k2
-        rx1, rx2 = x1 + w1 * 1.35, x2 + w2 * 1.35
-        line(f, RAIL[n], (rx1, y1 - r1), (rx2, y2 - r2), max(1, int(k1 * 40)))
-        if s.i % 2 == 0 and n < 60:
-            line(f, RAIL[n], (rx1, y1), (rx1, y1 - r1), max(1, int(k1 * 30)))
+        track.paint(f, n, s, x1, y1, k1, x2, y2, k2)
         draw_sprites(s, x1, y1, k1, n, cars, pos)
+
+
+def paint_coast(f, n, s, x1, y1, k1, x2, y2, k2):
+    fill, poly, line = f.fill, gfx.poly, gfx.line
+    st = s.stripe
+    w1, w2 = ROAD * k1, ROAD * k2
+    h = y1 - y2 + 1
+    fill(SEA[n], (0, y2, W, h))
+    if n % 5 == 0 and n > 4:
+        line(f, FOAM[n], (x1 - w1 * 3.2, y1), (x2 - w2 * 3.2, y2), 1)
+    sx1, sx2 = x1 - w1 * 2.4, x2 - w2 * 2.4
+    poly(f, SAND[n], ((sx1, y1), (x1 - w1 * 1.05, y1), (x2 - w2 * 1.05, y2), (sx2, y2)))
+    poly(f, SAND_HI[n], ((sx1, y1), (sx1 + w1 * 0.25, y1), (sx2 + w2 * 0.25, y2), (sx2, y2)))
+    rx = min(x1 + w1 * 1.05, x2 + w2 * 1.05)
+    if rx < W:
+        poly(f, PAVE[(s.i // 2) % 2][n], ((x1 + w1 * 1.05, y1), (W, y1), (W, y2), (x2 + w2 * 1.05, y2)))
+    poly(f, ASPHALT[st][n], ((x1 - w1 * 1.05, y1), (x1 + w1 * 1.05, y1), (x2 + w2 * 1.05, y2), (x2 - w2 * 1.05, y2)))
+    kc = KERB[n]
+    if n < 70:
+        for e in (-1.05, 1.05):
+            a1, a2 = x1 + w1 * e, x2 + w2 * e
+            poly(f, kc, ((a1 - w1 * 0.02, y1), (a1 + w1 * 0.02, y1), (a2 + w2 * 0.02, y2), (a2 - w2 * 0.02, y2)))
+        if (s.i // 2) % 3 and n < 55:
+            for e in (-1 / 3, 1 / 3):
+                a1, a2 = x1 + w1 * e, x2 + w2 * e
+                l1, l2 = w1 * 0.013, w2 * 0.013
+                poly(f, kc, ((a1 - l1, y1), (a1 + l1, y1), (a2 + l2, y2), (a2 - l2, y2)))
+    if s.check:                                    # a checkpoint stripe across the road
+        poly(f, CHECK[n], ((x1 - w1, y1), (x1 + w1, y1), (x2 + w2, y2), (x2 - w2, y2)))
+    r1, r2 = 380 * k1, 380 * k2
+    rx1, rx2 = x1 + w1 * 1.35, x2 + w2 * 1.35
+    line(f, RAIL[n], (rx1, y1 - r1), (rx2, y2 - r2), max(1, int(k1 * 40)))
+    if s.i % 2 == 0 and n < 60:
+        line(f, RAIL[n], (rx1, y1), (rx1, y1 - r1), max(1, int(k1 * 30)))
+
+
+def paint_mountains(f, n, s, x1, y1, k1, x2, y2, k2):
+    """Grass, the valley on the right beyond a guard rail, a rock face on the left, a two-lane road."""
+    fill, poly, line = f.fill, gfx.poly, gfx.line
+    st = s.stripe
+    w1, w2 = ROAD * k1, ROAD * k2
+    fill(GRASS[st][n], (0, y2, W, y1 - y2 + 1))
+    if x2 + w2 * 1.7 < W:
+        poly(f, VALLEY[n], ((x1 + w1 * 1.7, y1), (W, y1), (W, y2), (x2 + w2 * 1.7, y2)))
+    poly(f, ASPHALT_M[st][n], ((x1 - w1, y1), (x1 + w1, y1), (x2 + w2, y2), (x2 - w2, y2)))
+    if n < 70:
+        kc = KERB[n]
+        for e in (-0.95, 0.95):                        # white edge lines
+            a1, a2 = x1 + w1 * e, x2 + w2 * e
+            poly(f, kc, ((a1 - w1 * 0.018, y1), (a1 + w1 * 0.018, y1), (a2 + w2 * 0.018, y2), (a2 - w2 * 0.018, y2)))
+        if (s.i // 2) % 3 and n < 60:                  # the yellow centre line, dashed
+            l1, l2 = w1 * 0.016, w2 * 0.016
+            poly(f, YELLOW[n], ((x1 - l1, y1), (x1 + l1, y1), (x2 + l2, y2), (x2 - l2, y2)))
+    if s.check:
+        poly(f, CHECK[n], ((x1 - w1, y1), (x1 + w1, y1), (x2 + w2, y2), (x2 - w2, y2)))
+    # the rock face on the left: a wall with ledges
+    bx1, bx2 = x1 - w1 * 1.25, x2 - w2 * 1.25
+    h1, h2 = 2300 * k1, 2300 * k2
+    poly(f, ROCK[(s.i // 4) % 2][n], ((bx1, y1), (bx2, y2), (bx2 - w2 * 0.5, y2 - h2), (bx1 - w1 * 0.5, y1 - h1)))
+    line(f, ROCK_TOP[n], (bx1 - w1 * 0.5, y1 - h1), (bx2 - w2 * 0.5, y2 - h2), max(1, int(k1 * 70)))
+    if s.i % 6 < 2 and n < 50:
+        line(f, ROCK_DARK[n], (bx1 - w1 * 0.2, y1 - h1 * 0.4), (bx2 - w2 * 0.2, y2 - h2 * 0.4), max(1, int(k1 * 50)))
+    # the guard rail on the right
+    rx1, rx2 = x1 + w1 * 1.2, x2 + w2 * 1.2
+    r1, r2 = 420 * k1, 420 * k2
+    poly(f, METAL[n], ((rx1, y1 - r1), (rx2, y2 - r2), (rx2, y2 - r2 * 0.6), (rx1, y1 - r1 * 0.6)))
+    line(f, METAL_D[n], (rx1, y1 - r1 * 0.6), (rx2, y2 - r2 * 0.6), max(1, int(k1 * 30)))
+    if s.i % 2 == 0 and n < 60:
+        line(f, METAL_D[n], (rx1, y1), (rx1, y1 - r1 * 0.6), max(1, int(k1 * 45)))
 
 
 def draw_sprites(s, x1, y1, k1, n, cars, pos):
@@ -426,8 +550,9 @@ class Hud:
 
 class Game:
     def __init__(self):
-        self.track = Track()
-        self.sky = gfx.make_sky(W, HOR)
+        self.tracks = {}
+        self.skies = {}
+        self.choose(TRACKS[0])
         self.hud = Hud()
         self.engine = Engine()
         self.records = load_records()
@@ -435,9 +560,18 @@ class Game:
         for lean in (-1, 0, 1):
             for brake in (False, True):
                 self.cars_img[(lean, brake)] = gfx.car_master(int(150 * K), (214, 22, 34), lean=lean, brake=brake)
-        self.jobs = gfx.prewarm_jobs(HAZE, K)
-        self.jobs_total = len(self.jobs)
         self.reset()
+
+    def choose(self, cls):
+        """Switch to a stage (built once), its sky, and queue the sprite sizes it needs."""
+        if cls.key not in self.tracks:
+            self.tracks[cls.key] = cls()
+            self.skies[cls.key] = (gfx.make_sky_mountains if cls is Mountains else gfx.make_sky)(W, HOR)
+        self.track = self.tracks[cls.key]
+        self.sky = self.skies[cls.key]
+        self.cars = make_traffic(self.track)
+        self.jobs = gfx.prewarm_jobs(HAZE, K, self.track.kinds)
+        self.jobs_total = max(1, len(self.jobs))
 
     def prewarm(self, budget):
         """Make cached sprite sizes for up to `budget` seconds; True when all are made."""
@@ -453,7 +587,7 @@ class Game:
         self.speed = 0.0
         self.sky_off = 0.0
         self.cars = make_traffic(self.track)
-        self.left = 45.0
+        self.left = self.track.start_time
         self.total = 0.0
         self.score = 0
         self.state = "countdown"
@@ -502,21 +636,47 @@ class Game:
             self.speed = max(0.0, self.speed + DECEL * dt)
         else:
             self.speed = min(0.0, self.speed - DECEL * dt)
-        if abs(self.x) > 1.05:                          # off the road: the sand / the pavement
-            if self.speed > OFFROAD_LIMIT:
-                self.speed += OFFROAD_DECEL * dt
-            for kind, variant, off in pseg.sprites:   # hitting a palm, a lamp post, a sign: stop in front
-                if kind in ("palm", "lamp", "sign") and abs(self.x - off) < CAR_W + 0.08 and self.speed > 0:
-                    if self.speed > MAX_SPEED / 5:
-                        self.crash(0.0)
-                    self.speed = 0.0
-                    self.pos = (pseg.z - PLAYER_Z - SEG * 0.3) % tr.length
+        if abs(self.x) > 1.05 and self.speed > OFFROAD_LIMIT:   # off the road: the sand / the pavement
+            self.speed += OFFROAD_DECEL * dt
+        # collisions over the whole way travelled this frame (at speed that is 2-3 segments - checking only
+        # the one under the car let it pass through cars and posts)
+        oz = old_pos + PLAYER_Z
+        moved = (self.pos - old_pos) % tr.length if self.speed > 0 else 0.0
+        if self.speed > 0:
+            i0 = int(oz // SEG)
+            hit = None
+            for j in range(int(moved // SEG) + 2):
+                sg = tr.segs[(i0 + j) % len(tr.segs)]
+                for kind, variant, off in sg.sprites:   # a palm, a lamp post, a sign, a boulder: stop in front
+                    if kind in SOLID and abs(self.x - off) < CAR_W + 0.08:
+                        hit = sg
+                        break
+                if hit:
                     break
-        for c in pseg.cars:                             # rear-ending a car
-            if self.speed > c.speed and abs(self.x - c.x) < CAR_W * 2 * 0.9:
-                self.crash(c.speed * 0.7)
-                self.pos = (c.z - PLAYER_Z - SEG * 0.6) % tr.length
+            if hit:
+                if self.speed > MAX_SPEED / 5:
+                    self.crash(0.0)
+                self.speed = 0.0
+                self.pos = (hit.z - PLAYER_Z - SEG * 0.3) % tr.length
+        for c in self.cars:                             # rear-ending a car
+            rel = (c.z - oz) % tr.length
+            if rel < moved + CAR_LEN and self.speed > c.speed and abs(self.x - c.x) < CAR_W * 1.8:
+                if self.speed - c.speed > MAX_SPEED * 0.1:
+                    self.crash(c.speed * 0.7)           # a real knock
+                else:
+                    self.speed = c.speed * 0.9          # just touching: stay behind it
+                self.pos = (c.z - PLAYER_Z - CAR_LEN) % tr.length
                 break
+        lo, hi = tr.walls                               # the railing / the guard rail / the rock / the sea
+        if self.x - CAR_W < lo or self.x + CAR_W > hi:
+            self.x = lo + CAR_W + 0.03 if self.x - CAR_W < lo else hi - CAR_W - 0.03
+            if self.speed > MAX_SPEED * 0.15:
+                self.speed -= MAX_SPEED * 0.9 * dt      # scraping along it
+                self.shake = max(self.shake, 0.35)
+                now = time.monotonic()
+                if now - getattr(self, "_scrape_t", 0) > 0.5:
+                    self._scrape_t = now
+                    lcd.play("wall")
         self.x = max(-3.0, min(3.0, self.x))
         self.speed = max(-REVERSE_MAX, min(MAX_SPEED, self.speed))
         self.top_speed = max(self.top_speed, self.speed)
@@ -543,8 +703,8 @@ class Game:
             seg = tr.find(self.pos + PLAYER_Z)
             if seg.check and seg.i not in self.passed_check:
                 self.passed_check.add(seg.i)
-                self.left += 20
-                self.say("CHECKPOINT +20", "cyan")
+                self.left += self.track.bonus
+                self.say("CHECKPOINT +%d" % self.track.bonus, "cyan")
                 lcd.play("point")
             # the finish: the position wrapped from the track's end to its start (not a crash's step back)
             if old_pos > tr.length * 0.9 and self.pos < tr.length * 0.1:
@@ -566,7 +726,7 @@ class Game:
     def finish(self):
         self.state = "finish"
         self.t_state = time.monotonic()
-        rec = self.records.setdefault("coast", {})
+        rec = self.records.setdefault(self.track.key, {})
         best = rec.get("best")
         self.new_record = best is None or self.total < best
         if self.new_record:
@@ -615,7 +775,7 @@ class Game:
         pygame.draw.rect(box, (255, 200, 40), box.get_rect(), max(1, int(2 * K)), border_radius=int(8 * K))
         f.blit(box, (20 * K, 80 * K))
         fm = gfx.font("DejaVuSansCondensed-Bold.ttf", 14 * K)
-        rec = self.records.get("coast", {})
+        rec = self.records.get(self.track.key, {})
         rows = [("Час", fmt_total(self.total) if self.state == "finish" else "-"),
                 ("Рекорд", fmt_total(rec["best"]) if rec.get("best") else "-"),
                 ("Очки", "%d" % self.score), ("Обгони", "%d" % self.overtakes),
@@ -703,8 +863,8 @@ class Game:
 
 def title(game):
     """The title: the coast drifting by, the logo, the menu. Returns "start" or "quit"."""
-    items = ["СТАРТ: УЗБЕРЕЖЖЯ", "ВИХІД"]
-    sel = 0
+    items = ["СТАРТ: " + cls.name for cls in TRACKS] + ["ВИХІД"]
+    sel = [c.key for c in TRACKS].index(game.track.key)
     big = gfx.font("DejaVuSans-BoldOblique.ttf", 54 * K)
     logo1 = gfx.fancy("PICO", big, (255, 250, 200), (255, 90, 150), o=max(1, int(4 * K)))
     logo2 = gfx.fancy("RUSH", big, (120, 230, 255), (255, 255, 255), o=max(1, int(4 * K)))
@@ -719,15 +879,15 @@ def title(game):
             if ev.type != pygame.KEYDOWN:
                 continue
             hat = getattr(ev, "hat", False)
-            if ev.key == pygame.K_UP:
-                sel = (sel - 1) % len(items)
+            if ev.key in (pygame.K_UP, pygame.K_DOWN):
+                sel = (sel + (-1 if ev.key == pygame.K_UP else 1)) % len(items)
                 lcd.play("click")
-            elif ev.key == pygame.K_DOWN:
-                sel = (sel + 1) % len(items)
-                lcd.play("click")
+                if sel < len(TRACKS) and game.track.key != TRACKS[sel].key:
+                    game.choose(TRACKS[sel])           # the title shows that stage
+                    pos = 0.0
             elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE) or (hat and ev.key == pygame.K_1):
                 lcd.play("select")
-                return "start" if sel == 0 else "quit"
+                return "start" if sel < len(TRACKS) else "quit"
             elif ev.key == pygame.K_ESCAPE or (hat and ev.key == pygame.K_3):
                 return "quit"
         tr = game.track
@@ -747,12 +907,12 @@ def title(game):
         for i, it in enumerate(items):
             col = ((255, 250, 170), (255, 160, 10)) if i == sel else ((240, 240, 255), (170, 180, 210))
             t = gfx.fancy(("▶ " if i == sel else "") + it, fm, *col, o=max(1, int(2 * K)))
-            frame.blit(t, (W / 2 - t.get_width() / 2, 176 * K + i * 28 * K))
+            frame.blit(t, (W / 2 - t.get_width() / 2, 170 * K + i * 25 * K))
         if not game.prewarm(0.022):                       # the sprites get ready while the title runs
             pct = 100 - 100 * len(game.jobs) // max(1, game.jobs_total)
             t = fs.render("підготовка графіки %d%%" % pct, True, (255, 255, 255))
             frame.blit(t, (W / 2 - t.get_width() / 2, 256 * K))
-        rec = game.records.get("coast", {})
+        rec = game.records.get(game.track.key, {})
         if rec.get("best"):
             t = gfx.fancy("РЕКОРД  " + fmt_total(rec["best"]), fs, (255, 255, 255), (200, 210, 230), o=1)
             frame.blit(t, (W / 2 - t.get_width() / 2, 240 * K))
@@ -783,7 +943,6 @@ def main():
         if title(game) == "quit":
             return
         finish_prewarm(game)
-        game.cars = make_traffic(game.track)
         if game.run():
             return
 

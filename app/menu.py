@@ -383,6 +383,8 @@ def run(cmd, cwd):
     lcd.resume_audio()
     lcd.grab_inputs()
     lcd.flush_buttons()
+    global idle_t
+    idle_t = time.monotonic()   # the time in the app was not idle time: back in the menu, the count starts anew
 
 
 sel = 0
@@ -396,11 +398,13 @@ if AQUARIUM and aquarium_at_boot():   # the device has just been switched on: th
 shown = None    # what is on the screen: redraw only when it changes (a full frame cost 40-60 % of
                 # a core on the PicoCalc at 20 fps on an unchanging screen)
 while running:
+    keyed = False
     for ev in pygame.event.get():
         if ev.type == pygame.QUIT:  # SIGTERM from systemctl stop
             running = False
         elif ev.type == pygame.KEYDOWN:
             idle_t = time.monotonic()
+            keyed = True
             shown = None            # a key (and whatever it opened - an app, help) may change the screen
             if ev.key == pygame.K_UP:
                 sel = (sel - 1) % len(ITEMS)
@@ -438,6 +442,8 @@ while running:
                         poweroff()
                 else:
                     run(cmd, cwd)
+    if keyed:
+        idle_t = time.monotonic()   # after what the key opened (an app, the help): idle starts from now
     wait = saver_after()
     if SAVER and wait and time.monotonic() - idle_t > wait:
         run(SAVER[2], SAVER[3])         # any key ends it and comes back here
