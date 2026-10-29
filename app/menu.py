@@ -26,6 +26,7 @@ ITEMS = [
     ("BOOKS", "epub fb2", ["/usr/bin/python3", HERE + "/reader.py"], HERE),
     ("DOOM", "E1", [HERE + "/doom/doomlcd", "-iwad", "/usr/share/games/doom/doom1.wad"], HERE + "/doom"),
     ("PICO RUSH", "outrun", ["/usr/bin/python3", HERE + "/racer.py"], HERE),
+    ("STAR TRADER", "elite", ["/usr/bin/python3", HERE + "/startrader.py"], HERE),
     ("GENERATOR", "", ["/usr/bin/python3", HERE + "/siggen.py"], HERE),
     ("SERIAL", "grblHAL", ["/usr/bin/python3", HERE + "/serialterm.py"], HERE),
     ("CALC", "apcalc", ["/usr/bin/python3", HERE + "/calcpad.py"], HERE),
