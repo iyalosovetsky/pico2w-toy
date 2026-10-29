@@ -312,6 +312,7 @@ class Game:
         }
         self.world = World()
         self.music = starmusic.Music()
+        self.sfx = starmusic.Sfx()
         self.dust = gfx.stardust_init()
         self.keys = set()
         self.reset_ship()
@@ -443,12 +444,12 @@ class Game:
                     if abs(r[0]) <= math.cos(math.radians(24)) else "Криво в щілину!"
                 self.pos = old - self.R[:, 2] * 40
                 self.speed = 0.0
-                return self.hit(0.55, True, why)
+                return self.hit(0.55, True, why, "crash_heavy")
         if inside and not (mouth and q[2] < -STATION_R):
             self.pos = old + unit(old - w.st_pos) * 40
             self.speed = 0.0
             return self.hit(0.25 + 0.6 * self.speed / MAX_SPEED, np.dot(self.R[:, 2], w.st_pos - old) > 0,
-                            "Удар об станцію!")
+                            "Удар об станцію!", "crash_heavy")
         # ships
         for s in w.ships:
             d = s.pos - self.pos
@@ -470,12 +471,12 @@ class Game:
             self.say("Мала висота!", 1.0)
         return None
 
-    def hit(self, dmg, front, why):
+    def hit(self, dmg, front, why, sound="crash"):
         """Damage to a shield, through it to the banks; out of energy - the end."""
         if self.t - self.hit_t < 0.7:                       # still scraping: one knock, not one a frame
             return None
         self.hit_t = self.t
-        lcd.play("wall")
+        self.sfx.play(sound)
         self.speed *= 0.2
         self.roll *= -0.5
         self.pitch *= -0.5
@@ -739,8 +740,9 @@ def title(game):
                 game.toggle_style()
             elif ev.key == pygame.K_ESCAPE or (hat and ev.key == pygame.K_3):
                 return "quit"
-        if game.world.planet.prewarm():                # the planet's lit masters, one a frame, then the waltz
+        if game.world.planet.prewarm():                # the planet's lit masters, one a frame, then the sounds
             game.music.ready()
+            game.sfx.ready()
         t = time.monotonic() - t0
         wire = game.style == "wire"
         draw_backdrop(game, t)
@@ -854,6 +856,7 @@ def station_screen(game):
                 return "quit"
         if game.world.planet.prewarm():
             game.music.ready()
+            game.sfx.ready()
         t = time.monotonic() - t0
         wire = game.style == "wire"
         draw_backdrop(game, t)
@@ -980,7 +983,8 @@ def pause(game):
 
 
 def explode(game):
-    lcd.play("lose")
+    game.music.stop(200)
+    game.sfx.play("explosion")
     t0 = time.monotonic()
     snap = frame.copy()
     f = gfx.font("DejaVuSans-Bold.ttf", 16)

@@ -1,4 +1,4 @@
-"""ЗОРЯНИЙ ТОРГОВЕЦЬ music: the docking computer's waltz - the opening theme of Johann Strauss II's
+"""ЗОРЯНИЙ ТОРГОВЕЦЬ sound: the hull knocks and the explosion; the docking computer's waltz - the opening theme of Johann Strauss II's
 "The Blue Danube" (1866, public domain), our own small arrangement: a soft melody over an oom-pah-pah of
 bass and chords, synthesized with numpy (no recordings).
 """
@@ -79,6 +79,89 @@ def danube():
     out = out[:int(total * BEAT * RATE)]
     out *= 0.85 / max(1e-6, np.abs(out).max()) * lcd.VOLUME
     return out
+
+
+# ---------------------------------------------------------------- sound effects
+
+def band(y, lo, hi):
+    """Keep lo..hi Hz (an FFT mask: the buffers are short)."""
+    f = np.fft.rfft(y)
+    hz = np.fft.rfftfreq(len(y), 1.0 / RATE)
+    f[(hz < lo) | (hz > hi)] = 0
+    return np.fft.irfft(f, len(y))
+
+
+def crash(heavy, seed=1):
+    """A hull knock: a low thud, the metal ringing (inharmonic partials, each fading at its own rate),
+    a scrape of plating and a hiss of debris; heavy - the station: lower, longer, more scrape."""
+    rnd = np.random.default_rng(seed)
+    secs = 2.0 if heavy else 0.9
+    n = int(secs * RATE)
+    t = np.arange(n) / RATE
+    k = 0.5 if heavy else 1.25                      # the pitch of the metal
+    f0 = (75 if heavy else 160) * np.exp(-t * 6) + (36 if heavy else 45)
+    thud = np.sin(2 * np.pi * np.cumsum(f0) / RATE) * np.exp(-t * (7 if heavy else 11))
+    thud += 0.5 * np.sin(2 * 2 * np.pi * np.cumsum(f0) / RATE) * np.exp(-t * 12)
+    ring = np.zeros(n)
+    for f, d, a in ((287, 2.2, 0.5), (461, 3.0, 0.45), (733, 3.8, 0.4), (1013, 5.0, 0.3), (1391, 6.5, 0.25),
+                    (1877, 8.0, 0.2), (2469, 10.0, 0.12)):
+        f = f * k * (1 + rnd.uniform(-0.01, 0.01))
+        ring += a * np.sin(2 * np.pi * f * t + rnd.uniform(0, 6.3)) * np.exp(-t * d * (0.8 if heavy else 1.3)) \
+            * (1 + 0.25 * np.sin(2 * np.pi * rnd.uniform(3, 7) * t))           # a slow beating
+    if heavy:                                       # the big hull booming: low modes, slow to die
+        for f, d, a in ((96, 2.5, 0.7), (143, 3.2, 0.5), (191, 4.0, 0.35)):
+            ring += a * np.sin(2 * np.pi * f * t + rnd.uniform(0, 6.3)) * np.exp(-t * d)
+    hiss = band(rnd.uniform(-1, 1, n), 800, 6000) * np.exp(-t * 14) * 1.6
+    scrape = band(rnd.uniform(-1, 1, n), 150 if heavy else 300, 1100 if heavy else 1800) * np.clip(1 - t / (0.7 if heavy else 0.3), 0, 1) ** 1.5
+    scrape *= 0.6 + 0.4 * np.sign(np.sin(2 * np.pi * 23 * t + 2 * np.sin(2 * np.pi * 7 * t)))   # judder
+    y = (1.3 if heavy else 1.0) * thud + 0.55 * ring + (0.2 if heavy else 0.35) * hiss + (0.45 if heavy else 0.2) * scrape
+    y[:int(0.002 * RATE)] *= np.linspace(0, 1, int(0.002 * RATE))
+    return y / np.abs(y).max()
+
+
+def explosion(seed=2):
+    """A blast: a noise burst falling from bright to a rumble, crackles of debris after it."""
+    rnd = np.random.default_rng(seed)
+    secs = 2.6
+    n = int(secs * RATE)
+    t = np.arange(n) / RATE
+    noise = rnd.uniform(-1, 1, n)
+    bright = band(noise, 400, 7000) * np.exp(-t * 7)
+    rumble = band(noise, 30, 400) * np.exp(-t * 1.6) * 2.5
+    f0 = 70 * np.exp(-t * 2) + 30
+    boom = np.sin(2 * np.pi * np.cumsum(f0) / RATE) * np.exp(-t * 3)
+    crackle = np.zeros(n)
+    for _ in range(60):
+        i = int(rnd.uniform(0.15, 2.2) * RATE)
+        m = int(rnd.uniform(0.004, 0.02) * RATE)
+        crackle[i:i + m] += rnd.uniform(-1, 1, m) * rnd.uniform(0.3, 1) * np.exp(-(i / RATE) * 1.2)
+    y = bright + rumble + boom + 0.5 * band(crackle, 1000, 8000)
+    y[:int(0.003 * RATE)] *= np.linspace(0, 1, int(0.003 * RATE))
+    return y / np.abs(y).max()
+
+
+class Sfx:
+    """The game's own effects, made on first use and kept."""
+
+    MAKERS = {"crash_heavy": lambda: crash(True), "crash": lambda: crash(False), "explosion": explosion}
+
+    def __init__(self):
+        self.snd = {}
+
+    def ready(self):
+        if lcd.sound_enabled():
+            for name in self.MAKERS:
+                self.get(name)
+
+    def get(self, name):
+        if name not in self.snd:
+            y = self.MAKERS[name]() * 0.9 * lcd.VOLUME
+            self.snd[name] = pygame.mixer.Sound(buffer=(np.clip(y, -1, 1) * 32000).astype(np.int16).tobytes())
+        return self.snd[name]
+
+    def play(self, name):
+        if lcd.sound_enabled():
+            self.get(name).play()
 
 
 class Music:
