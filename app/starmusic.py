@@ -1,4 +1,4 @@
-"""ЗОРЯНИЙ ТОРГОВЕЦЬ sound: the hull knocks and the explosion; the docking computer's waltz - the opening theme of Johann Strauss II's
+"""ЗОРЯНИЙ ТОРГОВЕЦЬ sound: the hull knocks, the explosions, the laser, hits, the missile and its lock; the docking computer's waltz - the opening theme of Johann Strauss II's
 "The Blue Danube" (1866, public domain), our own small arrangement: a soft melody over an oom-pah-pah of
 bass and chords, synthesized with numpy (no recordings).
 """
@@ -119,10 +119,9 @@ def crash(heavy, seed=1):
     return y / np.abs(y).max()
 
 
-def explosion(seed=2):
+def explosion(seed=2, secs=2.6):
     """A blast: a noise burst falling from bright to a rumble, crackles of debris after it."""
     rnd = np.random.default_rng(seed)
-    secs = 2.6
     n = int(secs * RATE)
     t = np.arange(n) / RATE
     noise = rnd.uniform(-1, 1, n)
@@ -134,22 +133,72 @@ def explosion(seed=2):
     for _ in range(60):
         i = int(rnd.uniform(0.15, 2.2) * RATE)
         m = int(rnd.uniform(0.004, 0.02) * RATE)
+        i = min(i, n - m - 1)
         crackle[i:i + m] += rnd.uniform(-1, 1, m) * rnd.uniform(0.3, 1) * np.exp(-(i / RATE) * 1.2)
     y = bright + rumble + boom + 0.5 * band(crackle, 1000, 8000)
     y[:int(0.003 * RATE)] *= np.linspace(0, 1, int(0.003 * RATE))
     return y / np.abs(y).max()
 
 
+def laser():
+    """A pulse laser's "pew": a bright buzz falling fast, a breath of noise."""
+    n = int(0.17 * RATE)
+    t = np.arange(n) / RATE
+    f = 1900 * np.exp(-t * 14) + 260
+    ph = 2 * np.pi * np.cumsum(f) / RATE
+    y = 0.6 * np.sin(ph) + 0.3 * np.sign(np.sin(ph)) + 0.15 * np.sin(2.01 * ph)
+    y += 0.25 * band(np.random.default_rng(4).uniform(-1, 1, n), 2000, 8000) * np.exp(-t * 40)
+    y *= np.minimum(1, t / 0.003) * np.exp(-t * 11)
+    return y / np.abs(y).max()
+
+
+def zap():
+    """A hit: sparks off a shield - a crackle and a high blip."""
+    n = int(0.14 * RATE)
+    t = np.arange(n) / RATE
+    y = band(np.random.default_rng(5).uniform(-1, 1, n), 1800, 9000) * np.exp(-t * 30) * 1.5
+    y += 0.5 * np.sin(2 * np.pi * (3200 - 9000 * t) * t) * np.exp(-t * 45)
+    return y / np.abs(y).max()
+
+
+def missile():
+    """A missile away: an ignition pop, a hiss rising from dull to bright, the motor's rumble trailing off."""
+    rnd = np.random.default_rng(6)
+    n = int(1.5 * RATE)
+    t = np.arange(n) / RATE
+    noise = rnd.uniform(-1, 1, n)
+    dull = band(noise, 150, 900) * np.clip(1 - t / 0.5, 0, 1)
+    bright = band(noise, 900, 6000) * np.clip(t / 0.35, 0, 1) * np.exp(-np.clip(t - 0.35, 0, None) * 2.6)
+    rumble = band(noise, 35, 220) * np.exp(-t * 1.8) * 2.2
+    f0 = 55 + 25 * np.sin(2 * np.pi * 7 * t)
+    roar = np.sin(2 * np.pi * np.cumsum(f0) / RATE) * np.exp(-t * 2.2) * 0.6
+    pop = np.sin(2 * np.pi * 180 * t) * np.exp(-t * 60) * 1.5
+    y = dull + 1.2 * bright + rumble + roar + pop
+    y[:int(0.002 * RATE)] *= np.linspace(0, 1, int(0.002 * RATE))
+    return y / np.abs(y).max()
+
+
+def lock():
+    """A target locked: two short rising beeps."""
+    out = []
+    for f in (1400, 1900):
+        t = np.arange(int(0.05 * RATE)) / RATE
+        out += [np.sin(2 * np.pi * f * t) * np.minimum(1, (0.05 - t) / 0.01), np.zeros(int(0.03 * RATE))]
+    return np.concatenate(out) * 0.6
+
+
 class Sfx:
     """The game's own effects, made on first use and kept."""
 
-    MAKERS = {"crash_heavy": lambda: crash(True), "crash": lambda: crash(False), "explosion": explosion}
+    MAKERS = {"crash_heavy": lambda: crash(True), "crash": lambda: crash(False), "explosion": explosion,
+              "boom": lambda: explosion(7, 1.7), "laser": laser, "zap": zap, "missile": missile, "lock": lock}
 
     def __init__(self):
         self.snd = {}
 
     def ready(self):
         if lcd.sound_enabled():
+            pygame.mixer.set_num_channels(16)           # lasers, hits and blasts overlap
             for name in self.MAKERS:
                 self.get(name)
 

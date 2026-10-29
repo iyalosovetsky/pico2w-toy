@@ -8,7 +8,8 @@ station's turn, fly in slowly) or by the docking computer - to a waltz, the open
 Danube" (public domain, our own synthesized arrangement).
 
 Keys: ← → (or [ ]) - roll, ↑ ↓ - pitch (↑ dives, like a stick; i - the other way), Space / = - faster,
-/ / - - slower, c - the docking computer, Tab - the look, Esc - the pause menu. HAT: the joystick, KEY1 faster,
+/ / - - slower, a / Enter - the laser, m - a missile at the ship in the sights, c - the docking computer,
+Tab - the look, Esc - the pause menu. HAT: the joystick, KEY1 faster,
 KEY2 slower, KEY3 - the menu.
 """
 import json
@@ -45,6 +46,11 @@ SCAN_RANGE = 12000.0
 SUN_DIST, SUN_R = 2.5e6, 1.2e5
 
 STYLE_NAMES = {"modern": "сучасний", "wire": "класичний"}
+HP = {"osa": 2, "sokil": 3, "chumak": 4, "mazha": 6, "shulika": 3, "vulyk": 12, "truten": 1, "rocket": 1,
+      "kapsula": 1, "kontejner": 1, "asteroid": 3}                 # laser hits a ship takes
+LASER_RANGE = 7000.0
+LASER_EVERY = 0.16                    # seconds between pulses
+MISSILES = 3
 SYSTEM = "Ортея"
 SYSTEM_INFO = "Сільськогосподарська · Демократія · Тех. рівень 7"
 
@@ -163,6 +169,32 @@ class Ship:
         self.wp = None
         self.gone = False
         self.colour = gfx.TYPES[kind][4]
+        self.hp = HP.get(kind, 3)
+        self.target = None
+
+
+class Blast:
+    """A ship blown apart: its faces fly off spinning and cool down, a fireball (modern) or a cloud of dots
+    (classic) in the middle."""
+    LIFE = 2.2
+
+    def __init__(self, ship, rnd):
+        me = ship.me
+        self.pos = ship.pos.copy()
+        self.vel = ship.R[:, 2] * ship.speed * 0.4
+        self.size = me.radius
+        self.age = 0.0
+        V = me.pts[:me.nv] @ ship.R.T + ship.pos
+        N = me.normals @ ship.R.T
+        self.frags = []
+        for i, f in enumerate(me.faces):
+            P = V[f]
+            c = P.mean(axis=0)
+            v = self.vel + N[i] * rnd.uniform(60, 260) + np.array([rnd.uniform(-60, 60) for _ in range(3)])
+            ax = unit(np.array([rnd.gauss(0, 1) for _ in range(3)]))
+            self.frags.append((c, P - c, v, ax, rnd.uniform(1.5, 6.0), me.base[i]))
+        self.dots = np.array([unit(np.array([rnd.gauss(0, 1) for _ in range(3)])) * rnd.uniform(0.3, 1.0)
+                              for _ in range(70)]) * self.size * 2.2
 
 
 class World:
@@ -180,6 +212,8 @@ class World:
         self.planet = gfx.Planet("earth", 11)
         self.stars = gfx.starfield()
         self.ships = []
+        self.blasts = []
+        self.events = []                  # ("boom", ship) - for the game's sounds and messages
         self.spawn_t = 2.0
         for k in range(4):                                              # asteroids out in the dark
             d = unit(np.array([self.rnd.uniform(-1, 1) for _ in range(3)]))
@@ -276,16 +310,41 @@ class World:
                     q = self.st_R.T @ (s.pos - self.st_pos)
                     if q[2] > -STATION_R:                              # in through the slot
                         s.gone = True
+            elif s.role == "missile":
+                tg = s.target
+                if tg is None or tg.gone or s.age > 14:
+                    self.destroy(s)                                    # lost its target: self-destructs
+                    continue
+                s.R = turn_to(s.R, unit(tg.pos - s.pos), 2.4, dt)
+                s.speed = min(3000.0, s.speed + 1800 * dt)
+                if length(tg.pos - s.pos) < tg.me.radius * 0.8 + 60:
+                    self.destroy(tg)
+                    self.destroy(s)
+                    continue
             elif s.role == "patrol":
                 s.phase += dt * 700 / 3800
                 s.R = turn_to(s.R, unit(self.patrol_point(s.phase + 0.35) - s.pos), 0.8, dt)
-            if s.role != "drift":                                          # keep clear of the player
+            if s.role not in ("drift", "missile"):                         # keep clear of the player
                 d = player_pos - s.pos
                 dist = length(d)
                 if dist < 1000 and np.dot(d, s.R[:, 2]) > 0:
                     s.R = turn_to(s.R, unit(-d + s.R[:, 2] * dist * 0.5), 1.4, dt)
             s.pos = s.pos + s.R[:, 2] * s.speed * dt
         self.ships = [s for s in self.ships if not s.gone]
+        self.update_blasts(dt)
+
+    def destroy(self, s):
+        if s.gone:
+            return
+        s.gone = True
+        self.ships = [x for x in self.ships if not x.gone]
+        self.blasts.append(Blast(s, self.rnd))
+        self.events.append(("boom", s))
+
+    def update_blasts(self, dt):
+        for b in self.blasts:
+            b.age += dt
+        self.blasts = [b for b in self.blasts if b.age < Blast.LIFE]
 
     # -- geometry
 
@@ -332,6 +391,14 @@ class Game:
         self.dead = False
         self.hit_t = -9.0
         self.slow = 0.0
+        self.laser_temp = 0.0
+        self.overheat = False
+        self.fire_t = 0.0
+        self.beam_t = -1.0
+        self.beam_end = None
+        self.beam_hit = False
+        self.missiles = MISSILES
+        self.lock = None
 
     def say(self, text, secs=3.0):
         self.msg, self.msg_t = text, self.t + secs
@@ -420,6 +487,7 @@ class Game:
         old = self.pos
         self.pos = self.pos + self.R[:, 2] * self.speed * dt
         w.update_ships(dt, self.pos)
+        self.weapons(dt)
         # recharge: the banks slowly, the shields from the banks
         self.energy = min(4.0, self.energy + 0.03 * dt)
         for sh in ("fs", "as_"):
@@ -452,6 +520,8 @@ class Game:
                             "Удар об станцію!", "crash_heavy")
         # ships
         for s in w.ships:
+            if s.role == "missile":
+                continue
             d = s.pos - self.pos
             reach = s.me.radius * 0.75 + 80
             if np.dot(d, d) < reach * reach:
@@ -470,6 +540,96 @@ class Game:
         if alt < 2500 and int(self.t * 2) % 4 == 0 and self.msg_t < self.t:
             self.say("Мала висота!", 1.0)
         return None
+
+    # -- weapons
+
+    def in_sights(self, cone=0.94, reach=SCAN_RANGE):
+        """The ship nearest the crosshair within the cone (a missile's lock)."""
+        best, bc = None, cone
+        for s in self.world.ships:
+            if s.role == "missile":
+                continue
+            d = s.pos - self.pos
+            L = length(d)
+            if L < 1 or L > reach:
+                continue
+            c = float(np.dot(d, self.R[:, 2])) / L
+            if c > bc:
+                best, bc = s, c
+        return best
+
+    def weapons(self, dt):
+        w = self.world
+        self.laser_temp = max(0.0, self.laser_temp - 0.22 * dt)
+        if self.overheat and self.laser_temp < 0.5:
+            self.overheat = False
+        self.fire_t -= dt
+        if "fire" in self.keys and self.fire_t <= 0:
+            if self.overheat:
+                if self.msg_t < self.t:
+                    self.say("Лазер перегрівся!", 1.0)
+            elif self.energy > 0.3:
+                self.shoot()
+        lock = self.in_sights() if self.missiles else None
+        if lock is not None and lock is not self.lock:
+            self.sfx.play("lock")
+        self.lock = lock
+        for kind, ship in w.events:                    # what blew up since the last step
+            if kind == "boom":
+                self.sfx.play("boom" if ship.kind != "rocket" else "zap")
+                if ship.kind != "rocket":
+                    self.say("Знищено: %s" % gfx.TYPES[ship.kind][0], 2)
+        w.events.clear()
+
+    def shoot(self):
+        """One pulse: along the nose, the nearest ship it passes through takes a hit (the station stops it)."""
+        self.fire_t = LASER_EVERY
+        self.laser_temp += 0.065
+        if self.laser_temp >= 1.0:
+            self.overheat = True
+            self.say("Лазер перегрівся!", 1.5)
+        self.energy -= 0.012
+        self.sfx.play("laser")
+        RT = self.R.T
+        best, bz = None, LASER_RANGE
+        for s in self.world.ships:
+            if s.role == "missile":
+                continue
+            c = RT @ (s.pos - self.pos)
+            r = s.me.radius * 0.75
+            if 0 < c[2] < bz and c[0] * c[0] + c[1] * c[1] < r * r:
+                best, bz = s, float(c[2])
+        c = RT @ (self.world.st_pos - self.pos)
+        if 0 < c[2] < bz + STATION_R and c[0] * c[0] + c[1] * c[1] < (STATION_R * 0.9) ** 2:
+            best, bz = None, float(c[2]) - STATION_R * 0.8
+            if self.msg_t < self.t:
+                self.say("Не стріляйте по станції!", 1.5)
+        self.beam_t = self.t + 0.08
+        self.beam_end = self.pos + self.R[:, 2] * bz
+        self.beam_hit = best is not None or bz < LASER_RANGE
+        if best is not None:
+            best.hp -= 1
+            self.sfx.play("zap")
+            if best.hp <= 0:
+                self.world.destroy(best)
+
+    def fire_missile(self):
+        if not self.missiles:
+            self.say("Ракет немає", 1.5)
+            lcd.play("error")
+            return
+        tg = self.in_sights()
+        if tg is None:
+            self.say("Немає цілі в прицілі", 1.5)
+            lcd.play("error")
+            return
+        m = Ship("rocket", self.pos + self.R[:, 2] * 140 - self.R[:, 1] * 30, self.R.copy(),
+                 self.speed + 500, "missile")
+        m.target = tg
+        self.world.ships.append(m)
+        self.missiles -= 1
+        self.sfx.play("missile")
+        self.say("Ракета пішла: %s" % gfx.TYPES[tg.kind][0], 2)
 
     def hit(self, dmg, front, why, sound="crash"):
         """Damage to a shield, through it to the banks; out of energy - the end."""
@@ -555,9 +715,13 @@ class Game:
             M, t = self.obj(p, R)
             Lc = RT @ unit(p - w.sun_pos)
             gfx.draw_mesh(view, me, M, t, F, CX, CY, Lc, st, detail=not rough)
+        for b in w.blasts:
+            self.draw_blast(view, b)
         gfx.stardust(view, self.dust, dt, self.speed, self.roll, self.pitch, self.yaw, F, CX, CY, st)
         if not overlay:
             return
+        self.draw_beams(view)
+        self.draw_lock(view)
         col = gfx.WIRE if st == "wire" else (220, 225, 235)
         for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
             gfx.line(view, col, (CX + dx * 6, CY + dy * 6), (CX + dx * 16, CY + dy * 16))
@@ -570,6 +734,86 @@ class Game:
         if self.autodock:
             img = self.fonts["small"].render("КОМП'ЮТЕР СТИКУВАННЯ", True, (120, 220, 255) if st != "wire" else gfx.WIRE)
             view.blit(img, (W / 2 - img.get_width() / 2, 18))
+
+    def project(self, p):
+        c = self.R.T @ (p - self.pos)
+        if c[2] < gfx.NEAR:
+            return None
+        return CX + c[0] * F / c[2], CY - c[1] * F / c[2], float(c[2])
+
+    def draw_blast(self, view, b):
+        wire = self.style == "wire"
+        a = b.age
+        life = Blast.LIFE
+        centre = b.pos + b.vel * a
+        pc = self.project(centre)
+        if pc is None or pc[2] > 40000:
+            return
+        if wire:                                       # the old way: a cloud of dots flying apart
+            col = gfx.WIRE if a < life * 0.6 else gfx.WIRE_DIM
+            P = (centre + b.dots * (0.25 + a)) - self.pos
+            C = P @ self.R
+            ok = C[:, 2] > gfx.NEAR
+            for x, y, z in C[ok].tolist():
+                sx, sy = CX + x * F / z, CY - y * F / z
+                if 0 <= sx < W and 0 <= sy < VH:
+                    view.fill(col, (int(sx), int(sy), 2, 2))
+        fade = 1 - a / life
+        for c0, offs, v, ax, spin, base in b.frags:
+            Rm = rodrigues(ax, spin * a)
+            P = (c0 + v * a) + offs @ Rm.T - self.pos
+            C = P @ self.R
+            if C[:, 2].min() < gfx.NEAR:
+                continue
+            pts = [(CX + x * F / z, CY - y * F / z) for x, y, z in C.tolist()]
+            if wire:
+                gfx.lines(view, gfx.WIRE if a < life * 0.6 else gfx.WIRE_DIM, True, pts, 1)
+            else:
+                hot = gfx.mix((255, 190, 90), base, a / 0.7)
+                gfx.fill_poly(view, gfx.shade(hot, 0.25 + 0.9 * fade), pts)
+        if not wire and a < 0.9:                       # the fireball
+            k = 1 - a / 0.9
+            step = int(a / 0.9 * 6)
+            col = gfx.shade(gfx.mix((255, 220, 150), (200, 60, 10), step / 6), 0.3 + 0.7 * k)
+            r = b.size * (0.5 + 2.5 * a) * F / pc[2]
+            gfx.glow(view, (pc[0], pc[1]), col, min(r, 90))
+
+    def draw_beams(self, view):
+        """The two beams from the lower corners to where the pulse ends, while it lasts."""
+        if self.t > self.beam_t or self.beam_end is None:
+            return
+        pe = self.project(self.beam_end)
+        end = (pe[0], pe[1]) if pe else (CX, CY)
+        wire = self.style == "wire"
+        for x0 in (W * 0.16, W * 0.84):
+            if wire:
+                gfx.line(view, gfx.WIRE, (x0, VH), end, 1)
+            else:
+                gfx.line(view, (120, 20, 10), (x0, VH), end, 5)
+                gfx.line(view, (255, 90, 40), (x0, VH), end, 3)
+                gfx.line(view, (255, 230, 200), (x0, VH), end, 1)
+        if self.beam_hit:
+            if wire:
+                for dx, dy in ((-4, -4), (4, 4), (-4, 4), (4, -4)):
+                    gfx.line(view, gfx.WIRE, end, (end[0] + dx, end[1] + dy))
+            else:
+                gfx.glow(view, end, (255, 140, 70), 9)
+
+    def draw_lock(self, view):
+        """A missile's lock: a bracket round the ship in the sights."""
+        s = self.lock
+        if s is None or s.gone:
+            return
+        pc = self.project(s.pos)
+        if pc is None:
+            return
+        r = max(8, s.me.radius * F / pc[2] * 0.9)
+        x, y = pc[0], pc[1]
+        col = gfx.WIRE if self.style == "wire" else (255, 80, 60)
+        for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+            cx, cy = x + sx * r, y + sy * r
+            gfx.line(view, col, (cx, cy), (cx - sx * r * 0.4, cy), 1)
+            gfx.line(view, col, (cx, cy), (cx, cy - sy * r * 0.4), 1)
 
     def draw_dock_hint(self, view):
         """In front of the slot: how far off its turn we are (the arc), the speed check."""
@@ -619,7 +863,8 @@ class Game:
         d = unit(RT @ (tgt - self.pos))
         alt = (length(self.pos) - PLANET_R) / PLANET_R
         en = [clamp(self.energy - i, 0, 1) for i in range(4)]
-        return dict(fs=self.fs, as_=self.as_, fv=1.0, ct=0.1, lt=0.0, al=clamp(alt, 0, 1), sp=self.speed / MAX_SPEED,
+        return dict(fs=self.fs, as_=self.as_, fv=1.0, ct=0.1, lt=min(1.0, self.laser_temp), al=clamp(alt, 0, 1),
+                    sp=self.speed / MAX_SPEED, missiles=self.missiles,
                     rl=self.roll / ROLL_MAX, dc=self.pitch / PITCH_MAX, en=en, blips=blips,
                     compass=(d[0], d[1], d[2] > 0), safe=safe, t=self.t, **{"as": self.as_})
 
@@ -907,6 +1152,8 @@ def flight(game):
                 key = pygame.K_LEFT
             elif key == pygame.K_RIGHTBRACKET:
                 key = pygame.K_RIGHT
+            elif key in (pygame.K_a, pygame.K_RETURN, pygame.K_KP_ENTER):
+                key = "fire"
             if ev.type == pygame.KEYDOWN:
                 if key == pygame.K_ESCAPE or (hat and ev.key == pygame.K_3):
                     game.keys.clear()
@@ -919,6 +1166,8 @@ def flight(game):
                     game.toggle_style()
                 elif key == pygame.K_c:
                     toggle_autodock(game)
+                elif key == pygame.K_m:
+                    game.fire_missile()
                 elif key == pygame.K_i:
                     game.invert = not game.invert
                     game.conf["invert"] = game.invert
