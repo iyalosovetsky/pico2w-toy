@@ -636,6 +636,7 @@ class Game:
         self.lock = None
         self.hyper_t = None
         self.jump_t = 0.0
+        self.dock_music = False
         self.enemy_beams = []
         self.flash_t = -1.0
         self.flash_front = True
@@ -1634,7 +1635,7 @@ def title(game):
                 return "quit"
         ready = game.poll_loader()
         if ready and not want:
-            game.music.start()                         # the Blue Danube over the title, the old way
+            game.music.serenade()                      # the Blue Danube over the title now and then, the old way
         if want and ready:
             game.music.stop(900)
             return want
@@ -2486,9 +2487,13 @@ def flight(game):
             last = time.monotonic()
             continue
         if game.autodock:
-            game.music.start()
-        elif r != "docked":
-            game.music.stop()
+            if not game.dock_music:                    # the waltz once from the start for this approach
+                game.music.start()
+                game.dock_music = True
+        else:
+            game.dock_music = False
+            if r != "docked":
+                game.music.stop()
         if r == "docked":
             lcd.play("win")
             tunnel(game, True)

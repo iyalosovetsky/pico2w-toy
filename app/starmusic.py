@@ -4,6 +4,7 @@ bass and chords, synthesized with numpy (no recordings).
 """
 import hashlib
 import os
+import time
 
 import numpy as np
 import pygame
@@ -12,23 +13,36 @@ import lcd
 
 RATE = lcd.RATE
 CACHE = os.path.expanduser("~/.cache/lcdtoy")
-BEAT = 0.46                           # a quarter at ~130 a minute: an unhurried waltz
+BEAT = 0.42                           # a quarter at ~143 a minute: an easy Viennese waltz
 NOTES = {"C": 0, "C#": 1, "D": 2, "D#": 3, "E": 4, "F": 5, "F#": 6, "G": 7, "G#": 8, "A": 9, "A#": 10, "B": 11}
 
-# the melody, note:beats (r - a rest); 3 beats a bar
-THEME = """
-D4:1 D4:1 F#4:1 A4:3 r:1 A5:1 A5:1 r:1 F#5:1 F#5:1
-D4:1 D4:1 F#4:1 A4:3 r:1 B5:1 B5:1 r:1 G5:1 G5:1
-C#4:1 C#4:1 E4:1 B4:3 r:1 B5:1 B5:1 r:1 G5:1 G5:1
-C#4:1 C#4:1 E4:1 B4:3 r:1 A5:1 A5:1 r:1 F#5:1 F#5:1
-D4:1 D4:1 F#4:1 A4:1 D5:2 r:1 D6:1 D6:1 r:1 A5:1 A5:1
-D4:1 D4:1 F#4:1 A4:1 D5:2 r:1 D6:1 D6:1 r:1 B5:1 B5:1
-E4:1 E4:1 G4:1 B4:3 B4:2 G#4:1 A4:3 F#5:2 D5:1 D5:2 F#4:1 F#4:2 E4:1 B4:2 A4:1 D4:3 r:3
+# the first waltz in D (the main theme checked against the Mutopia Project's piano score, piece 519; the
+# second strain read from J. S. Seredy's piano-conductor score, Carl Fischer 1890 - public domain): note:beats,
+# r - a rest, a+b - two notes together (the answers come as thirds); 3 beats a bar. The main theme, then the
+# second strain in A twice (its first and second endings), and round again - the pick-up D at the very end.
+THEME_A = """
+D4:1 F#4:1 A4:1  A4:2 F#5+A5:1  F#5+A5:2 D5+F#5:1  D5+F#5:2 D4:1
+D4:1 F#4:1 A4:1  A4:2 G5+A5:1  G5+A5:2 C#5+G5:1  C#5+G5:2 C#4:1
+C#4:1 E4:1 B4:1  B4:2 G5+B5:1  G5+B5:2 C#5+G5:1  C#5+G5:2 C#4:1
+C#4:1 E4:1 B4:1  B4:2 F#5+B5:1  F#5+B5:2 D5+F#5:1  D5+F#5:2 D4:1
+D4:1 F#4:1 A4:1  D5:2 A5+D6:1  A5+D6:2 F#5+A5:1  F#5+A5:2 D4:1
+D4:1 F#4:1 A4:1  D5:2 B5+D6:1  B5+D6:2 G5+B5:1  G5+B5:2 E4:1
+E4:1 G4:1 B4:1  B4:3  B4:1 G#4:1 A4:1  F#5:3  F#5:1 D5:1 F#4:1  F#4:2 E4:1  B4:2 A4:1
+D4:1.5 D5:0.5 D5:1  D5:1 D6:0.5 r:0.5 C#6:0.5 r:0.5
 """
+# the second strain's short notes: an eighth and an eighth's rest
+_B = """
+C#6:.5 r:.5 B5:.5 r:.5 B5:.5 r:.5   r:1 B5:.5 r:.5 A#5:.5 r:.5   A#5:.5 r:.5 B5:.5 r:.5 B5:.5 r:.5
+r:1 E5:.5 r:.5 E5:.5 r:.5   F#5:2 E5:1   r:1 E5:.5 r:.5 E5:.5 r:.5   B5:2 A5:1   r:1 D6:.5 r:.5 C#6:.5 r:.5
+C#6:.5 r:.5 B5:.5 r:.5 B5:.5 r:.5   r:1 B5:.5 r:.5 C#6:.5 r:.5   E6:.5 r:.5 D6:.5 r:.5 C#6:.5 r:.5
+r:1 G#5:.5 r:.5 A5:.5 r:.5   A5:3   G#5:1.5 F#5:.5 D5:.5 B4:.5   F#5:.5 F#5:.5 F#5:1 E5:1
+"""
+THEME = THEME_A + _B + "A4:1 D6:.5 r:.5 C#6:.5 r:.5" + _B + "A4:1 r:1 D4:1"
 # a chord a bar
-BARS = "D D D D  D D A7 A7  A7 A7 A7 A7  A7 A7 D D  D D D D  D D G G  Em Em A7 A7 D D A7 A7 D D"
-CHORDS = {"D": ("D3", ("A3", "D4", "F#4")), "A7": ("A2", ("G3", "C#4", "E4")),
-          "G": ("G2", ("G3", "B3", "D4")), "Em": ("E3", ("G3", "B3", "E4"))}
+_BARS_B = "E7 E7 E7 E7 E7 E7 A A E7 E7 A E7 D E7 E7 A "
+BARS = "D D D D D D A7 A7 A7 A7 A7 A7 A7 A7 A7 D D D D D D D G G Em Em E7 D D A7 A7 D D " + _BARS_B * 2
+CHORDS = {"D": ("D3", ("A3", "D4", "F#4")), "A7": ("A2", ("G3", "C#4", "E4")), "A": ("A2", ("A3", "C#4", "E4")),
+          "G": ("G2", ("G3", "B3", "D4")), "Em": ("E3", ("G3", "B3", "E4")), "E7": ("E3", ("G#3", "B3", "D4"))}
 
 
 def freq(name):
@@ -37,8 +51,33 @@ def freq(name):
 
 
 def voice(f, secs, kind):
-    n = int(secs * RATE)
+    n = max(1, int(secs * RATE))
     t = np.arange(n) / RATE
+    if kind == "horn":                 # warm and round, slow to speak: the low rising arpeggio
+        ph = 2 * np.pi * f * np.cumsum(1 + 0.003 * np.sin(2 * np.pi * 4.8 * t) * np.clip(t - 0.4, 0, 1)) / RATE
+        y = np.sin(ph) + 0.45 * np.sin(2 * ph) + 0.22 * np.sin(3 * ph) + 0.08 * np.sin(4 * ph)
+        env = np.minimum(1, t / 0.07) ** 2 * (0.85 + 0.15 * np.exp(-t * 2))
+        rel = min(n, int(0.12 * RATE))
+        env[-rel:] *= np.linspace(1, 0, rel)
+        return y * env
+    if kind == "violin":               # bowed: a soft start, vibrato that grows, a little bow noise
+        vib = 1 + 0.0055 * np.sin(2 * np.pi * 5.6 * t) * np.clip((t - 0.15) * 2.5, 0, 1)
+        ph = 2 * np.pi * f * np.cumsum(vib) / RATE
+        k = min(1.0, 500.0 / f)
+        y = np.sin(ph) + 0.32 * k * np.sin(2 * ph) + 0.16 * k * np.sin(3 * ph) + 0.07 * k * np.sin(4 * ph)
+        env = np.minimum(1, t / 0.06) * (0.8 + 0.2 * np.exp(-t * 3))
+        rel = min(n, int(0.1 * RATE))
+        env[-rel:] *= np.linspace(1, 0, rel)
+        return y * env
+    if kind == "pizz":                 # plucked strings: the second strain's short notes
+        ph = 2 * np.pi * f * t
+        y = np.sin(ph) + 0.35 * np.sin(2 * ph) * np.exp(-t * 20) + 0.1 * np.sin(3 * ph) * np.exp(-t * 30)
+        return y * np.minimum(1, t / 0.004) * np.exp(-t * 7)
+    if kind == "pad":                  # the string section under it all: three slightly apart voices
+        y = sum(np.sin(2 * np.pi * f * d * t + o) for d, o in ((1.0, 0.0), (1.003, 1.3), (0.997, 2.1)))
+        y = y * (1 + 0.15 * np.sin(2 * np.pi * 0.7 * t))
+        env = np.minimum(1, t / 0.3) * np.minimum(1, (secs - t) / 0.25).clip(0, 1)
+        return y * env / 3
     if kind == "lead":                 # a soft flute-and-strings: a little vibrato that comes in late
         vib = 1 + 0.004 * np.sin(2 * np.pi * 5.2 * t) * np.clip((t - 0.25) * 3, 0, 1)
         ph = 2 * np.pi * f * np.cumsum(vib) / RATE
@@ -58,37 +97,78 @@ def voice(f, secs, kind):
     return y * env
 
 
+def reverb(x, secs=1.1, wet=0.22, seed=12):
+    """A hall: the dry sound plus its convolution with a decaying burst of noise, done in blocks (the Zero
+    has little memory to spare)."""
+    rnd = np.random.default_rng(seed)
+    n = int(secs * RATE)
+    t = np.arange(n) / RATE
+    ir = rnd.uniform(-1, 1, n) * np.exp(-t / (secs / 5.0))
+    ir = band(ir, 120, 5000)
+    ir[:int(0.012 * RATE)] = 0                          # the first reflections come a little late
+    ir /= np.sqrt(np.sum(ir * ir))
+    block = 1 << 16
+    size = 1 << int(np.ceil(np.log2(block + n)))
+    H = np.fft.rfft(ir, size)
+    out = np.zeros(len(x) + n, np.float32)
+    for i in range(0, len(x), block):
+        seg = x[i:i + block]
+        y = np.fft.irfft(np.fft.rfft(seg, size) * H, size)[:len(seg) + n]
+        out[i:i + len(y)] += y.astype(np.float32)
+    return x + wet * out[:len(x)] * 3.0
+
+
 def danube():
-    """The whole theme as one buffer (it loops), about 36 seconds."""
+    """The whole waltz as one buffer, arranged: horns for the low rising theme, violins for the answers and
+    the long notes, pizzicato for the second strain's short ones, a string pad on the chords, plucked bass,
+    soft "pah-pah" - and a touch of hall. About 82 seconds."""
     notes = [(a, float(b)) for a, b in (w.split(":") for w in THEME.split())]
-    # the answers up in the fifth and sixth octaves come down one: on a small speaker they only squeak
-    notes = [(n[:-1] + str(int(n[-1]) - 1) if n != "r" and int(n[-1]) >= 5 and n[:-1] not in ("C", "C#") and
-              not (n[-1] == "5" and n[:-1] in ("D", "E")) else n, b) for n, b in notes]
     total = sum(b for _, b in notes)
-    out = np.zeros(int((total * BEAT + 1) * RATE), np.float32)
+    out = np.zeros(int((total * BEAT + 2) * RATE), np.float32)
+
+    def put(y, at):
+        i = int(at * RATE)
+        out[i:i + len(y)] += y[:max(0, len(out) - i)]
+    made = {}
+
+    def v(f, secs, kind):
+        """A note once made is reused: the tune repeats itself a lot (the Zero makes each in ~50 ms)."""
+        key = (round(f, 2), round(secs, 3), kind)
+        if key not in made:
+            made[key] = voice(f, secs, kind).astype(np.float32)
+        return made[key]
     pos = 0.0
     for name, beats in notes:
         if name != "r":
-            y = voice(freq(name), beats * BEAT * 0.96, "lead") * 0.5
-            i = int(pos * BEAT * RATE)
-            out[i:i + len(y)] += y
+            parts = name.split("+")
+            for nm in parts:
+                f = freq(nm)
+                if beats <= 0.5:
+                    kind, vol = "pizz", 0.55
+                elif f < 520:                          # below C5: the horns' arpeggio
+                    kind, vol = "horn", 0.42
+                else:
+                    kind, vol = "violin", 0.42
+                vol *= 1.0 if len(parts) == 1 else 0.66
+                put(v(f, beats * BEAT * 0.97, kind) * vol, pos * BEAT)
         pos += beats
     for bar, ch in enumerate(BARS.split()):
         root, tri = CHORDS[ch]
-        i = int(bar * 3 * BEAT * RATE)
-        y = voice(freq(root), BEAT * 1.2, "bass") * 0.42
-        y += voice(freq(root) * 2, BEAT * 1.2, "bass") * 0.12        # the octave: the speaker is small
-        out[i:i + len(y)] += y[:len(out) - i]
+        at = bar * 3 * BEAT
+        put(v(freq(root), BEAT * 1.2, "bass") * 0.36 + v(freq(root) * 2, BEAT * 1.2, "bass") * 0.1, at)
+        for nm in tri:                                 # the pad, an octave under the chord, the whole bar
+            put(v(freq(nm) / 2, 3 * BEAT + 0.15, "pad") * 0.07, at)
         for beat in (1, 2):
-            j = i + int(beat * BEAT * RATE)
             for nm in tri:
-                z = voice(freq(nm), BEAT * 0.6, "chord") * 0.1
-                out[j:j + len(z)] += z[:max(0, len(out) - j)]
-    out = out[:int(total * BEAT * RATE)]
-    f = np.fft.rfft(out)                               # a gentle roll-off above ~3 kHz
-    hz = np.fft.rfftfreq(len(out), 1.0 / RATE)
-    f *= 1 / (1 + (hz / 3000.0) ** 4)
-    out = np.fft.irfft(f, len(out)).astype(np.float32)
+                put(v(freq(nm), BEAT * 0.5, "chord") * 0.07, at + beat * BEAT)
+    out = out[:int((total * BEAT + 1.2) * RATE)]
+    out = reverb(out)
+    # a gentle roll-off above ~3.5 kHz; the transform padded to a power of two: at an awkward length numpy's
+    # FFT falls back to a method that wanted 600 MB and the PicoCalc's kernel killed us
+    size = 1 << int(np.ceil(np.log2(len(out))))
+    f = np.fft.rfft(out, size)
+    f *= (1 / (1 + (np.fft.rfftfreq(size, 1.0 / RATE) / 3500.0) ** 4)).astype(np.float32)
+    out = np.fft.irfft(f, size)[:len(out)].astype(np.float32)
     out *= 0.85 / max(1e-6, np.abs(out).max()) * lcd.VOLUME
     return out
 
@@ -96,11 +176,12 @@ def danube():
 # ---------------------------------------------------------------- sound effects
 
 def band(y, lo, hi):
-    """Keep lo..hi Hz (an FFT mask: the buffers are short)."""
-    f = np.fft.rfft(y)
-    hz = np.fft.rfftfreq(len(y), 1.0 / RATE)
+    """Keep lo..hi Hz (an FFT mask; padded to a power of two - see danube())."""
+    size = 1 << int(np.ceil(np.log2(max(2, len(y)))))
+    f = np.fft.rfft(y, size)
+    hz = np.fft.rfftfreq(size, 1.0 / RATE)
     f[(hz < lo) | (hz > hi)] = 0
-    return np.fft.irfft(f, len(y))
+    return np.fft.irfft(f, size)[:len(y)]
 
 
 def crash(heavy, seed=1):
@@ -353,11 +434,16 @@ class Sfx:
 
 
 class Music:
-    """The waltz on its own channel: start (it loops), fade out."""
+    """The waltz on its own channel: once through (it never loops - round and round it would soon grate),
+    a fade out; serenade() - now and then on the title."""
+    PAUSE = 180                        # seconds of quiet between plays on the title
+    TIMES = 5                          # and then no more
 
     def __init__(self):
         self.snd = None
         self.chan = None
+        self.plays = 0
+        self.last = 0.0
 
     def load(self, bufs):
         if self.snd is None and lcd.sound_enabled() and "danube" in bufs:
@@ -377,11 +463,22 @@ class Music:
         if not self.ready() or self.playing():
             return
         self.chan = pygame.mixer.Channel(5)
-        self.chan.play(self.snd, loops=-1, fade_ms=400)
+        self.chan.play(self.snd, fade_ms=400)
 
     def stop(self, ms=1200):
         if self.playing():
             self.chan.fadeout(ms)
+
+    def serenade(self):
+        """Call it every frame on the title: the waltz once, a few minutes' quiet, again - five times at most."""
+        now = time.monotonic()
+        if self.playing():
+            self.last = now
+            return
+        if self.plays < self.TIMES and (self.plays == 0 or now - self.last >= self.PAUSE) and self.ready():
+            self.start()
+            self.plays += 1
+            self.last = now
 
 
 def buffers():

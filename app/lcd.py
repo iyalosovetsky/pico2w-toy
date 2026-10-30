@@ -324,8 +324,11 @@ def _init_sound():
     if not SOUND or os.path.exists(SOUND_FLAG):
         return
     try:
+        got = pygame.mixer.get_init()
+        if got and got != (RATE, -16, 1):              # open already, not as we want it: again, in mono
+            pygame.mixer.quit()
         pygame.mixer.init(RATE, -16, 1, BUFFER)
-        _sound_ok = True
+        _sound_ok = pygame.mixer.get_init() == (RATE, -16, 1)
     except pygame.error:
         _sound_ok = False
 
@@ -583,6 +586,10 @@ def init():
     global _fb, _screen, _display
     if S != 1:
         _install_scaling()
+    if SOUND:
+        # pygame.init() opens the mixer itself - in stereo - and a later mixer.init() is then ignored:
+        # our mono sounds played twice as fast, an octave up. Ask for mono before it.
+        pygame.mixer.pre_init(RATE, -16, 1, BUFFER)
     pygame.init()
     if DISPLAY_MODE:
         _open_display()
