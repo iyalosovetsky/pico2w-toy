@@ -269,9 +269,9 @@ def font(name, px):
 
 BIG = lcd.S > 1
 f_title = font("DejaVuSans-Bold.ttf", 16 if BIG else 8)
-f_label = font("DejaVuSans.ttf", 13 if BIG else 8)
-f_bold = font("DejaVuSans-Bold.ttf", 13 if BIG else 8)
-f_small = font("DejaVuSans.ttf", 11 if BIG else 7)
+f_label = font("DejaVuSans.ttf", 18 if BIG else 8)
+f_bold = font("DejaVuSans-Bold.ttf", 18 if BIG else 8)
+f_small = font("DejaVuSans.ttf", 13 if BIG else 7)
 HAT = lcd.DEVICE == "hat144"
 
 
@@ -344,7 +344,7 @@ def draw(bt, items, sel, top, confirm):
         status, color = "вмикаю…", DIM
     elif not bt.powered:
         status, color = "адаптер вимкнено", RED
-    elif bt.discovering:
+    elif bt.discovering or bt.scan_until > time.monotonic():      # asked for: bluez says so a moment later
         status, color = "пошук" + "." * (int(time.monotonic() * 2) % 4), GREEN
     else:
         status, color = "пошук зупинено", DIM
