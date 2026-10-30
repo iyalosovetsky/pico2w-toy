@@ -9,6 +9,7 @@ smoothly scaled up on the PicoCalc). The menu starts it after a while without a 
 button - back to the menu.
 """
 import math
+import sys
 import time
 
 import numpy as np
@@ -244,7 +245,7 @@ def main(seconds=None, switch=SWITCH_S):
     while True:
         now = time.monotonic()
         if seconds is not None and now - t0 > seconds:
-            return
+            return "timeout"
         # ms, like the dashboard's ticks; kept small - numpy 2 refuses int32 maths with bigger Python ints
         t = int(now * 1000 * SPEED) % (1 << 27)
         kind = int((now - t0) // switch) % len(ANIMS)
@@ -257,9 +258,13 @@ def main(seconds=None, switch=SWITCH_S):
 
 
 if __name__ == "__main__":
+    # screensaver.py [seconds]: the menu's turn - after that, exit code 3 (the menu goes on to the next one)
+    code = 0
     try:
-        main()
+        turn = float(sys.argv[1]) if len(sys.argv) > 1 else None
+        code = 3 if main(turn) == "timeout" else 0
     finally:
         screen.fill((0, 0, 0))
         lcd.flip()
         lcd.quit()
+    sys.exit(code)

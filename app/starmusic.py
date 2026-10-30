@@ -447,6 +447,12 @@ class Sfx:
 
     def __init__(self):
         self.snd = {}
+        self.gain = 1.0                    # the demo plays quieter
+
+    def set_gain(self, gain):
+        self.gain = gain
+        for snd in self.snd.values():
+            snd.set_volume(gain)
 
     def load(self, bufs):
         """The sounds from buffers() (made in a worker, turned into mixer sounds here)."""
@@ -456,11 +462,13 @@ class Sfx:
             for name in self.MAKERS:
                 if name in bufs and name not in self.snd:
                     self.snd[name] = pygame.mixer.Sound(buffer=bufs[name].tobytes())
+                    self.snd[name].set_volume(self.gain)
 
     def get(self, name):
         if name not in self.snd:
             y = self.MAKERS[name]() * 0.9 * lcd.VOLUME
             self.snd[name] = pygame.mixer.Sound(buffer=(np.clip(y, -1, 1) * 32000).astype(np.int16).tobytes())
+            self.snd[name].set_volume(self.gain)
         return self.snd[name]
 
     def play(self, name):
@@ -517,6 +525,7 @@ class Music:
 
     def __init__(self):
         self.snd = None
+        self.gain = 1.0
         self.chan = None
         self.plays = 0
         self.last = 0.0
@@ -539,6 +548,7 @@ class Music:
         if not self.ready() or self.playing():
             return
         self.chan = pygame.mixer.Channel(5)
+        self.snd.set_volume(self.gain)
         self.chan.play(self.snd, fade_ms=400)
 
     def stop(self, ms=1200):

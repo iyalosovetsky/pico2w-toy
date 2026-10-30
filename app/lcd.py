@@ -137,6 +137,7 @@ _grabbing = True      # grab inputs at all (False while a child app runs)
 _grab_keyboards = True  # False while the USB keyboard is lent to the HDMI console
 _hat_fds = set()      # HAT buttons (gpio-key), as opposed to keyboards
 _sounds = {}
+GAIN = 1.0           # play()'s sounds quieter (STAR TRADER's demo)
 _held_arrows = set()  # pygame arrow keys currently held on a keyboard
 _shift = set()        # Shift keys held (evdev codes)
 _ctrl = set()         # Ctrl keys held
@@ -383,6 +384,7 @@ def play(name):
         y = np.concatenate(parts) * VOLUME
         snd = pygame.mixer.Sound(buffer=(np.clip(y, -1, 1) * 32000).astype(np.int16).tobytes())
         _sounds[name] = snd
+    snd.set_volume(GAIN)
     snd.play()
 
 

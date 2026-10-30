@@ -25,6 +25,7 @@ import json
 import math
 import os
 import random
+import sys
 import threading
 import time
 
@@ -178,8 +179,19 @@ def save_conf(conf):
         pass
 
 
+DEMO = None                            # the demo's driver while it plays (see Demo)
+
+
+def events():
+    """pygame's events - or, while the demo plays, its own keys (a real one ends it)."""
+    return DEMO.events() if DEMO is not None else pygame.event.get()
+
+
 def show():
-    """The frame onto the LCD (scaled down on the HAT, centred on a wide monitor)."""
+    """The frame onto the LCD (scaled down on the HAT, centred on a wide monitor); «ДЕМО» in the corner while
+    the game plays itself."""
+    if DEMO is not None:
+        DEMO.label(frame)
     if OUT != W:
         img = pygame.transform.smoothscale(frame, (OUT, OUT))
     else:
@@ -694,6 +706,8 @@ class Game:
         self.loaded = False
         self.dust = gfx.stardust_init()
         self.keys = set()
+        self.demo = False                              # playing itself: nothing saved
+        self.bot = None                                # ... and flown by the demo's pilot
         self.reset_ship()
 
     def reset_ship(self):
@@ -776,6 +790,8 @@ class Game:
         return CARGO_MAX + (15 if "bay" in self.equip else 0)
 
     def save(self):
+        if self.demo:
+            return
         data = {"galaxy": self.galnum, "here": self.here, "target": self.target, "credits": round(self.credits, 1), "cargo": self.cargo,
                 "kills": self.kills, "legal": self.legal, "missions": self.missions, "missiles": self.missiles, "equip": sorted(self.equip),
                 "laser": self.laser,
@@ -1001,6 +1017,8 @@ class Game:
                 self.say("Комп'ютер стикування вимкнено")
         if self.autodock:
             return self.autopilot(dt)
+        if self.bot is not None:
+            return self.bot.fly(dt)
         self.roll += clamp(roll_t - self.roll, -ROLL_ACC * dt, ROLL_ACC * dt)
         self.pitch += clamp(pitch_t - self.pitch, -PITCH_ACC * dt, PITCH_ACC * dt)
         self.yaw = 0.0
@@ -1781,7 +1799,7 @@ def ask(game, items, title=None, sel=0, back=None):
         draw_list(items, sel, y, box.bottom - 6, f, ((gfx.WIRE, gfx.WIRE_DIM) if wire else
                                                        ((255, 210, 90), (170, 190, 220))))
         show()
-        for ev in pygame.event.get():
+        for ev in events():
             if ev.type == pygame.QUIT:
                 return back
             if ev.type != pygame.KEYDOWN:
@@ -1837,12 +1855,13 @@ def title(game):
     if saved:
         sgal = game.gal if int(saved.get("galaxy", 0)) == game.galnum else galaxy.generate(int(saved.get("galaxy", 0)))[0]
         sname = sgal[int(saved.get("here", 0)) % len(sgal)].name
-        prompt = ("Enter - продовжити: %s, %.1f Кр" % (sname, saved.get("credits", 0)), "N - нова гра · Tab - вигляд")
+        prompt = ("Enter - продовжити: %s, %.1f Кр" % (sname, saved.get("credits", 0)),
+                  "N - нова гра · D - демо · Tab - вигляд")
     else:
-        prompt = ("Натисніть пробіл, командире", "Tab - вигляд · Esc - вихід")
+        prompt = ("Натисніть пробіл, командире", "D - демо · Tab - вигляд · Esc - вихід")
     want = None
     while True:
-        for ev in pygame.event.get():
+        for ev in events():
             if ev.type == pygame.QUIT:
                 return "quit"
             if ev.type != pygame.KEYDOWN:
@@ -1854,6 +1873,9 @@ def title(game):
             elif ev.key == pygame.K_n and saved:
                 lcd.play("select")
                 want = "new"
+            elif ev.key == pygame.K_d and not hat:
+                lcd.play("select")
+                want = "demo"
             elif ev.key == pygame.K_TAB or (hat and ev.key == pygame.K_2):
                 game.toggle_style()
             elif ev.key == pygame.K_ESCAPE or (hat and ev.key == pygame.K_3):
@@ -1923,7 +1945,7 @@ def ships_book(game):
         now = time.monotonic()
         dt = min(0.1, now - last)
         last = now
-        for ev in pygame.event.get():
+        for ev in events():
             if ev.type == pygame.QUIT:
                 return
             if ev.type == pygame.KEYUP:
@@ -1988,7 +2010,7 @@ def station_screen(game):
         items = ["Злетіти", "Ринок", "Обладнання", "Заправитись" + (" (%.1f Кр)" % (need * galaxy.FUEL_PRICE) if need > 0.05 else " - повний бак"),
                  "Галактична карта", "Дані про систему", "Статус командира", "Розпізнавання кораблів",
                  "Вигляд: " + STYLE_NAMES[game.style], "Вийти"]
-        for ev in pygame.event.get():
+        for ev in events():
             if ev.type == pygame.QUIT:
                 return "quit"
             if ev.type != pygame.KEYDOWN:
@@ -2080,7 +2102,7 @@ def notice_screen(game, title, text):
     total = sum(len(l) for l in lines_)
     while True:
         n = int((time.monotonic() - t0) * 45)              # letters so far
-        for ev in pygame.event.get():
+        for ev in events():
             if ev.type == pygame.QUIT:
                 return
             if ev.type == pygame.KEYDOWN:
@@ -2142,7 +2164,7 @@ def market_screen(game):
     row = 14
     top = 40
     while True:
-        for ev in pygame.event.get():
+        for ev in events():
             if ev.type == pygame.QUIT:
                 return
             if ev.type != pygame.KEYDOWN:
@@ -2257,7 +2279,7 @@ def shop_screen(game):
         tech = game.system().tech
         sold = [e for e in EQUIPMENT if e[3] <= tech]
         sel = min(sel, len(sold) - 1)
-        for ev in pygame.event.get():
+        for ev in events():
             if ev.type == pygame.QUIT:
                 return
             if ev.type != pygame.KEYDOWN:
@@ -2337,7 +2359,7 @@ def status_screen(game):
     fb = gfx.font("DejaVuSansCondensed-Bold.ttf", 12)
     fh = gfx.font("DejaVuSans-Bold.ttf", 15)
     while True:
-        for ev in pygame.event.get():
+        for ev in events():
             if ev.type == pygame.QUIT:
                 return
             if ev.type == pygame.KEYDOWN:
@@ -2421,7 +2443,7 @@ def data_screen(game, idx):
     fh = gfx.font("DejaVuSans-Bold.ttf", 16)
     t0 = time.monotonic()
     while True:
-        for ev in pygame.event.get():
+        for ev in events():
             if ev.type == pygame.QUIT:
                 return
             if ev.type == pygame.KEYDOWN:
@@ -2522,7 +2544,7 @@ def chart(game):
         now = time.monotonic()
         dt = min(0.1, now - last)
         last = now
-        for ev in pygame.event.get():
+        for ev in events():
             if ev.type == pygame.QUIT:
                 return
             if ev.type == pygame.KEYUP:
@@ -2737,7 +2759,7 @@ def _flight(game):
         now = time.monotonic()
         dt = min(0.08, now - last)
         last = now
-        for ev in pygame.event.get():
+        for ev in events():
             if ev.type == pygame.QUIT:
                 return "quit"
             hat = getattr(ev, "hat", False)
@@ -2997,7 +3019,7 @@ def explode(game):
         t, dt = now - t0, min(0.08, now - last)
         last = now
         skip = False
-        for ev in pygame.event.get():
+        for ev in events():
             if ev.type == pygame.KEYDOWN and t > 2.5:
                 skip = True
         if t > 9.0 or skip:
@@ -3027,6 +3049,359 @@ def explode(game):
         clock.tick(30)
 
 
+# ---------------------------------------------------------------- the demo: the game plays itself
+
+DEMO_VOLUME = 0.3                      # the demo's sounds against the game's (the menu's clicks too)
+DEMO_KEYS = {"up": pygame.K_UP, "down": pygame.K_DOWN, "left": pygame.K_LEFT, "right": pygame.K_RIGHT,
+             "enter": pygame.K_RETURN, "esc": pygame.K_ESCAPE, "z": pygame.K_z}
+
+
+class Demo:
+    """The demo's hand on the keys: presses on a timetable for the screens it goes through (the station, the
+    market, the chart), and an eye on the real ones - any key, button or touch ends it: every screen then gets
+    a QUIT and an Esc and goes back. limit - seconds, then it ends by itself (the menu's screensaver turn)."""
+
+    def __init__(self, limit=None):
+        self.t0 = time.monotonic()
+        self.limit = limit
+        self.stopped = False                           # by a real key
+        self.timed_out = False
+        self.plan = []                                 # (when, KEYDOWN / KEYUP, key)
+        self.font = gfx.font("DejaVuSans-Bold.ttf", 10)
+
+    def play(self, script):
+        """From now: "wait 1.5; down; enter; hold up 0.8" - a press is a tenth of a second."""
+        t = time.monotonic()
+        for word in script.split(";"):
+            w = word.split()
+            if not w:
+                continue
+            if w[0] == "wait":
+                t += float(w[1])
+                continue
+            name, hold = (w[1], float(w[2])) if w[0] == "hold" else (w[0], 0.1)
+            self.plan += [(t, pygame.KEYDOWN, DEMO_KEYS[name]), (t + hold, pygame.KEYUP, DEMO_KEYS[name])]
+            t += hold + 0.05
+        self.plan.sort(key=lambda p: p[0])
+
+    def over(self):
+        if self.limit and time.monotonic() - self.t0 > self.limit:
+            self.timed_out = True
+        return self.stopped or self.timed_out
+
+    def events(self):
+        real = pygame.event.get()
+        if any(e.type in (pygame.QUIT, pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN) for e in real):
+            self.stopped = True
+        if self.over():
+            self.plan = []
+            return [pygame.event.Event(pygame.QUIT),
+                    pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE, mod=0, unicode="", hat=False, scancode=0)]
+        now, out = time.monotonic(), []
+        while self.plan and self.plan[0][0] <= now:
+            _, kind, key = self.plan.pop(0)
+            out.append(pygame.event.Event(kind, key=key, mod=0, unicode="", hat=False, scancode=0))
+        return out
+
+    def label(self, surf):
+        if int(time.monotonic() * 1.5) % 3:
+            img = self.font.render("ДЕМО", True, (255, 210, 90))
+            surf.blit(img, (W - img.get_width() - 6, VH - img.get_height() - 4))
+
+
+class Bot:
+    """The demo's pilot, phase by phase: out of the slot with the station in the rear view; the chart and a
+    star, hyperspace; pirates waiting there - the fight and the chase; the canisters and capsules scooped;
+    the jump drive to the station and the docking computer in. Pirates turning up on the way are fought."""
+
+    def __init__(self, game):
+        self.g = game
+        self.after = "scoop"                           # where a fight goes on to
+        self.dock_by_force = False
+        self.seen = 0.0                                # when an enemy was last about
+        self.target = None
+        self.set("depart")
+
+    def set(self, phase):
+        self.phase, self.since = phase, self.g.t
+
+    def age(self):
+        return self.g.t - self.since
+
+    def enemies(self, reach):
+        g = self.g
+        return [s for s in g.world.ships if s.hostile and s.role not in ("missile", "emissile")
+                and length(s.pos - g.pos) < reach]
+
+    def steer(self, target, speed, dt):
+        """Nose to the point (yaw and pitch, a little bank), the speed to `speed`; the point in our frame."""
+        g = self.g
+        tc = g.R.T @ (target - g.pos)
+        yaw_t = clamp(2.2 * math.atan2(tc[0], tc[2]), -PITCH_MAX, PITCH_MAX)
+        pitch_t = clamp(2.2 * math.atan2(tc[1], tc[2]), -PITCH_MAX, PITCH_MAX)
+        roll_t = clamp(0.4 * yaw_t, -0.5, 0.5)
+        g.roll += clamp(roll_t - g.roll, -ROLL_ACC * dt, ROLL_ACC * dt)
+        g.pitch += clamp(pitch_t - g.pitch, -PITCH_ACC * dt, PITCH_ACC * dt)
+        g.yaw += clamp(yaw_t - g.yaw, -PITCH_ACC * dt, PITCH_ACC * dt)
+        g.speed += clamp(speed - g.speed, -ACCEL * dt, ACCEL * dt)
+        return tc
+
+    def fly(self, dt):
+        """Game.controls' place while the bot flies."""
+        g, w = self.g, self.g.world
+        g.keys.discard("fire")
+        ph = self.phase
+        if ph == "fight" and self.target is not None:
+            s = self.target
+            d = s.pos - g.pos
+            dist = length(d)
+            if dist < 650:                             # too close: pull up and away, come round again
+                tc = self.steer(g.pos - d + g.R[:, 1] * 900, MAX_SPEED, dt)
+                return
+            tc = self.steer(s.pos, MAX_SPEED if dist > 2600 else 0.55 * MAX_SPEED, dt)
+            r = s.me.radius * 0.7
+            if 0 < tc[2] < LASER_RANGE * 0.8 and tc[0] * tc[0] + tc[1] * tc[1] < r * r:
+                g.keys.add("fire")
+            return
+        if ph == "scoop" and self.target is not None:
+            dist = length(self.target.pos - g.pos)
+            self.steer(self.target.pos, MAX_SPEED * (0.8 if dist > 2500 else 0.3), dt)
+            return
+        if ph in ("jump", "dock") and not w.deep:
+            self.steer(w.slot_mouth(4000), MAX_SPEED, dt)
+            return
+        if ph == "arrive" and not w.deep:
+            self.steer(w.st_pos, 0.6 * MAX_SPEED, dt)
+            return
+        if ph == "depart":                             # straight out along the slot's axis
+            self.steer(w.slot_mouth(1e6), MAX_SPEED, dt)
+            return
+        self.steer(g.pos + g.R[:, 2] * 1e5, MAX_SPEED, dt)
+
+    def step(self, dt):
+        """The phase's business; "chart" - the loop is to open the chart now."""
+        g, w = self.g, self.g.world
+        ph = self.phase
+        foes = self.enemies(9000)
+        if foes and ph in ("depart", "arrive", "scoop", "jump", "dock"):
+            self.after = ph if ph != "arrive" else "scoop"
+            g.autodock = False
+            self.set("fight")
+            g.set_view(0)
+            return None
+        if ph == "depart":
+            g.view = 1 if self.age() < 5.5 else 0      # the station and the planet behind us first
+            if self.age() > 11:
+                return "chart"
+        elif ph == "hyper":
+            if g.hyper_t is None and self.age() > 2:   # a countdown that did not start: start it
+                g.fuel = galaxy.JUMP_MAX
+                if g.target is None:
+                    g.target = self.pick_star()
+                start_hyper(g)
+        elif ph == "arrive":
+            if self.age() > 3.5:
+                if not w.deep:
+                    w.pirates(g)                       # an ambush: they were waiting at the jump point
+                self.after = "scoop"
+                self.set("fight")
+        elif ph == "fight":
+            foes = self.enemies(16000)
+            if foes:
+                self.seen = g.t
+                if self.target not in foes:
+                    self.target = min(foes, key=lambda s: length(s.pos - g.pos))
+                s = self.target
+                dist = length(s.pos - g.pos)
+                if g.lock is s and g.missiles and dist > 1800 and random.random() < 0.25 * dt:
+                    g.fire_missile()
+                if "ecm" in g.equip and any(m.role == "emissile" and length(m.pos - g.pos) < 4000 for m in w.ships) \
+                        and random.random() < 1.5 * dt:
+                    g.ecm()
+            else:
+                self.target = None
+            if (not foes and g.t - self.seen > 3) or self.age() > 100:
+                self.target = None
+                self.set(self.after if self.after != "fight" else "scoop")
+        elif ph == "scoop":
+            loose = [s for s in w.ships if s.role == "cargo" and length(s.pos - g.pos) < 10000]
+            if self.target not in loose:
+                self.target = min(loose, key=lambda s: length(s.pos - g.pos)) if loose else None
+            if self.target is None or self.age() > 35:
+                self.target = None
+                self.set("chart_next" if w.deep else "jump")
+        elif ph == "chart_next":                       # stranded between the stars: on to the target
+            return "chart"
+        elif ph == "jump":
+            far = length(w.st_pos - g.pos)
+            tc = g.R.T @ (w.slot_mouth(4000) - g.pos)
+            if far < SAFE_ZONE * 0.85:
+                self.set("dock")
+            elif g.jump_t <= 0 and tc[2] > 0.99 * length(tc) and not g.mass_locked():
+                start_jump(g)
+        elif ph == "dock":
+            if not g.autodock and length(w.st_pos - g.pos) < SAFE_ZONE * 0.95 and self.age() > 1.5:
+                toggle_autodock(g)
+            if self.age() > 240:                       # it will not go in: call it docked
+                self.dock_by_force = True
+        return None
+
+    def pick_star(self):
+        """A star in reach, one of the nearer few."""
+        g = self.g
+        here = g.system()
+        near = sorted((s for s in g.gal if s is not here and here.dist(s) <= g.fuel), key=here.dist)
+        return random.choice(near[:4]).idx if near else min((s for s in g.gal if s is not here), key=here.dist).idx
+
+    def chart_script(self):
+        """The chart's keys: the whole galaxy and back, a tilt, a few stars along, Enter on one in reach."""
+        g = self.g
+        here = g.system()
+        order = sorted(range(len(g.gal)), key=lambda i: here.dist(g.gal[i]))[1:]
+        want = self.pick_star()
+        k = order.index(want) if want in order else 0
+        return "wait 1.6; z; wait 3.2; hold up 0.7; wait 1; z; wait 2; " + "right; wait 0.8; " * k + "wait 1.2; enter"
+
+
+def demo_commander(game):
+    """A fresh commander for the demo, fitted out for a good show."""
+    game.new_game()
+    game.credits = 1500.0
+    game.laser = "beam"
+    game.equip = {"ecm", "energy"}
+    game.missiles = MISSILES
+    game.dock()
+    game.notices = []
+
+
+STATION_SCRIPTS = (
+    "wait 2.5; down; wait 0.7; enter; wait 1.5; down; wait 0.5; down; wait 0.5; down; wait 0.6; right; wait 0.5; "
+    "right; wait 0.5; right; wait 1.2; down; wait 0.5; down; wait 1.6; esc; wait 0.8; up; wait 0.9; enter",
+    "wait 2.5; " + "down; wait 0.35; " * 7 + "wait 0.5; enter; wait 3.5; right; wait 3.2; right; wait 3.2; esc; "
+    "wait 0.8; " + "up; wait 0.3; " * 7 + "wait 0.6; enter",
+)
+
+
+def demo_flight(game, d):
+    """One flight of the demo, the bot at the controls: "docked", "dead" or "stop"."""
+    game.reset_ship()
+    game.keys.clear()
+    bot = game.bot = Bot(game)
+    while not game.world.planet.prewarm():
+        events()
+    tunnel(game, False)
+    last = time.monotonic()
+    try:
+        while True:
+            now = time.monotonic()
+            dt = min(0.08, now - last)
+            last = now
+            events()                                   # the demo's: a real key ends it
+            if d.over():
+                return "stop"
+            if bot.step(dt) == "chart":
+                game.engine.stop()
+                game.keys.clear()
+                d.play(bot.chart_script())
+                chart(game)
+                if d.over():
+                    return "stop"
+                if game.target is None or game.target == game.here:
+                    game.target = bot.pick_star()
+                game.fuel = galaxy.JUMP_MAX
+                start_hyper(game)
+                bot.set("hyper")
+                last = time.monotonic()
+                continue
+            v0 = game.speed
+            r = game.update(dt)
+            push = min(1.0, abs(game.speed - v0) / max(1e-3, dt) / ACCEL) if r is None else 0.0
+            game.thrust += (push - game.thrust) * min(1.0, dt * (12.0 if push > game.thrust else 4.5))
+            game.engine.set(game.speed / MAX_SPEED, on=r is None and game.jump_t <= 0, thrust=game.thrust)
+            if r == "hyper":
+                hyperspace(game)
+                bot.set("arrive")
+                last = time.monotonic()
+                continue
+            if game.autodock:
+                if not game.dock_music:
+                    game.music.start()
+                    game.dock_music = True
+            else:
+                game.dock_music = False
+                game.music.stop()
+            if r == "docked" or bot.dock_by_force:
+                lcd.play("win")
+                tunnel(game, True)
+                return "docked"
+            if r == "dead":
+                explode(game)
+                return "dead"
+            game.draw(dt)
+            clock.tick(30)
+    finally:
+        game.bot = None
+        game.engine.stop()
+        game.keys.clear()
+
+
+def demo(game, limit=None):
+    """The game playing itself (d on the title, or startrader.py --demo - the menu's screensaver turn): the
+    station (the market or the ship book), the launch, the chart, hyperspace, a fight, the jump drive, docking -
+    round again; every third round in the classic look. Nothing is saved; any key ends it.
+    Returns "timeout" (the limit came) or "stopped"."""
+    global DEMO
+    d = DEMO = Demo(limit)
+    style = game.style
+    game.demo = True
+    game.sfx.set_gain(DEMO_VOLUME)
+    game.music.gain = DEMO_VOLUME
+    lcd.GAIN = DEMO_VOLUME                             # the clicks of the screens it goes through
+    try:
+        demo_commander(game)
+        rnd = 0
+        while not d.over():
+            game.style = "wire" if rnd % 3 == 2 else "modern"     # not set_style: the player's choice stays saved
+            game.notices = []
+            d.play(STATION_SCRIPTS[rnd % len(STATION_SCRIPTS)])
+            if station_screen(game) != "launch" or d.over():
+                break
+            r = demo_flight(game, d)
+            if r == "stop":
+                break
+            if r == "dead":
+                demo_commander(game)
+            else:
+                game.fuel = galaxy.JUMP_MAX
+                game.dock()
+            rnd += 1
+    finally:
+        DEMO = None
+        game.sfx.set_gain(1.0)
+        game.music.gain = lcd.GAIN = 1.0
+        game.demo = False
+        game.bot = None
+        game.style = style
+        game.music.stop(300)
+        game.engine.stop()
+        pygame.event.clear()
+    return "timeout" if d.timed_out and not d.stopped else "stopped"
+
+
+def demo_main():
+    """startrader.py --demo [seconds]: straight into the demo (the menu runs it as a screensaver, the sound off)."""
+    splash()
+    game = Game()
+    limit = None
+    k = sys.argv.index("--demo")
+    if len(sys.argv) > k + 1:
+        try:
+            limit = float(sys.argv[k + 1])
+        except ValueError:
+            pass
+    return demo(game, limit)
+
+
 def splash():
     """The name at once, before the second or two the galaxy takes to grow."""
     frame.fill((3, 3, 10))
@@ -3042,6 +3417,9 @@ def main():
         r = title(game)
         if r == "quit":
             return
+        if r == "demo":
+            demo(game)
+            continue
         game.new_game() if r == "new" else game.load()
         game.dock()
         while True:
@@ -3060,9 +3438,14 @@ def main():
 
 
 if __name__ == "__main__":
+    code = 0
     try:
-        main()
+        if "--demo" in sys.argv:                       # the menu's screensaver turn: 3 - the time is up
+            code = 3 if demo_main() == "timeout" else 0
+        else:
+            main()
     finally:
         screen.fill((0, 0, 0))
         lcd.flip()
         lcd.quit()
+    sys.exit(code)

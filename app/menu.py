@@ -428,17 +428,20 @@ def poweroff():
         clock.tick(5)
 
 
-def run(cmd, cwd):
+def run(cmd, cwd, env=None):
+    """Run a program on the screen; its exit code."""
     screen.fill(BG)
     lcd.flip()
     lcd.release_inputs()  # the game grabs the keys itself
     lcd.release_audio()   # ... and opens the sound card
-    subprocess.run(cmd, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    rc = subprocess.run(cmd, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        env=dict(os.environ, **env) if env else None).returncode
     lcd.resume_audio()
     lcd.grab_inputs()
     lcd.flush_buttons()
     global idle_t
     idle_t = time.monotonic()   # the time in the app was not idle time: back in the menu, the count starts anew
+    return rc
 
 
 def launch(item):
@@ -488,6 +491,12 @@ press_t = None  # when OK went down: a short press runs the item, a long one ope
 query = ""      # letters typed: the items found in every folder instead of the folder's
 idle_t = time.monotonic()   # the last key: the screensaver after saver_after() seconds without one
 SAVER = next((it for it in ITEMS if it[0] == "SCREENSAVER"), None)
+# the screensavers take turns, SAVER_TURN seconds each (exit code 3 - the turn is over): the fractals and STAR
+# TRADER playing itself (its sounds turned down)
+SAVER_TURN = 300
+SAVERS = ([(SAVER[2], SAVER[3], None)] if SAVER else []) + \
+    [(["/usr/bin/python3", HERE + "/startrader.py", "--demo"], HERE, None) for it in ITEMS if it[0] == "STAR TRADER"]
+saver_i = 0
 AQUARIUM = next((it for it in ITEMS if it[0] == "AQUARIUM"), None)
 if AQUARIUM and aquarium_at_boot():   # the device has just been switched on: the tank first, the menu after
     run(AQUARIUM[2], AQUARIUM[3])
@@ -563,8 +572,15 @@ while running:
     if keyed:
         idle_t = time.monotonic()   # after what the key opened (an app, the help): idle starts from now
     wait = saver_after()
-    if SAVER and wait and time.monotonic() - idle_t > wait:
-        run(SAVER[2], SAVER[3])         # any key ends it and comes back here
+    if SAVERS and wait and time.monotonic() - idle_t > wait:
+        while True:                     # any key ends one and comes back here; its time up - the next one
+            cmd, cwd, env = SAVERS[saver_i % len(SAVERS)]
+            saver_i += 1
+            if len(SAVERS) == 1:
+                run(cmd, cwd, env)
+                break
+            if run(cmd + [str(SAVER_TURN)], cwd, env) != 3:
+                break
         idle_t = time.monotonic()
         shown = None
     state = (folders.current, sel, battery() if HAS_BATTERY else None, lcd.sound_enabled(),
