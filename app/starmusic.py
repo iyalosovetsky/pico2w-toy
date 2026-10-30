@@ -119,6 +119,59 @@ def crash(heavy, seed=1):
     return y / np.abs(y).max()
 
 
+# the 8-bit chips' noise: a 15-bit shift register (tap bits 0 and 1) - "white" - or a short loop - "periodic"
+_lfsr = {}
+
+
+def lfsr(periodic=False):
+    if periodic not in _lfsr:
+        if periodic:
+            seq = np.array([1.0] + [-1.0] * 15)
+        else:
+            r, out = 0x4000, []
+            for _ in range(32767):
+                bit = (r ^ (r >> 1)) & 1
+                r = (r >> 1) | (bit << 14)
+                out.append(1.0 if r & 1 else -1.0)
+            seq = np.array(out)
+        _lfsr[periodic] = seq
+    return _lfsr[periodic]
+
+
+def chip_noise(clock, periodic=False):
+    """The register shifted at clock(t) Hz (an array a sample)."""
+    seq = lfsr(periodic)
+    idx = (np.cumsum(clock) / RATE).astype(np.int64)
+    return seq[idx % len(seq)]
+
+
+def stepped(x, frame=1 / 50.0):
+    """Hold each value for a 50 Hz frame, as the old games set their sound chips once a frame."""
+    k = max(1, int(frame * RATE))
+    return np.repeat(x[::k], k)[:len(x)]
+
+
+def chip_vol(level):
+    """A chip's 4-bit volume: 2 dB a step, 15 - loud, 0 - silent."""
+    level = np.clip(np.round(level), 0, 15)
+    return np.where(level > 0, 10 ** (-(15 - level) * 2 / 20), 0.0)
+
+
+def crash_chip():
+    """The station knock the 8-bit way: a crunch of white noise sliding down in steps, a square-wave thump,
+    a rattle of periodic noise - every value changed once a frame, the volume in 2 dB steps."""
+    n = int(1.3 * RATE)
+    t = np.arange(n) / RATE
+    clock = stepped(9000 * np.exp(-t * 3.2) + 350)
+    crunch = chip_noise(clock) * chip_vol(stepped(15 - t * 15 / 1.1))
+    tf = stepped(140 * np.exp(-t * 7) + 32)
+    thump = np.sign(np.sin(2 * np.pi * np.cumsum(tf) / RATE)) * chip_vol(stepped(15 - t * 15 / 0.42))
+    late = np.clip(t - 0.1, 0, None)
+    rattle = chip_noise(stepped(1800 * np.exp(-late * 4) + 120), True) * chip_vol(stepped(np.where(t < 0.1, 0, 12 - late * 12 / 0.6)))
+    y = 0.55 * crunch + 0.5 * thump + 0.3 * rattle
+    return y / np.abs(y).max()
+
+
 def explosion(seed=2, secs=2.6):
     """A blast: a noise burst falling from bright to a rumble, crackles of debris after it."""
     rnd = np.random.default_rng(seed)
@@ -190,7 +243,7 @@ def lock():
 class Sfx:
     """The game's own effects, made on first use and kept."""
 
-    MAKERS = {"crash_heavy": lambda: crash(True), "crash": lambda: crash(False), "explosion": explosion,
+    MAKERS = {"crash_heavy": crash_chip, "crash": lambda: crash(False), "explosion": explosion,
               "boom": lambda: explosion(7, 1.7), "laser": laser, "zap": zap, "missile": missile, "lock": lock}
 
     def __init__(self):
