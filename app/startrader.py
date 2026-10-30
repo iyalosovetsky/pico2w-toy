@@ -11,9 +11,14 @@ Stage 2: the galaxy - 256 systems, each its own planet, sun and station; the mar
 system data, hyperspace with a countdown, the in-system jump drive, a save at every docking. Ships blown
 up leave cargo canisters to scoop; our own end - the camera circles the wreck and draws away.
 
+Stage 3-4: pirates (by how lawless the system is) who come in on our tail, shoot and sometimes fire a
+missile; bounties, crimes and the police, combat ranks; misjumps into deep space with an alien hive and its
+drones; the equipment shop (missiles, the big bay, the ECM, beam and military lasers, the energy unit, the
+escape capsule).
+
 Keys: ← → (or [ ]) - roll, ↑ ↓ - pitch (↑ dives, like a stick; i - the other way), Space / = - faster,
 / / - - slower, a / Enter - the laser, m - a missile at the ship in the sights, c - the docking computer,
-g - the chart, h - hyperspace, j - the jump drive, Tab - the look, Esc - the pause menu. HAT: the joystick, KEY1 faster,
+e - the ECM, g - the chart, h - hyperspace, j - the jump drive, Tab - the look, Esc - the pause menu. HAT: the joystick, KEY1 faster,
 KEY2 slower, KEY3 - the menu.
 """
 import json
@@ -52,15 +57,34 @@ SCAN_RANGE = 12000.0
 SUN_DIST, SUN_R = 2.5e6, 1.2e5
 
 STYLE_NAMES = {"modern": "сучасний", "wire": "класичний"}
-HP = {"osa": 2, "sokil": 3, "chumak": 4, "mazha": 6, "shulika": 3, "vulyk": 12, "truten": 1, "rocket": 1,
+HP = {"osa": 3, "sokil": 5, "chumak": 4, "mazha": 6, "shulika": 6, "vulyk": 12, "truten": 1, "rocket": 1,
       "kapsula": 1, "kontejner": 1, "asteroid": 3}                 # laser hits a ship takes
 LASER_RANGE = 7000.0
 LASER_EVERY = 0.16                    # seconds between pulses
 MISSILES = 3
-CARGO_MAX = 20                        # tonnes (every unit of any good takes a place)
+MISSILES_MAX = 4
+# the shop: key, name, price, the least tech level that sells it, what it does
+EQUIPMENT = [
+    ("missile", "Ракета", 30, 1, "самонавідна, до 4 на борту"),
+    ("fuel", "Повний бак", 0, 1, "паливо на 7 світлових років"),
+    ("bay", "Великий трюм", 400, 2, "+15 т вантажу"),
+    ("ecm", "Система РЕБ", 600, 3, "e - знищує ракети поблизу"),
+    ("beam", "Променевий лазер", 1000, 4, "частіше й холодніше"),
+    ("energy", "Енергоблок", 1500, 8, "банки й щити заряджаються вдвічі швидше"),
+    ("capsule", "Рятувальна капсула", 1000, 6, "переживе загибель корабля (вантаж - ні)"),
+    ("military", "Військовий лазер", 6000, 10, "удвічі сильніший і холодніший"),
+]
+# the lasers: seconds between pulses, damage, heat a pulse
+LASERS = {"pulse": (LASER_EVERY, 1, 0.065), "beam": (0.1, 1, 0.045), "military": (0.09, 2, 0.035)}
+RANKS = [(0, "Нешкідливий"), (5, "Майже нешкідливий"), (12, "Слабкий"), (25, "Середній"), (50, "Вище середнього"),
+         (100, "Вправний"), (250, "Небезпечний"), (600, "Смертоносний"), (1500, "ЕЛІТА")]
+BOUNTY = {"shulika": (30, 70), "osa": (12, 30), "truten": (5, 10), "vulyk": (200, 400)}
+TURN_RATE = {"osa": 1.6, "shulika": 1.25, "sokil": 1.5, "truten": 2.0, "vulyk": 0.6}
+CARGO_MAX = 20                        # tonnes (every unit of any good takes a place); +15 with the big bay
 JUMP_SPEED = 26000.0                  # the in-system jump drive: world units a second
 HYPER_COUNT = 10                      # seconds of the hyperspace countdown
 SAVE = os.path.expanduser("~/.config/lcdtoy/startrader-save.json")
+MISJUMP = float(os.environ.get("STAR_MISJUMP", "0.06"))   # a hyperspace jump going wrong: out between the stars
 
 
 def cross(a, b):
@@ -179,6 +203,14 @@ class Ship:
         self.colour = gfx.TYPES[kind][4]
         self.hp = HP.get(kind, 3)
         self.target = None
+        self.hostile = False                  # attacks the player
+        self.mode = "attack"
+        self.break_t = 0.0
+        self.break_dir = None
+        self.fire_t = 1.5
+        self.bounty = 0
+        self.missile = False                  # a pirate's one missile
+        self.by_player = False                # the player's laser or missile hit it last
 
 
 class Blast:
@@ -217,12 +249,36 @@ class Blast:
         self.shard_v = np.array(sv)
 
 
+class Loader(threading.Thread):
+    """What takes seconds on the Zero, done behind the title's animation: the sounds (from the disk cache
+    after the first start) and the planet's lit masters - numpy only, the mixer sounds made in the main
+    thread by Game.poll_loader()."""
+
+    def __init__(self, game):
+        super().__init__(daemon=True)
+        self.game = game
+        self.bufs = None
+        self.done = False
+
+    def run(self):
+        try:
+            if lcd.sound_enabled():
+                self.bufs = starmusic.buffers()
+            p = self.game.world.planet
+            while p is not None and not p.prewarm():
+                pass
+        except Exception:                              # a loader that fails leaves the old make-on-demand way
+            pass
+        self.done = True
+
+
 class World:
     """One star system: its planet at the origin (size and look from the galaxy), the sun, the station in
     orbit with its slot facing away from the planet, the traffic."""
 
-    def __init__(self, system=None, seed=7):
+    def __init__(self, system=None, seed=7, deep=False):
         self.system = system
+        self.deep = deep                  # a misjump: no planet, no station, no sun - the aliens' hunting ground
         if system is not None:
             seed = system.seed
         self.rnd = random.Random(seed)
@@ -243,12 +299,23 @@ class World:
         self.st_angle = 0.0
         self.st_R = self.st_base
         self.station = gfx.mesh("station")
-        self.planet = gfx.Planet("earth", 11) if home else gfx.Planet(system.kind, seed % 997)
+        self.planet = None if deep else gfx.Planet("earth", 11) if home else gfx.Planet(system.kind, seed % 997)
         self.stars = gfx.starfield(3 if home else seed % 991)
         self.ships = []
         self.blasts = []
         self.events = []                  # ("boom", ship) - for the game's sounds and messages
         self.spawn_t = 2.0
+        self.pirate_t = 8.0
+        if deep:
+            self.spawn_t = self.pirate_t = 1e9
+            self.deep_pos = self.arrive_dir * 5e7
+            p = self.deep_pos + unit(np.array([r.gauss(0, 1) for _ in range(3)])) * 4000
+            v = Ship("vulyk", p, basis(self.deep_pos - p, np.array((0, 1.0, 0))), 500.0, "alien")
+            v.hostile = True
+            v.bounty = r.randint(*BOUNTY["vulyk"])
+            v.drone_t = 3.0
+            self.ships.append(v)
+            return
         for k in range(4):                                              # asteroids out in the dark
             d = unit(np.array([self.rnd.uniform(-1, 1) for _ in range(3)]))
             p = self.st_pos + self.slot_n * 9000 + d * self.rnd.uniform(5000, 14000)
@@ -260,6 +327,19 @@ class World:
         first = self.new_departing(6.0)
         first.pos = self.slot_mouth(2600)
         self.ships.append(first)
+
+    def call_police(self, n=2):
+        """The station sends its patrol after an outlaw, and more out of the slot."""
+        for s in self.ships:
+            if s.kind == "sokil":
+                s.hostile = True
+        for k in range(n):
+            sh = self.new_departing()
+            sh.kind, sh.me, sh.colour = "sokil", gfx.mesh("sokil"), gfx.TYPES["sokil"][4]
+            sh.hp = HP["sokil"]
+            sh.hostile = True
+            sh.pos = self.slot_mouth(400 + k * 500)
+            self.ships.append(sh)
 
     def update(self, dt):
         self.st_angle = (self.st_angle + STATION_SPIN * dt) % (2 * math.pi)
@@ -304,7 +384,71 @@ class World:
         u, v = self.st_base[:, 0], self.st_base[:, 1]
         return self.st_pos + self.slot_n * 2500 + (u * math.cos(a) + v * math.sin(a)) * 3800
 
-    def update_ships(self, dt, player_pos):
+    def danger(self):
+        """0 (a corporate state) .. 1 (an anarchy): how often pirates come."""
+        return 0.25 if self.system is None else (7 - self.system.gov) / 7.0
+
+    def pirates(self, pl):
+        """A pack turns up some way off - more and more often in lawless systems."""
+        r = self.rnd
+        n = 1 + (r.random() < self.danger()) + (r.random() < self.danger() * 0.5)
+        side = unit(np.array([r.gauss(0, 1) for _ in range(3)]))
+        centre = pl.pos + side * r.uniform(8000, 11000)
+        for k in range(n):
+            kind = "shulika" if r.random() < 0.6 else "osa"
+            p = centre + unit(np.array([r.gauss(0, 1) for _ in range(3)])) * 600
+            s = Ship(kind, p, basis(pl.pos - p, np.array((0, 1.0, 0))), 1000.0, "pirate")
+            s.hostile = True
+            s.bounty = r.randint(*BOUNTY[kind])
+            s.fire_t = r.uniform(1.0, 3.0)
+            s.missile = r.random() < 0.45
+            self.ships.append(s)
+        self.events.append(("pirates", n))
+
+    def dogfight(self, s, dt, pl):
+        """Come in on the player's tail (aiming ahead of him), shoot when lined up, break off when too close,
+        come round again."""
+        d = pl.pos - s.pos
+        dist = length(d)
+        rate = TURN_RATE.get(s.kind, 1.2)
+        if s.mode == "break":
+            s.break_t -= dt
+            s.R = turn_to(s.R, s.break_dir, rate, dt, 1.2)
+            s.speed = min(1400.0, s.speed + 400 * dt)
+            if s.break_t <= 0 or dist > 6000:
+                s.mode = "attack"
+            return
+        lead = pl.pos + pl.R[:, 2] * pl.speed * min(1.5, dist / 2200.0)
+        want = unit(lead - s.pos)
+        s.R = turn_to(s.R, want, rate, dt)
+        s.speed += clamp((1300.0 if dist > 2500 else 850.0) - s.speed, -500 * dt, 400 * dt)
+        head_on = float(np.dot(s.R[:, 2], pl.R[:, 2])) < -0.6           # coming at each other
+        if dist < 700 or (head_on and dist < 1400):
+            s.mode = "break"
+            s.break_t = self.rnd.uniform(1.8, 3.2)
+            side = cross(want, np.array([self.rnd.gauss(0, 1) for _ in range(3)]))
+            s.break_dir = unit(unit(side) - want * 0.4)
+            return
+        s.fire_t -= dt
+        if s.kind == "shulika" and s.missile and 2500 < dist < 7000 and self.rnd.random() < 0.15 * dt:
+            s.missile = False                                          # one missile a pirate, sometimes
+            m = Ship("rocket", s.pos + s.R[:, 2] * 120, s.R.copy(), s.speed + 400, "emissile")
+            self.ships.append(m)
+            self.events.append(("incoming", m))
+        if s.fire_t <= 0 and dist < 5500 and float(np.dot(s.R[:, 2], d)) > dist * 0.996:
+            s.fire_t = self.rnd.uniform(0.5, 1.1)
+            hit = self.rnd.random() < 0.8 * (1 - dist / 6500.0)
+            self.events.append(("shot", s, hit))
+
+    def update_ships(self, dt, player_pos, pl=None):
+        if pl is not None:
+            self.pirate_t -= dt
+            if self.pirate_t <= 0:
+                self.pirate_t = self.rnd.uniform(35, 70)
+                far = length(player_pos - self.st_pos) > SAFE_ZONE
+                packs = sum(1 for s in self.ships if s.role == "pirate")
+                if far and packs == 0 and self.rnd.random() < 0.15 + 0.7 * self.danger():
+                    self.pirates(pl)
         self.spawn_t -= dt
         traffic = sum(1 for s in self.ships if s.role in ("depart", "arrive"))
         if self.spawn_t <= 0:
@@ -319,7 +463,25 @@ class World:
                     self.ships.append(self.new_arriving(player_pos))
         for s in self.ships:
             s.age += dt
-            if s.role in ("drift", "cargo"):
+            if s.hostile and pl is not None and not pl.dead:
+                if s.role == "pirate" and length(s.pos - self.st_pos) < SAFE_ZONE * 0.7:
+                    s.hostile = False                                  # pirates keep out of the police's zone
+                    s.role = "depart"
+                    s.wp = s.pos + unit(s.pos - self.st_pos) * 60000
+                    s.age = 5
+                else:
+                    self.dogfight(s, dt, pl)
+                if s.kind == "vulyk":                                  # the hive sends out its drones
+                    s.drone_t -= dt
+                    if s.drone_t <= 0 and sum(1 for x in self.ships if x.kind == "truten") < 4:
+                        s.drone_t = self.rnd.uniform(4, 7)
+                        d = unit(np.array([self.rnd.gauss(0, 1) for _ in range(3)]))
+                        t = Ship("truten", s.pos + d * 140, basis(d, np.array((0, 1.0, 0))), 900.0, "alien")
+                        t.hostile = True
+                        t.bounty = self.rnd.randint(*BOUNTY["truten"])
+                        t.fire_t = self.rnd.uniform(1, 2.5)
+                        self.ships.append(t)
+            elif s.role in ("drift", "cargo"):
                 if s.role == "cargo":                                  # canisters tumble and drift away
                     if s.age > 150 or length(s.pos - player_pos) > 40000:
                         s.gone = True
@@ -355,13 +517,24 @@ class World:
                 s.R = turn_to(s.R, unit(tg.pos - s.pos), 2.4, dt)
                 s.speed = min(3000.0, s.speed + 1800 * dt)
                 if length(tg.pos - s.pos) < tg.me.radius * 0.8 + 60:
+                    tg.by_player = tg.by_player or s.by_player
                     self.destroy(tg)
+                    self.destroy(s)
+                    continue
+            elif s.role == "emissile" and pl is not None:              # a pirate's missile, after us
+                if s.age > 16:
+                    self.destroy(s)
+                    continue
+                s.R = turn_to(s.R, unit(pl.pos - s.pos), 1.9, dt)
+                s.speed = min(2700.0, s.speed + 1500 * dt)
+                if length(pl.pos - s.pos) < 130:
+                    self.events.append(("mhit", s))
                     self.destroy(s)
                     continue
             elif s.role == "patrol":
                 s.phase += dt * 700 / 3800
                 s.R = turn_to(s.R, unit(self.patrol_point(s.phase + 0.35) - s.pos), 0.8, dt)
-            if s.role not in ("drift", "missile", "cargo"):                # keep clear of the player
+            if s.role not in ("drift", "missile", "cargo") and not s.hostile:   # keep clear of the player
                 d = player_pos - s.pos
                 dist = length(d)
                 if dist < 1000 and np.dot(d, s.R[:, 2]) > 0:
@@ -424,6 +597,9 @@ class Game:
         self.new_game()
         self.music = starmusic.Music()
         self.sfx = starmusic.Sfx()
+        self.loader = Loader(self)
+        self.loader.start()
+        self.loaded = False
         self.dust = gfx.stardust_init()
         self.keys = set()
         self.reset_ship()
@@ -449,10 +625,24 @@ class Game:
         self.beam_t = -1.0
         self.beam_end = None
         self.beam_hit = False
-        self.missiles = MISSILES
         self.lock = None
         self.hyper_t = None
         self.jump_t = 0.0
+        self.enemy_beams = []
+        self.flash_t = -1.0
+        self.flash_front = True
+        self.police_called = False
+
+    def poll_loader(self):
+        """True once the loader is through (its sounds handed to the mixer)."""
+        if self.loaded:
+            return True
+        if self.loader.done:
+            if self.loader.bufs:
+                self.sfx.load(self.loader.bufs)
+                self.music.load(self.loader.bufs)
+            self.loaded = True
+        return self.loaded
 
     # -- the commander
 
@@ -464,6 +654,12 @@ class Game:
         self.fuel = galaxy.JUMP_MAX
         self.visits = {}
         self.market = None
+        self.kills = 0
+        self.legal = 0
+        self.rank_name = RANKS[0][1]
+        self.missiles = MISSILES
+        self.equip = set()
+        self.laser = "pulse"
         self.world = World(self.gal[self.here])
 
     def system(self):
@@ -472,8 +668,13 @@ class Game:
     def held(self):
         return sum(self.cargo)
 
+    def cargo_max(self):
+        return CARGO_MAX + (15 if "bay" in self.equip else 0)
+
     def save(self):
         data = {"here": self.here, "target": self.target, "credits": round(self.credits, 1), "cargo": self.cargo,
+                "kills": self.kills, "legal": self.legal, "missiles": self.missiles, "equip": sorted(self.equip),
+                "laser": self.laser,
                 "fuel": round(self.fuel, 2), "visits": {str(k): v for k, v in self.visits.items()}}
         try:
             os.makedirs(os.path.dirname(SAVE), exist_ok=True)
@@ -503,6 +704,12 @@ class Game:
         self.cargo = (cargo + [0] * len(galaxy.GOODS))[:len(galaxy.GOODS)]
         self.fuel = float(d.get("fuel", galaxy.JUMP_MAX))
         self.visits = {int(k): v for k, v in d.get("visits", {}).items()}
+        self.kills = int(d.get("kills", 0))
+        self.legal = int(d.get("legal", 0))
+        self.missiles = int(d.get("missiles", MISSILES))
+        self.equip = set(d.get("equip", []))
+        self.laser = d.get("laser", "pulse") if d.get("laser") in LASERS else "pulse"
+        self.rank_name = self.rank()
         self.world = World(self.gal[self.here])
 
     def dock(self):
@@ -514,8 +721,12 @@ class Game:
     def arrive(self):
         """Out of hyperspace: far out, the planet ahead (the station near it, beyond the jump drive's reach)."""
         w = self.world
-        self.pos = w.arrive_dir * w.planet_r * 6.2
-        self.R = basis(-self.pos, np.array((0.0, 1.0, 0.0)))
+        if w.deep:
+            self.pos = w.deep_pos.copy()
+            self.R = basis(w.ships[0].pos - self.pos, np.array((0.0, 1.0, 0.0)))
+        else:
+            self.pos = w.arrive_dir * w.planet_r * 6.2
+            self.R = basis(-self.pos, np.array((0.0, 1.0, 0.0)))
         self.speed = 0.5 * MAX_SPEED
         self.roll = self.pitch = self.yaw = 0.0
         self.autodock = False
@@ -523,6 +734,9 @@ class Game:
         self.jump_t = 0.0
         self.lock = None
         self.beam_end = None
+        self.enemy_beams = []
+        self.police_called = False
+        self.legal = max(0, self.legal - 16)           # a new system: the old record fades
 
     def mass_locked(self):
         """The jump drive will not start near anything big."""
@@ -627,14 +841,17 @@ class Game:
         if self.hyper_t is not None and self.t >= self.hyper_t:
             self.hyper_t = None
             return "hyper"
-        w.update_ships(dt, self.pos)
+        w.update_ships(dt, self.pos, self)
         self.weapons(dt)
+        if self.dead:
+            return "dead"
         # recharge: the banks slowly, the shields from the banks
-        self.energy = min(4.0, self.energy + 0.03 * dt)
+        boost = 2.0 if "energy" in self.equip else 1.0
+        self.energy = min(4.0, self.energy + 0.03 * boost * dt)
         for sh in ("fs", "as_"):
             v = getattr(self, sh)
             if v < 1 and self.energy > 0.2:
-                d = min(1 - v, 0.06 * dt)
+                d = min(1 - v, 0.04 * boost * dt)
                 setattr(self, sh, v + d)
                 self.energy -= d * 0.5
         # the slot, the station's hull
@@ -720,17 +937,95 @@ class Game:
         if lock is not None and lock is not self.lock:
             self.sfx.play("lock")
         self.lock = lock
-        for kind, ship in w.events:                    # what blew up since the last step
+        for ev in w.events:                            # what happened out there since the last step
+            kind, ship = ev[0], ev[1]
             if kind == "boom":
                 self.sfx.play("boom" if ship.kind not in ("rocket", "kontejner") else "zap")
                 if ship.kind not in ("rocket", "kontejner"):
                     self.say("Знищено: %s" % gfx.TYPES[ship.kind][0], 2)
+                if ship.by_player and ship.kind not in ("rocket", "kontejner", "asteroid"):
+                    self.kills += 1
+                    if ship.bounty:
+                        self.credits += ship.bounty
+                        self.say("Знищено: %s · нагорода %d Кр" % (gfx.TYPES[ship.kind][0], ship.bounty), 3)
+                    elif not ship.hostile:
+                        self.crime(40 if ship.kind == "sokil" else 15)
+                    if self.rank_name != self.rank():
+                        self.rank_name = self.rank()
+                        self.say("Новий ранг: %s!" % self.rank_name, 4)
+                        self.sfx.play("lock")
+            elif kind == "shot":
+                self.enemy_fire(ship, ev[2])
+            elif kind == "incoming":
+                self.say("УВАГА: ракета! " + ("e - РЕБ" if "ecm" in self.equip else "збийте її!"), 3)
+                lcd.play("error")
+            elif kind == "mhit":
+                d = ship.pos - self.pos
+                front = float(np.dot(d, self.R[:, 2])) > 0
+                sh = "fs" if front else "as_"
+                v = getattr(self, sh) - 1.3
+                setattr(self, sh, max(0.0, v))
+                if v < 0:
+                    self.energy += v * 1.5
+                self.flash_t, self.flash_front = self.t + 0.3, front
+                self.sfx.play("explosion")
+                self.say("Влучила ракета!", 2)
+                if self.energy <= 0:
+                    self.dead = True
+            elif kind == "pirates":
+                self.say("УВАГА: пірати! (%d)" % ship, 3)
+                lcd.play("error")
         w.events.clear()
+
+    def rank(self):
+        name = RANKS[0][1]
+        for k, n in RANKS:
+            if self.kills >= k:
+                name = n
+        return name
+
+    def legal_name(self):
+        return "Чистий" if self.legal == 0 else "Підозрюваний" if self.legal < 50 else "Злочинець"
+
+    def crime(self, n):
+        """Shooting the innocent: the record darkens; near the station (or once wanted) the police come."""
+        was = self.legal
+        near = length(self.pos - self.world.st_pos) < SAFE_ZONE
+        self.legal = min(255, self.legal + (n * 2 if near else n))
+        if (near or self.legal >= 50) and not self.police_called:
+            self.police_called = True
+            self.world.call_police(2 if self.legal < 50 else 3)
+            self.say("Поліція: ви порушник! Зупиніться!", 3)
+        elif was == 0:
+            self.say("Ваш статус: %s" % self.legal_name(), 2)
+
+    def enemy_fire(self, s, hit):
+        """A shot at us: its beam for a moment; a hit takes a shield (front or aft, by where it came from),
+        through it the energy banks."""
+        self.enemy_beams.append((s, self.t + 0.09))
+        self.sfx.play("elaser")
+        if not hit:
+            return
+        d = s.pos - self.pos
+        front = float(np.dot(d, self.R[:, 2])) > 0
+        dmg = {"osa": 0.1, "truten": 0.08, "vulyk": 0.25}.get(s.kind, 0.16)
+        sh = "fs" if front else "as_"
+        v = getattr(self, sh) - dmg
+        setattr(self, sh, max(0.0, v))
+        if v < 0:
+            self.energy += v * 1.5
+        self.flash_t = self.t + 0.12
+        self.flash_front = front
+        self.sfx.play("shield")
+        self.autodock = False
+        if self.energy <= 0:
+            self.dead = True
 
     def shoot(self):
         """One pulse: along the nose, the nearest ship it passes through takes a hit (the station stops it)."""
-        self.fire_t = LASER_EVERY
-        self.laser_temp += 0.065
+        every, dmg, heat = LASERS[self.laser]
+        self.fire_t = every
+        self.laser_temp += heat
         if self.laser_temp >= 1.0:
             self.overheat = True
             self.say("Лазер перегрівся!", 1.5)
@@ -754,8 +1049,13 @@ class Game:
         self.beam_end = self.pos + self.R[:, 2] * bz
         self.beam_hit = best is not None or bz < LASER_RANGE
         if best is not None:
-            best.hp -= 1
+            best.hp -= dmg
+            best.by_player = True
             self.sfx.play("zap")
+            if not best.hostile and best.kind not in ("asteroid", "kontejner"):
+                self.crime(3)
+                if best.kind == "sokil" or best.role in ("depart", "arrive"):
+                    best.hostile = best.kind in ("sokil", "osa", "shulika")   # fighters shoot back
             if best.hp <= 0:
                 self.world.destroy(best)
 
@@ -768,7 +1068,7 @@ class Game:
             w.destroy(c)
             self.say("Контейнер розбито - заскоро", 2)
             return
-        if self.held() >= CARGO_MAX:
+        if self.held() >= self.cargo_max():
             if self.msg_t < self.t:
                 self.say("Трюм повний", 1.5)
                 lcd.play("error")
@@ -778,6 +1078,24 @@ class Game:
         self.cargo[c.item] += 1
         self.sfx.play("scoop")
         self.say("Підібрано: %s, 1 %s" % (name, unit_), 2)
+
+    def ecm(self):
+        """The electronic countermeasures: every missile within reach blows up."""
+        if "ecm" not in self.equip:
+            self.say("Немає системи РЕБ", 1.5)
+            lcd.play("error")
+            return
+        if self.energy < 0.4:
+            return
+        self.energy -= 0.25
+        self.sfx.play("ecm")
+        self.flash_t, self.flash_front = self.t + 0.15, True
+        n = 0
+        for s in list(self.world.ships):
+            if s.role in ("missile", "emissile") and length(s.pos - self.pos) < 12000:
+                self.world.destroy(s)
+                n += 1
+        self.say("РЕБ: знищено ракет - %d" % n if n else "РЕБ: ракет поблизу немає", 2)
 
     def fire_missile(self):
         if not self.missiles:
@@ -792,6 +1110,7 @@ class Game:
         m = Ship("rocket", self.pos + self.R[:, 2] * 140 - self.R[:, 1] * 30, self.R.copy(),
                  self.speed + 500, "missile")
         m.target = tg
+        m.by_player = True
         self.world.ships.append(m)
         self.missiles -= 1
         self.sfx.play("missile")
@@ -841,24 +1160,25 @@ class Game:
         spin = abs(self.roll) / ROLL_MAX + abs(self.pitch) / PITCH_MAX + abs(self.yaw) / PITCH_MAX
         self.slow = 0.8 * self.slow + 0.2 * (dt > 0.045)
         rough = spin > 0.6 or self.slow > 0.5
-        w.planet.gap = 0.3 if rough else 0.12
+        if w.planet is not None:
+            w.planet.gap = 0.3 if rough else 0.12
         surf.fill((0, 0, 0) if st == "wire" else (3, 3, 10), (0, 0, W, VH))
         view = surf.subsurface((0, 0, W, VH))
         gfx.draw_stars(view, w.stars, self.R, F, CX, CY, st)
         RT = self.R.T
         # the sun, unless the planet is in the way
         sc = RT @ (w.sun_pos - self.pos)
-        sd = length(sc)
+        sd = length(sc) if not w.deep else 0.0
         # in front only (near 90 degrees off the nose x / z blows up: a glow ten thousand pixels wide once
         # froze the game for seconds), its true size from the distance, and only when it is on the screen
-        if sc[2] > sd * 0.3 and not self.hidden_by_planet(w.sun_pos):
+        if not w.deep and sc[2] > sd * 0.3 and not self.hidden_by_planet(w.sun_pos):
             sx, sy, sr = CX + sc[0] * F / sc[2], CY - sc[1] * F / sc[2], SUN_R * F / sd
             if -5 * sr - 40 < sx < W + 5 * sr + 40 and -5 * sr - 40 < sy < VH + 5 * sr + 40:
                 gfx.draw_sun(view, sx, sy, sr, st, self.t)
         # the planet
         pc = RT @ (-self.pos)
         dist = length(pc)
-        if pc[2] > 0:
+        if pc[2] > 0 and not w.deep:
             pr = w.planet_r
             r = pr * F / math.sqrt(max(dist * dist - pr * pr, 1.0)) if dist > pr else 1e5
             Ls = RT @ w.sun_dir                    # from the planet towards the sun
@@ -867,7 +1187,8 @@ class Game:
         objs = []
         for s in w.ships:
             objs.append((s.me, s.pos, s.R))
-        objs.append((w.station, w.st_pos, w.st_R))
+        if not w.deep:
+            objs.append((w.station, w.st_pos, w.st_R))
         drawn = []
         for me, p, R in objs:
             d = p - self.pos
@@ -889,6 +1210,7 @@ class Game:
         if not overlay:
             return
         self.draw_beams(view)
+        self.draw_enemy_fire(view)
         self.draw_lock(view)
         col = gfx.WIRE if st == "wire" else (220, 225, 235)
         for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
@@ -995,6 +1317,29 @@ class Game:
             else:
                 gfx.glow(view, end, (255, 140, 70), 9)
 
+    def draw_enemy_fire(self, view):
+        """Their beams: from the ship (on screen or off it) towards us; a hit flashes the screen's edge."""
+        wire = self.style == "wire"
+        self.enemy_beams = [(s, until) for s, until in self.enemy_beams if self.t < until and not s.gone]
+        for s, _ in self.enemy_beams:
+            c = self.R.T @ (s.pos - self.pos)
+            if c[2] > gfx.NEAR:
+                a = (CX + c[0] * F / c[2], CY - c[1] * F / c[2])
+            else:                                      # from behind: in from the edge it is nearest
+                k = 400.0 / max(1.0, math.hypot(c[0], c[1]))
+                a = (CX + c[0] * k, CY - c[1] * k)
+            b = (CX + (c[0] > 0) * 30 - 15, VH - 2)
+            if wire:
+                gfx.line(view, gfx.WIRE, a, b, 1)
+            else:
+                gfx.line(view, (60, 120, 30), a, b, 4)
+                gfx.line(view, (170, 255, 90), a, b, 2)
+        if self.t < self.flash_t:
+            if wire:
+                gfx.rect(view, gfx.WIRE, (0, 0, W, VH), 4)
+            else:
+                view.fill((90, 20, 10) if self.flash_front else (60, 20, 50), special_flags=pygame.BLEND_ADD)
+
     def draw_lock(self, view):
         """A missile's lock: a bracket round the ship in the sights."""
         s = self.lock
@@ -1053,7 +1398,7 @@ class Game:
         RT = self.R.T
         blips = []
         for s in w.ships + [None]:
-            p, col = (s.pos, s.colour) if s else (w.st_pos, (120, 255, 140))
+            p, col = (s.pos, (255, 60, 50) if s.hostile else s.colour) if s else (w.st_pos, (120, 255, 140))
             c = RT @ (p - self.pos)
             bx, by = c[0] / SCAN_RANGE, -c[2] / SCAN_RANGE
             if bx * bx + by * by < 1:
@@ -1063,12 +1408,14 @@ class Game:
         safe = dist_st < SAFE_ZONE
         tgt = w.st_pos if safe else np.zeros(3)
         d = unit(RT @ (tgt - self.pos))
+        if w.deep:
+            safe = False
         alt = (length(self.pos) - w.planet_r) / w.planet_r
         en = [clamp(self.energy - i, 0, 1) for i in range(4)]
         return dict(fs=self.fs, as_=self.as_, fv=self.fuel / galaxy.JUMP_MAX, ct=0.1, lt=min(1.0, self.laser_temp), al=clamp(alt, 0, 1),
                     sp=self.speed / MAX_SPEED, missiles=self.missiles,
                     rl=self.roll / ROLL_MAX, dc=self.pitch / PITCH_MAX, en=en, blips=blips,
-                    compass=(d[0], d[1], d[2] > 0), safe=safe, t=self.t, **{"as": self.as_})
+                    compass=None if w.deep else (d[0], d[1], d[2] > 0), safe=safe, t=self.t, **{"as": self.as_})
 
     def draw(self, dt):
         self.draw_view(frame, dt)
@@ -1181,19 +1528,23 @@ def draw_backdrop(game, t):
 
 
 def title(game):
-    """The title: the trader turning in the frame, the name; Enter - start, Tab - the look, Esc - out."""
+    """The title: the trader flies in from afar and turns in the frame, the name comes after it; the loader
+    works behind it all (a thin "підготовка" line until it is through). Enter - continue (or a new game),
+    N - a new game, Tab - the look, Esc - out."""
     t0 = time.monotonic()
     me = gfx.mesh("chumak")
     fbig = gfx.font("DejaVuSans-Bold.ttf", 19)
     fmono = gfx.font("DejaVuSansMono-Bold.ttf", 13)
     fs = gfx.font("DejaVuSansCondensed-Bold.ttf", 12)
     fm = gfx.font("DejaVuSansMono.ttf", 11)
+    fl = gfx.font("DejaVuSansCondensed.ttf", 10)
     saved = game.saved()
     if saved:
         sname = game.gal[int(saved.get("here", game.start)) % len(game.gal)].name
         prompt = ("Enter - продовжити: %s, %.1f Кр" % (sname, saved.get("credits", 0)), "N - нова гра · Tab - вигляд")
     else:
         prompt = ("Натисніть пробіл, командире", "Tab - вигляд · Esc - вихід")
+    want = None
     while True:
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
@@ -1203,42 +1554,56 @@ def title(game):
             hat = getattr(ev, "hat", False)
             if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE) or (hat and ev.key == pygame.K_1):
                 lcd.play("select")
-                return "continue" if saved else "new"
-            if ev.key == pygame.K_n and saved:
+                want = "continue" if saved else "new"
+            elif ev.key == pygame.K_n and saved:
                 lcd.play("select")
-                return "new"
-            if ev.key == pygame.K_TAB or (hat and ev.key == pygame.K_2):
+                want = "new"
+            elif ev.key == pygame.K_TAB or (hat and ev.key == pygame.K_2):
                 game.toggle_style()
             elif ev.key == pygame.K_ESCAPE or (hat and ev.key == pygame.K_3):
                 return "quit"
-        if game.world.planet.prewarm():                # the planet's lit masters, one a frame, then the sounds
-            game.music.ready()
-            game.sfx.ready()
+        ready = game.poll_loader()
+        if want and ready:
+            return want
         t = time.monotonic() - t0
         wire = game.style == "wire"
         draw_backdrop(game, t)
-        if not wire:
+        k = min(1.0, t / 2.6)                          # the fly-in: from a speck to the frame, slowing down
+        k = 1 - (1 - k) ** 3
+        z = 300 + 5200 * (1 - k)
+        tilt = -0.42 - 0.6 * (1 - k)
+        if not wire and ready and game.world.planet is not None:      # the planet once it is lit
             Ls = gfx.norm((-0.8, 0.5, -0.2))
             game.world.planet.draw(frame, 300, 300, 120, Ls, "modern")
-        gfx.draw_mesh(frame, me, spin_matrix(t), np.array((0.0, 0.0, 300.0)), F, W / 2, H / 2 + 6,
-                      np.array(HANGAR_L), game.style)
+        gfx.draw_mesh(frame, me, spin_matrix(t + 2.0 * (1 - k), tilt), np.array((0.0, 0.0, z)), F, W / 2,
+                      H / 2 + 6 - 40 * (1 - k), np.array(HANGAR_L), game.style)
+        show_text = t > 1.4
         if wire:
             gfx.rect(frame, gfx.WIRE, (8, 8, W - 16, H - 16), 1)
-            img = gfx.fit(fmono.render("--- ЗОРЯНИЙ ТОРГОВЕЦЬ ---", True, gfx.WIRE), W - 24)
-            frame.blit(img, (W / 2 - img.get_width() / 2, 20))
-            for i, s in enumerate(prompt):
-                img = gfx.fit(fm.render(s, True, gfx.WIRE), W - 24)
-                frame.blit(img, (W / 2 - img.get_width() / 2, H - 14 - (len(prompt) - i) * (img.get_height() + 2)))
+            if show_text:
+                img = gfx.fit(fmono.render("--- ЗОРЯНИЙ ТОРГОВЕЦЬ ---", True, gfx.WIRE), W - 24)
+                frame.blit(img, (W / 2 - img.get_width() / 2, 20))
         else:
             gfx.rect(frame, (200, 196, 180), (8, 8, W - 16, H - 16), 1)
-            img = gfx.fit(fbig.render("ЗОРЯНИЙ ТОРГОВЕЦЬ", True, (240, 232, 214)), W - 24)
-            frame.blit(img, (W / 2 - img.get_width() / 2, 20))
-            ly = 24 + img.get_height()
-            for x in range(30, W - 30, 6):
-                gfx.line(frame, (90, 190, 255), (x, ly), (x + 3, ly))
-            for i, s in enumerate(prompt):
-                img = gfx.fit(fs.render(s, True, (230, 230, 240) if i == 0 else (150, 200, 240)), W - 24)
+            if show_text:
+                a = min(1.0, (t - 1.4) / 0.8)
+                img = gfx.fit(fbig.render("ЗОРЯНИЙ ТОРГОВЕЦЬ", True, gfx.mix((3, 3, 10), (240, 232, 214), a)), W - 24)
+                frame.blit(img, (W / 2 - img.get_width() / 2, 20))
+                ly = 24 + img.get_height()
+                for x in range(30, int(30 + (W - 60) * a), 6):
+                    gfx.line(frame, (90, 190, 255), (x, ly), (x + 3, ly))
+        if t > 2.4:
+            for i, s_ in enumerate(prompt):
+                if wire:
+                    img = gfx.fit(fm.render(s_, True, gfx.WIRE), W - 24)
+                else:
+                    img = gfx.fit(fs.render(s_, True, (230, 230, 240) if i == 0 else (150, 200, 240)), W - 24)
                 frame.blit(img, (W / 2 - img.get_width() / 2, H - 14 - (len(prompt) - i) * (img.get_height() + 2)))
+        if not ready and (want or t > 2.4):            # still busy behind the scenes
+            dots = "." * (1 + int(t * 3) % 3)
+            img = fl.render("підготовка" + dots, True, gfx.WIRE_DIM if wire else (110, 130, 160))
+            frame.blit(img, (W / 2 - img.get_width() / 2, H - 12 - img.get_height() // 2 - 2 if not want else
+                             H / 2 + 70))
         show()
         clock.tick(30)
 
@@ -1304,9 +1669,9 @@ def station_screen(game):
     while True:
         sys_ = game.system()
         need = galaxy.JUMP_MAX - game.fuel
-        items = ["Злетіти", "Ринок", "Заправитись" + (" (%.1f Кр)" % (need * galaxy.FUEL_PRICE) if need > 0.05 else " - повний бак"),
-                 "Галактична карта", "Дані про систему", "Розпізнавання кораблів", "Вигляд: " + STYLE_NAMES[game.style],
-                 "Вийти"]
+        items = ["Злетіти", "Ринок", "Обладнання", "Заправитись" + (" (%.1f Кр)" % (need * galaxy.FUEL_PRICE) if need > 0.05 else " - повний бак"),
+                 "Галактична карта", "Дані про систему", "Статус командира", "Розпізнавання кораблів",
+                 "Вигляд: " + STYLE_NAMES[game.style], "Вийти"]
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 return "quit"
@@ -1328,23 +1693,25 @@ def station_screen(game):
                 if sel == 1:
                     market_screen(game)
                 elif sel == 2:
-                    refuel(game)
+                    shop_screen(game)
                 elif sel == 3:
-                    chart(game)
+                    refuel(game)
                 elif sel == 4:
-                    data_screen(game, game.here)
+                    chart(game)
                 elif sel == 5:
-                    ships_book(game)
+                    data_screen(game, game.here)
                 elif sel == 6:
+                    status_screen(game)
+                elif sel == 7:
+                    ships_book(game)
+                elif sel == 8:
                     game.toggle_style()
                 else:
                     return "quit"
                 game.save()
             elif ev.key == pygame.K_ESCAPE or (hat and ev.key == pygame.K_3):
                 return "quit"
-        if game.world.planet.prewarm():
-            game.music.ready()
-            game.sfx.ready()
+        game.poll_loader()
         t = time.monotonic() - t0
         wire = game.style == "wire"
         draw_backdrop(game, t)
@@ -1359,7 +1726,7 @@ def station_screen(game):
         if gfx.HAT:                                    # no hangar: the name, the purse, the menu
             y = 4
             for text, ff, col in (("«%s»" % sys_.name, fn, hi),
-                                  ("%.1f Кр · %.1f св. р. · %d/%d т" % (game.credits, game.fuel, game.held(), CARGO_MAX),
+                                  ("%.1f Кр · %.1f св. р. · %d/%d т" % (game.credits, game.fuel, game.held(), game.cargo_max()),
                                    fi, lo)):
                 img = gfx.fit(ff.render(text, True, col))
                 frame.blit(img, (W / 2 - img.get_width() / 2, y))
@@ -1376,7 +1743,7 @@ def station_screen(game):
                         True, lo)
         frame.blit(img, (W / 2 - img.get_width() / 2, 27))
         img = fi.render("%.1f Кр · паливо %.1f св. р. · трюм %d/%d т" % (game.credits, game.fuel, game.held(),
-                                                                        CARGO_MAX), True, hi)
+                                                                        game.cargo_max()), True, hi)
         frame.blit(img, (W / 2 - img.get_width() / 2, 42))
         if game.target is not None:
             tg = game.gal[game.target]
@@ -1434,7 +1801,7 @@ def market_screen(game):
             elif ev.key in (pygame.K_RIGHT, pygame.K_RIGHTBRACKET, pygame.K_EQUALS, pygame.K_RETURN, pygame.K_KP_ENTER) \
                     or (hat and ev.key == pygame.K_1):
                 n = 1 if ev.key in (pygame.K_RIGHT, pygame.K_RIGHTBRACKET, pygame.K_EQUALS) or hat else 999
-                n = min(n, stock, CARGO_MAX - game.held(), int(game.credits // price) if price > 0 else 0)
+                n = min(n, stock, game.cargo_max() - game.held(), int(game.credits // price) if price > 0 else 0)
                 if n > 0:
                     game.cargo[sel] += n
                     game.market[sel][1] -= n
@@ -1494,7 +1861,7 @@ def market_screen(game):
                 frame.blit(img, (cols[-1][0] - img.get_width(), y))
         y = H - foot + 4
         price, stock = game.market[sel]
-        lines_ = ["%.1f Кр · трюм %d/%d т" % (game.credits, game.held(), CARGO_MAX)]
+        lines_ = ["%.1f Кр · трюм %d/%d т" % (game.credits, game.held(), game.cargo_max())]
         if hat:
             lines_ += ["є: %d %s · → купити ← продати" % (stock, goods[sel][1]) if stock else
                        "немає в продажу · ← продати"]
@@ -1509,6 +1876,148 @@ def market_screen(game):
             frame.blit(img, (W / 2 - img.get_width() / 2, 4 + 14))
         show()
         clock.tick(30)
+
+
+def owned(game, key):
+    if key == "missile":
+        return game.missiles >= MISSILES_MAX
+    if key == "fuel":
+        return game.fuel >= galaxy.JUMP_MAX - 0.05
+    if key in LASERS:
+        return game.laser == key or (key == "beam" and game.laser == "military")
+    return key in game.equip
+
+
+def shop_screen(game):
+    """Equipment: ↑ ↓ - the item, Enter - buy it (what this station's tech level sells)."""
+    sel = 0
+    f = gfx.font("DejaVuSansCondensed.ttf", 11)
+    fb = gfx.font("DejaVuSansCondensed-Bold.ttf", 11)
+    fh = gfx.font("DejaVuSans-Bold.ttf", 13)
+    while True:
+        tech = game.system().tech
+        sold = [e for e in EQUIPMENT if e[3] <= tech]
+        sel = min(sel, len(sold) - 1)
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                return
+            if ev.type != pygame.KEYDOWN:
+                continue
+            hat = getattr(ev, "hat", False)
+            if ev.key == pygame.K_UP:
+                sel = (sel - 1) % len(sold)
+            elif ev.key == pygame.K_DOWN:
+                sel = (sel + 1) % len(sold)
+            elif ev.key == pygame.K_TAB:
+                game.toggle_style()
+            elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE, pygame.K_RIGHT) or (hat and ev.key == pygame.K_1):
+                buy(game, sold[sel])
+            elif ev.key == pygame.K_ESCAPE or (hat and ev.key == pygame.K_3):
+                return
+        c = screen_colours(game)
+        frame.fill(c["bg"])
+        img = gfx.fit(fh.render("ОБЛАДНАННЯ · тех. %d" % tech, True, c["hi"]))
+        frame.blit(img, (W / 2 - img.get_width() / 2, 4))
+        top = 10 + img.get_height()
+        row = f.get_height() + 3
+        foot = 3 * (f.get_height() + 2) + 6
+        fits = int((H - foot - top) // row)
+        first = min(max(0, sel - fits // 2), max(0, len(sold) - fits))
+        for k, i in enumerate(range(first, min(len(sold), first + fits))):
+            key, name, price, _, what = sold[i]
+            y = top + k * row
+            if i == sel:
+                gfx.rect(frame, c["bar"], (2, y - 1, W - 4, row))
+            have = owned(game, key)
+            col = c["sel"] if i == sel else (c["lo"] if have else c["hi"])
+            ff = fb if i == sel else f
+            label = name + (" (%d/%d)" % (game.missiles, MISSILES_MAX) if key == "missile" else "")
+            frame.blit(gfx.fit(ff.render(label, True, col), W - 110), (8, y))
+            if key == "fuel":
+                p = (galaxy.JUMP_MAX - game.fuel) * galaxy.FUEL_PRICE
+                price_s = "є" if have else "%.1f" % p
+            else:
+                price_s = "✓ є" if have else "%d Кр" % price
+            img = ff.render(price_s, True, col)
+            frame.blit(img, (W - 8 - img.get_width(), y))
+        y = H - foot + 4
+        key, name, price, _, what = sold[sel]
+        for k, t in enumerate((what, "%.1f Кр · Enter - купити · Esc" % game.credits)):
+            img = gfx.fit((f if k == 0 else fb).render(t, True, c["lo"] if k == 0 else c["hi"]))
+            frame.blit(img, (W / 2 - img.get_width() / 2, y))
+            y += img.get_height() + 3
+        show()
+        clock.tick(30)
+
+
+def buy(game, item):
+    key, name, price, _, _ = item
+    if key == "fuel":
+        refuel(game)
+        return
+    if owned(game, key):
+        lcd.play("error")
+        return
+    if game.credits < price:
+        lcd.play("error")
+        return
+    game.credits -= price
+    if key == "missile":
+        game.missiles += 1
+    elif key in LASERS:
+        game.laser = key
+    else:
+        game.equip.add(key)
+    lcd.play("point")
+
+
+def status_screen(game):
+    """The commander: where, money, fuel, the record with the law, the combat rank, the kills, the hold."""
+    f = gfx.font("DejaVuSansCondensed.ttf", 12)
+    fb = gfx.font("DejaVuSansCondensed-Bold.ttf", 12)
+    fh = gfx.font("DejaVuSans-Bold.ttf", 15)
+    while True:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                return
+            if ev.type == pygame.KEYDOWN:
+                if ev.key == pygame.K_TAB:
+                    game.toggle_style()
+                else:
+                    return
+        c = screen_colours(game)
+        frame.fill(c["bg"])
+        img = gfx.fit(fh.render("СТАТУС КОМАНДИРА", True, c["hi"]))
+        frame.blit(img, (W / 2 - img.get_width() / 2, 6))
+        y = 14 + img.get_height()
+        legal = game.legal_name()
+        rows = [("Система", game.system().name), ("Кредити", "%.1f Кр" % game.credits),
+                ("Паливо", "%.1f св. р." % game.fuel), ("Закон", legal), ("Ранг", game.rank()),
+                ("Знищено", "%d" % game.kills), ("Лазер", {"pulse": "імпульсний", "beam": "променевий",
+                                                             "military": "військовий"}[game.laser]),
+                ("Ракети", "%d" % game.missiles)] + [(e[1], "✓") for e in EQUIPMENT
+                                                     if e[0] in game.equip]
+        for k, v in rows:
+            col = c["warn"] if k == "Закон" and game.legal else (c["sel"] if k == "Ранг" else c["hi"])
+            frame.blit(f.render(k, True, c["lo"]), (10, y))
+            img = fb.render(v, True, col)
+            frame.blit(img, (W - 10 - img.get_width(), y))
+            y += f.get_height() + 3
+        y += 6
+        frame.blit(fb.render("Трюм: %d/%d т" % (game.held(), game.cargo_max()), True, c["hi"]), (10, y))
+        y += f.get_height() + 3
+        held = [(galaxy.GOODS[i][0], n, galaxy.GOODS[i][1]) for i, n in enumerate(game.cargo) if n]
+        if not held:
+            frame.blit(f.render("порожньо", True, c["lo"]), (20, y))
+        for name, n, unit_ in held:
+            if y > H - f.get_height() - 4:
+                break
+            frame.blit(f.render(name, True, c["lo"]), (20, y))
+            img = f.render("%d %s" % (n, unit_), True, c["hi"])
+            frame.blit(img, (W - 10 - img.get_width(), y))
+            y += f.get_height() + 1
+        show()
+        clock.tick(20)
 
 
 _previews = {}
@@ -1767,18 +2276,20 @@ def chart(game):
 def hyperspace(game):
     """Through hyperspace: rings rushing by while the next system is built, then out far from its planet."""
     tgt = game.gal[game.target]
-    game.fuel = max(0.0, game.fuel - game.system().dist(tgt))
+    d = jump_dist(game)
+    misjump = not game.world.deep and random.random() < MISJUMP
+    game.fuel = max(0.0, game.fuel - (d * 0.5 if misjump else d))
     game.music.stop(200)
     game.sfx.play("hyper")
     wire = game.style == "wire"
     t0 = time.monotonic()
-    nxt = game.gal[game.target]
+    nxt = game.system() if misjump else game.gal[game.target]
     box = {}
 
     def build():                       # numpy only (no pygame surfaces): it lets go of the interpreter
         try:
-            wd = World(nxt)
-            while not wd.planet.prewarm():
+            wd = World(nxt, deep=misjump)
+            while wd.planet is not None and not wd.planet.prewarm():
                 pass
             box["world"] = wd
         except Exception as e:         # a broken worker must not leave us in hyperspace for ever
@@ -1807,6 +2318,12 @@ def hyperspace(game):
         if t > 25:                                     # the worker is stuck: build it here
             box["error"] = TimeoutError()
             break
+    if misjump:                                        # stuck between the stars, the target still ahead
+        game.world = box["world"] if "world" in box else World(nxt, deep=True)
+        game.arrive()
+        game.say("ЗБІЙ ГІПЕРСТРИБКА! Чужинці!", 4)
+        lcd.play("error")
+        return
     game.here = game.target
     game.target = None
     game.world = box["world"] if "world" in box else World(game.system())
@@ -1856,6 +2373,8 @@ def flight(game):
                     toggle_autodock(game)
                 elif key == pygame.K_m:
                     game.fire_missile()
+                elif key == pygame.K_e:
+                    game.ecm()
                 elif key == pygame.K_g:
                     game.keys.clear()
                     chart(game)
@@ -1888,9 +2407,42 @@ def flight(game):
             return "docked"
         if r == "dead":
             explode(game)
+            if "capsule" in game.equip:
+                rescued(game)
+                return "rescued"
             return "dead"
         game.draw(dt)
         clock.tick(30)
+
+
+def rescued(game):
+    """The escape capsule got us out: a new ship from the insurance, the cargo and the capsule lost."""
+    game.equip.discard("capsule")
+    game.cargo = [0] * len(galaxy.GOODS)
+    if game.world.deep:
+        game.world = World(game.system())
+    t0 = time.monotonic()
+    f = gfx.font("DejaVuSans-Bold.ttf", 14)
+    fs = gfx.font("DejaVuSansCondensed.ttf", 11)
+    while time.monotonic() - t0 < 3.5:
+        pygame.event.pump()
+        c = screen_colours(game)
+        frame.fill(c["bg"])
+        y = 100
+        for text, ff, col in (("РЯТУВАЛЬНА КАПСУЛА", f, c["sel"]), ("Вас підібрали й доставили на станцію", fs, c["hi"]),
+                              ("«%s». Страховка дала новий корабель;" % game.system().name, fs, c["hi"]),
+                              ("вантаж і капсула втрачені.", fs, c["lo"])):
+            img = gfx.fit(ff.render(text, True, col))
+            frame.blit(img, (W / 2 - img.get_width() / 2, y))
+            y += img.get_height() + 6
+        show()
+        clock.tick(10)
+
+
+def jump_dist(game):
+    """Light years to the target - from between the stars, half the way is behind us."""
+    d = game.system().dist(game.gal[game.target])
+    return d * 0.5 if game.world.deep else d
 
 
 def start_hyper(game):
@@ -1902,7 +2454,7 @@ def start_hyper(game):
         game.say("Оберіть ціль на карті: g", 2)
         lcd.play("error")
         return
-    d = game.system().dist(game.gal[game.target])
+    d = jump_dist(game)
     if d > game.fuel:
         game.say("Замало палива: %.1f з %.1f св. р." % (game.fuel, d), 2.5)
         lcd.play("error")
@@ -2021,7 +2573,16 @@ def explode(game):
         clock.tick(30)
 
 
+def splash():
+    """The name at once, before the second or two the galaxy takes to grow."""
+    frame.fill((3, 3, 10))
+    img = gfx.fit(gfx.font("DejaVuSans-Bold.ttf", 19).render("ЗОРЯНИЙ ТОРГОВЕЦЬ", True, (120, 130, 150)), W - 24)
+    frame.blit(img, (W / 2 - img.get_width() / 2, H / 2 - img.get_height() / 2))
+    show()
+
+
 def main():
+    splash()
     game = Game()
     while True:
         r = title(game)
@@ -2034,7 +2595,12 @@ def main():
                 game.save()
                 break
             r = flight(game)
+            if r == "rescued":
+                game.dock()
+                continue
             if r in ("quit", "dead"):                  # what happened since the last docking is lost
+                if game.world.deep:
+                    game.world = World(game.system())
                 break
             game.dock()
 

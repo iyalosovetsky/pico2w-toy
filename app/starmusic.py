@@ -2,12 +2,16 @@
 "The Blue Danube" (1866, public domain), our own small arrangement: a soft melody over an oom-pah-pah of
 bass and chords, synthesized with numpy (no recordings).
 """
+import hashlib
+import os
+
 import numpy as np
 import pygame
 
 import lcd
 
 RATE = lcd.RATE
+CACHE = os.path.expanduser("~/.cache/lcdtoy")
 BEAT = 0.34                           # a quarter at ~176 a minute: a lively Viennese waltz
 NOTES = {"C": 0, "C#": 1, "D": 2, "D#": 3, "E": 4, "F": 5, "F#": 6, "G": 7, "G#": 8, "A": 9, "A#": 10, "B": 11}
 
@@ -272,6 +276,36 @@ def scoop():
     return y / np.abs(y).max()
 
 
+def elaser():
+    """Their laser: lower and harsher than ours."""
+    n = int(0.2 * RATE)
+    t = np.arange(n) / RATE
+    f = 900 * np.exp(-t * 9) + 140
+    ph = 2 * np.pi * np.cumsum(f) / RATE
+    y = np.sign(np.sin(ph)) * 0.5 + 0.5 * np.sin(1.5 * ph)
+    y *= np.minimum(1, t / 0.004) * np.exp(-t * 9)
+    return y / np.abs(y).max() * 0.8
+
+
+def shield():
+    """A hit on our shield, the 8-bit way: a short crunch falling in steps, a buzz under it."""
+    n = int(0.32 * RATE)
+    t = np.arange(n) / RATE
+    crunch = chip_noise(stepped(7000 * np.exp(-t * 7) + 500)) * chip_vol(stepped(15 - t * 15 / 0.3))
+    buzz = np.sign(np.sin(2 * np.pi * np.cumsum(stepped(220 - 300 * t)) / RATE)) * chip_vol(stepped(12 - t * 12 / 0.2))
+    y = 0.7 * crunch + 0.35 * buzz
+    return y / np.abs(y).max()
+
+
+def ecm():
+    """The countermeasures: a warbling 8-bit sweep up and down."""
+    n = int(0.7 * RATE)
+    t = np.arange(n) / RATE
+    f = stepped(900 + 700 * np.sin(2 * np.pi * 6 * t))
+    y = np.sign(np.sin(2 * np.pi * np.cumsum(f) / RATE)) * chip_vol(stepped(14 - t * 14 / 0.7))
+    return y * 0.7
+
+
 def lock():
     """A target locked: two short rising beeps."""
     out = []
@@ -286,16 +320,18 @@ class Sfx:
 
     MAKERS = {"crash_heavy": crash_chip, "crash": lambda: crash(False), "explosion": explosion,
               "boom": lambda: explosion(7, 1.7), "laser": laser, "zap": zap, "missile": missile, "lock": lock,
-              "hyper": hyper, "jump": jump, "scoop": scoop}
+              "hyper": hyper, "jump": jump, "scoop": scoop, "elaser": elaser, "shield": shield, "ecm": ecm}
 
     def __init__(self):
         self.snd = {}
 
-    def ready(self):
+    def load(self, bufs):
+        """The sounds from buffers() (made in a worker, turned into mixer sounds here)."""
         if lcd.sound_enabled():
             pygame.mixer.set_num_channels(16)           # lasers, hits and blasts overlap
             for name in self.MAKERS:
-                self.get(name)
+                if name in bufs and name not in self.snd:
+                    self.snd[name] = pygame.mixer.Sound(buffer=bufs[name].tobytes())
 
     def get(self, name):
         if name not in self.snd:
@@ -315,8 +351,12 @@ class Music:
         self.snd = None
         self.chan = None
 
+    def load(self, bufs):
+        if self.snd is None and lcd.sound_enabled() and "danube" in bufs:
+            self.snd = pygame.mixer.Sound(buffer=bufs["danube"].tobytes())
+
     def ready(self):
-        """Make the buffer (about a second on the Zero) - call it while a title shows."""
+        """The buffer, made now if the loader has not brought it (about a second on the Zero)."""
         if self.snd is None and lcd.sound_enabled():
             y = danube()
             self.snd = pygame.mixer.Sound(buffer=(np.clip(y, -1, 1) * 32000).astype(np.int16).tobytes())
@@ -334,3 +374,30 @@ class Music:
     def stop(self, ms=1200):
         if self.playing():
             self.chan.fadeout(ms)
+
+
+def buffers():
+    """Every sound as int16 samples: from the disk cache, or made (many seconds on the Zero: the 15-bit noise
+    register alone is 32767 steps of Python) and saved there for the next start. Numpy only - a worker
+    thread may run it. The cache's name has a hash of this file and the volume: change a sound, it is remade."""
+    with open(__file__, "rb") as f:
+        key = hashlib.sha1(f.read() + repr((lcd.VOLUME, RATE)).encode()).hexdigest()[:12]
+    path = os.path.join(CACHE, "startrader-sounds-%s.npz" % key)
+    try:
+        with np.load(path) as z:
+            return {k: z[k] for k in z.files}
+    except (OSError, ValueError, KeyError):
+        pass
+    out = {name: (np.clip(make() * 0.9 * lcd.VOLUME, -1, 1) * 32000).astype(np.int16)
+           for name, make in Sfx.MAKERS.items()}
+    out["danube"] = (np.clip(danube(), -1, 1) * 32000).astype(np.int16)
+    try:
+        os.makedirs(CACHE, exist_ok=True)
+        for old in os.listdir(CACHE):                  # an older version's cache
+            if old.startswith("startrader-sounds-") and old != os.path.basename(path):
+                os.remove(os.path.join(CACHE, old))
+        np.savez(path + ".tmp.npz", **out)
+        os.replace(path + ".tmp.npz", path)
+    except OSError:
+        pass
+    return out

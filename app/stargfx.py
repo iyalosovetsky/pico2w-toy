@@ -126,11 +126,15 @@ class Model:
         return cls(v, faces, mats, trim)
 
     def frame(self, fi):
-        """The face's centre, two in-plane axes and the outward normal (model space)."""
+        """The face's centre, two in-plane axes and the outward normal (model space). The first axis runs
+        along the ship's span (x) where the face allows: decals on a slanted face stay level and symmetric."""
         pts = [self.v[i] for i in self.faces[fi]]
         c = mul(tuple(sum(p[k] for p in pts) for k in range(3)), 1.0 / len(pts))
         n = norm(cross(sub(pts[1], pts[0]), sub(pts[2], pts[0])))
-        u = norm(sub(pts[1], pts[0]))
+        if abs(n[0]) < 0.9:
+            u = norm(sub((1.0, 0.0, 0.0), mul(n, n[0])))
+        else:
+            u = norm(sub(pts[1], pts[0]))
         return c, u, cross(n, u), n
 
     def on(self, fi, uv, lift=0.4):
