@@ -1059,16 +1059,87 @@ def _icon_paint(i, c):
         poly(c, (120, 220, 250), P((24, 18), (38, 18), (24, 40)))
 
 
+def _equip_paint(key, c):
+    """An equipment item drawn on a 48x48 canvas c."""
+    def P(*pts):
+        return [(x, y) for x, y in pts]
+    if key == "missile":
+        poly(c, (200, 205, 215), P((8, 40), (34, 14), (40, 8), (42, 6), (40, 12), (34, 18), (8, 44)))
+        poly(c, (220, 60, 50), P((40, 8), (46, 2), (42, 10)))
+        poly(c, (150, 155, 165), P((10, 34), (4, 34), (12, 40)))
+        poly(c, (150, 155, 165), P((14, 38), (14, 44), (8, 42)))
+        circle(c, (255, 160, 60), (8, 42), 4)
+    elif key == "fuel":
+        rect(c, (200, 60, 50), (10, 12, 28, 32), border_radius=4)
+        rect(c, (150, 40, 35), (10, 12, 28, 32), 2, border_radius=4)
+        rect(c, (230, 230, 230), (16, 6, 8, 8))
+        line(c, (150, 40, 35), (14, 20), (34, 36), 3)
+        line(c, (150, 40, 35), (34, 20), (14, 36), 3)
+    elif key == "bay":
+        poly(c, (170, 130, 70), P((6, 18), (24, 10), (42, 18), (42, 38), (24, 46), (6, 38)))
+        poly(c, (205, 165, 95), P((6, 18), (24, 10), (42, 18), (24, 26)))
+        poly(c, (140, 105, 55), P((24, 26), (42, 18), (42, 38), (24, 46)))
+        for y in (24, 32):
+            line(c, (110, 80, 40), (8, y), (22, y + 6), 2)
+    elif key == "ecm":
+        line(c, (180, 185, 195), (24, 44), (24, 22), 3)
+        poly(c, (150, 155, 165), P((16, 46), (32, 46), (24, 38)))
+        circle(c, (240, 80, 60), (24, 20), 4)
+        for r in (9, 15, 21):
+            arc(c, (90, 200, 255), (24 - r, 20 - r, 2 * r, 2 * r), math.radians(30), math.radians(150), 2)
+    elif key in ("beam", "military"):
+        col = (90, 190, 255) if key == "beam" else (255, 70, 60)
+        rect(c, (120, 125, 135), (4, 20, 22, 12), border_radius=3)
+        rect(c, (80, 85, 95), (24, 22, 6, 8))
+        line(c, (col[0] // 2, col[1] // 2, col[2] // 2), (30, 26), (46, 26), 7)
+        line(c, col, (30, 26), (46, 26), 3)
+        line(c, (255, 255, 255), (30, 26), (46, 26), 1)
+        if key == "military":
+            rect(c, (120, 125, 135), (8, 14, 14, 6))
+            rect(c, (120, 125, 135), (8, 32, 14, 6))
+    elif key == "energy":
+        rect(c, (60, 65, 75), (12, 10, 24, 34), border_radius=4)
+        rect(c, (180, 185, 195), (19, 5, 10, 6))
+        for k, col in enumerate(((120, 230, 90), (180, 230, 70), (230, 200, 60))):
+            rect(c, col, (16, 34 - k * 9, 16, 7))
+        poly(c, (255, 230, 80), P((26, 14), (19, 26), (24, 26), (21, 34), (29, 22), (24, 22)))
+    elif key == "capsule":
+        poly(c, (220, 130, 50), P((24, 4), (40, 38), (8, 38)))
+        poly(c, (190, 110, 40), P((24, 4), (40, 38), (24, 32)))
+        ellipse(c, (150, 210, 255), (19, 20, 10, 8))
+        circle(c, (255, 170, 80), (24, 42), 5)
+    elif key == "scoop":
+        circle(c, (255, 200, 80), (36, 36), 12)
+        poly(c, (160, 165, 175), P((4, 8), (22, 4), (26, 24), (14, 28)))
+        poly(c, (100, 105, 115), P((14, 28), (26, 24), (30, 32), (22, 36)))
+        for k in range(3):
+            line(c, (255, 220, 120), (30 - k * 3, 30 + k * 2), (24 - k * 3, 26 + k * 2), 2)
+    elif key == "galhyper":
+        for k in range(2):
+            pts = [(24 + (2 + t * 1.1) * math.cos(t * 0.55 + k * math.pi), 24 + (2 + t * 1.1) * 0.75 *
+                    math.sin(t * 0.55 + k * math.pi)) for t in range(18)]
+            lines(c, (190, 150, 255), False, pts, 3)
+        circle(c, (255, 240, 200), (24, 24), 4)
+
+
 _icons = {}
 
 
+def equip_icon(key, size, wire=False):
+    return _icon(("e", key), size, wire, lambda c: _equip_paint(key, c))
+
+
 def goods_icon(i, size, wire=False):
-    """Good i's little picture, size pixels square: painted big, scaled down smoothly; the classic look
-    turns it to green shades."""
-    key = (i, int(size), wire)
+    return _icon(("g", i), size, wire, lambda c: _icon_paint(i, c))
+
+
+def _icon(name, size, wire, paint):
+    """A little picture, size pixels square: painted big, scaled down smoothly; the classic look turns it to
+    green shades."""
+    key = (name, int(size), wire)
     if key not in _icons:
         c = pygame.Surface((48, 48), pygame.SRCALPHA)
-        _icon_paint(i, c)
+        paint(c)
         if wire:
             rgb = pygame.surfarray.pixels3d(c)
             lum = (rgb[..., 0] * 0.3 + rgb[..., 1] * 0.59 + rgb[..., 2] * 0.11) / 255.0

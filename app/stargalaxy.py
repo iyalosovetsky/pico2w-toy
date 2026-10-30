@@ -167,7 +167,7 @@ def market(sys_, visit):
     for name, unit, base, agri, stock, tech, legal in GOODS:
         k = agri * e
         price = base * (1 - 0.32 * k) * rnd.uniform(0.9, 1.1)
-        qty = stock * (1 + 0.7 * k) * rnd.uniform(0.5, 1.4)
+        qty = stock * 1.7 * (1 + 0.7 * k) * rnd.uniform(0.5, 1.4)     # enough that a big hold pays
         if sys_.tech < tech:
             qty = 0
         if not legal and sys_.gov >= 5:

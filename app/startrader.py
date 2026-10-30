@@ -795,8 +795,10 @@ class Game:
         self.prisoners = {}
 
     def inspect(self):
-        """A strict state's customs: illegal goods taken, a fine of 25 Cr a tonne, a mark on the record."""
-        if self.system().gov < 5 or random.random() > 0.8:
+        """A strict state's customs (the stricter, the likelier): illegal goods taken, a fine of 25 Cr a tonne,
+        a mark on the record - the black market's high prices are a gamble."""
+        chance = {5: 0.25, 6: 0.45, 7: 0.7}.get(self.system().gov, 0.0)   # confederacy, democracy, corporate
+        if random.random() >= chance:
             return
         bad = [(i, n) for i, n in enumerate(self.cargo) if n and not galaxy.GOODS[i][6]]
         if not bad:
@@ -2218,7 +2220,8 @@ def shop_screen(game):
             col = c["sel"] if i == sel else (c["lo"] if have else c["hi"])
             ff = fb if i == sel else f
             label = name + (" (%d/%d)" % (game.missiles, MISSILES_MAX) if key == "missile" else "")
-            frame.blit(gfx.fit(ff.render(label, True, col), W - 110), (8, y))
+            frame.blit(gfx.equip_icon(key, row - 3, game.style == "wire"), (5, y))
+            frame.blit(gfx.fit(ff.render(label, True, col), W - 116 - row), (8 + row, y))
             if key == "fuel":
                 p = (galaxy.JUMP_MAX - game.fuel) * galaxy.FUEL_PRICE
                 price_s = "є" if have else "%.1f" % p
