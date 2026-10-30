@@ -1763,23 +1763,35 @@ def title(game):
 
 
 def ships_book(game):
-    """The ship identification: each type turning, its name and role; ← → - the next, Esc - back."""
+    """The ship identification: each type turning, its name and role; ← → - the next, ↑ ↓ (held) - turn it
+    over about the horizontal axis, Esc - back."""
     kinds = list(gfx.TYPES)
     i = 0
     t0 = time.monotonic()
     fn = gfx.font("DejaVuSans-Bold.ttf", 16)
     fs = gfx.font("DejaVuSansCondensed.ttf", 11)
+    tilt = -0.35
+    held = set()
+    last = time.monotonic()
     while True:
+        now = time.monotonic()
+        dt = min(0.1, now - last)
+        last = now
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 return
+            if ev.type == pygame.KEYUP:
+                held.discard(ev.key)
+                continue
             if ev.type != pygame.KEYDOWN:
                 continue
             hat = getattr(ev, "hat", False)
-            if ev.key in (pygame.K_RIGHT, pygame.K_DOWN, pygame.K_RIGHTBRACKET):
+            if ev.key in (pygame.K_UP, pygame.K_DOWN):
+                held.add(ev.key)
+            elif ev.key in (pygame.K_RIGHT, pygame.K_RIGHTBRACKET):
                 i = (i + 1) % len(kinds)
                 lcd.play("click")
-            elif ev.key in (pygame.K_LEFT, pygame.K_UP, pygame.K_LEFTBRACKET):
+            elif ev.key in (pygame.K_LEFT, pygame.K_LEFTBRACKET):
                 i = (i - 1) % len(kinds)
                 lcd.play("click")
             elif ev.key == pygame.K_TAB or (hat and ev.key == pygame.K_2):
@@ -1791,7 +1803,8 @@ def ships_book(game):
         draw_backdrop(game, t)
         me = gfx.mesh(kinds[i])
         z = me.radius * F / 105
-        gfx.draw_mesh(frame, me, spin_matrix(t, -0.35), np.array((0.0, 0.0, z)), F, W / 2, H / 2 - 10,
+        tilt += ((pygame.K_DOWN in held) - (pygame.K_UP in held)) * 1.6 * dt     # ↑ tips the nose away
+        gfx.draw_mesh(frame, me, spin_matrix(t, tilt), np.array((0.0, 0.0, z)), F, W / 2, H / 2 - 10,
                       np.array(HANGAR_L), game.style)
         name, role = gfx.TYPES[kinds[i]][:2]
         hdr = gfx.fit(fs.render("РОЗПІЗНАВАННЯ КОРАБЛІВ  %d / %d" % (i + 1, len(kinds)), True,
@@ -1800,7 +1813,8 @@ def ships_book(game):
         y = H - 4
         for text, ff, col in reversed(((name, fn, gfx.WIRE if wire else (240, 232, 214)),
                                        (role, fs, gfx.WIRE if wire else (170, 190, 220)),
-                                       ("← → - інший · Esc - назад", fs, gfx.WIRE_DIM if wire else (110, 130, 160)))):
+                                       ("← → інший · ↑ ↓ нахил · Esc назад", fs,
+                                        gfx.WIRE_DIM if wire else (110, 130, 160)))):
             if gfx.HAT and ff is fs and text.startswith("←"):
                 continue
             img = gfx.fit(ff.render(text, True, col))
