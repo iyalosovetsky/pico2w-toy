@@ -1,7 +1,8 @@
 """Launcher menu for the Waveshare 1.44\" LCD HAT: Pong / Tetris / Poker / Chess / Preferans / Doom / AI chat / Console / HDMI / Power off.
 
-Joystick UP/DOWN - choose, PRESS or RIGHT - run, KEY1 - help for the item.
-Keyboard: arrows, Enter / Space - run, F1 - help.
+The items are in folders (menufolders.py): their icons down the left, the chosen folder's items on the right.
+Joystick UP/DOWN - choose, LEFT/RIGHT - folder, PRESS - run (held - the folder dialog), KEY1 - help.
+Keyboard: arrows, Enter / Space - run (Enter held - the folder dialog), F1 - help; letters - search every folder.
 Games return here when they exit; CONSOLE ends the menu and opens the LCD
 console (tty7); HDMI lends the USB keyboard to the HDMI console (tty1) until KEY3.
 """
@@ -34,6 +35,7 @@ ITEMS = [
     ("RADIO", "online", ["/usr/bin/python3", HERE + "/radio.py"], HERE),
     ("SDR", "rtl-sdr", ["/usr/bin/python3", HERE + "/sdr.py"], HERE),
     ("FLIPPER", "scan", ["/usr/bin/python3", HERE + "/flipper.py"], HERE),
+    ("BLUETOOTH", "gamepads", ["/usr/bin/python3", HERE + "/bluetooth.py"], HERE),
     ("SCREENSAVER", "demo", ["/usr/bin/python3", HERE + "/screensaver.py"], HERE),
     ("AQUARIUM", "demo", ["/usr/bin/python3", HERE + "/aquarium.py"], HERE),
     ("AI CHAT", "", "aichat", None),
@@ -81,6 +83,9 @@ if not os.path.exists("/usr/bin/rtl_tcp"):
 # the generator board talks over the GPIO 14/15 UART or USB: only where one of them is there
 if not os.path.exists("/dev/serial0") and not glob.glob("/dev/ttyACM*"):
     ITEMS = [it for it in ITEMS if it[0] != "GENERATOR"]
+
+if not os.path.exists("/usr/bin/bluetoothctl"):
+    ITEMS = [it for it in ITEMS if it[0] != "BLUETOOTH"]
 
 if not _has_hdmi_fb():  # no monitor framebuffer (e.g. PicoCalc): nothing to lend the keyboard to
     ITEMS = [it for it in ITEMS if it[2] != "hdmi"]
@@ -153,15 +158,20 @@ TITLE_W = 84 if HAS_BATTERY else 120  # the battery takes the right of the heade
 while font_title.size(TITLE)[0] > TITLE_W and font_title.get_height() > 10:  # long names: smaller font
     font_title = pygame.font.Font(None, font_title.get_height() - 2)
 font_item = pygame.font.Font(None, 20)
+font_item_narrow = pygame.font.Font(None, 18)
 VISIBLE = 5     # rows on screen; the list scrolls
 ROW_H = 20
 top = 0         # first visible row
 font_small = pygame.font.Font(None, 14)
 clock = pygame.time.Clock()
+import menufolders  # noqa: E402  (its fonts need pygame started by lcd.init)
+folders = menufolders.Folders([it[0] for it in ITEMS])
+LONG_PRESS = 0.6  # s of OK held: the folder dialog instead of running the item
 
 
-def draw_battery():
-    """Percent and a battery icon at the right of the header; a bolt while charging."""
+def draw_battery(pct_room=99):
+    """Percent and a battery icon at the right of the header; a bolt while charging. The percent only
+    where it fits (pct_room - the pixels left of the icon)."""
     b = battery()
     if b is None:
         return
@@ -177,37 +187,80 @@ def draw_battery():
         pygame.draw.polygon(screen, (80, 200, 255), [(x + 7, y - 1), (x + 3, y + 4), (x + 6, y + 4),
                                                      (x + 5, y + 8), (x + 9, y + 3), (x + 6, y + 3)])
     t = font_small.render("%d%%" % pct, True, FG)
-    screen.blit(t, (x - 2 - t.get_width(), y - 1))
+    if t.get_width() + 2 <= pct_room:
+        screen.blit(t, (x - 2 - t.get_width(), y - 1))
 
 
-def draw(sel):
+def search(q):
+    """Items in every folder whose name has the typed letters in that order, not necessarily together
+    (B, K - BOOKS): the most run first, then the names starting with the first letter."""
+    q = q.lower().replace(" ", "")
+    found = []
+    for k, (name, _, _, _) in enumerate(ITEMS):
+        n = name.lower()
+        rest = iter(n)
+        if all(c in rest for c in q):            # each letter found after the one before
+            found.append((-folders.launches.get(name, 0.0), not n.startswith(q[:1]), k))
+    return [k for _, _, k in sorted(found)]
+
+
+def draw_magnifier(x, y, color):
+    pygame.draw.circle(screen, color, (x + 4, y + 4), 3.6, 1)
+    pygame.draw.line(screen, color, (x + 6.5, y + 6.5), (x + 9.5, y + 9.5), 2)
+
+
+def draw(sel, shown, query=""):
+    """The folder's name over its items (or the search over what it found); the folders' icons down the left."""
     global top
     top = min(max(top, sel - VISIBLE + 1), sel)  # keep the selection on screen
     screen.fill(BG)
-    t = font_title.render(TITLE, True, ACCENT)
+    name = folders.name(folders.current) if not query else query + ("_" if time.monotonic() % 1 < 0.5 else " ")
     if HAS_BATTERY:
-        screen.blit(t, (8, 5))
-        draw_battery()
+        room = 105 - 26                                    # up to the battery's icon
+        draw_battery(room - menufolders.f_head.size(name)[0] - 4)
     else:
-        screen.blit(t, ((128 - t.get_width()) // 2, 5))
-    pygame.draw.line(screen, DIM, (8, 22), (119, 22))
-    for i in range(top, min(top + VISIBLE, len(ITEMS))):
-        name, hint, cmd, _ = ITEMS[i]
+        h = font_small.render(TITLE.lower(), True, DIM)
+        room = 124 - 26
+        if menufolders.f_head.size(name)[0] + 6 + h.get_width() <= room:   # the hostname where it fits
+            screen.blit(h, (124 - h.get_width(), 8))
+    x = 26
+    if query:
+        draw_magnifier(x, 6, ACCENT)
+        x += 13
+        room -= 13
+    f = menufolders.f_head if menufolders.f_head.size(name)[0] <= room else menufolders.f_bold
+    t = f.render(menufolders._fit(name, f, room), True, FG if query else ACCENT)
+    screen.blit(t, (x, 11 - t.get_height() / 2))
+    pygame.draw.line(screen, DIM, (24, 22), (124, 22))
+    menufolders.column(screen, folders, -1 if query else folders.current, 24, 104)
+    for i in range(top, min(top + VISIBLE, len(shown))):
+        name, hint, cmd, _ = ITEMS[shown[i]]
         if cmd == "sound":
             hint = "on" if lcd.sound_enabled() else "off"
         y = 28 + (i - top) * ROW_H
         if i == sel:
-            pygame.draw.rect(screen, ACCENT, (6, y - 3, 116, ROW_H - 1), border_radius=4)
+            pygame.draw.rect(screen, ACCENT, (24, y - 3, 103, ROW_H - 1), border_radius=4)
             name_c, hint_c = BG, (60, 60, 60)
         else:
             name_c, hint_c = FG, DIM
-        screen.blit(font_item.render(name, True, name_c), (12, y))
+        n = font_item.render(name, True, name_c)
+        if n.get_width() > 96:                                # SCREENSAVER: a size smaller
+            n = font_item_narrow.render(name, True, name_c)
+        screen.blit(n, (28, y))
         h = font_small.render(hint, True, hint_c)
-        screen.blit(h, (118 - h.get_width(), y + 4))
+        if 28 + n.get_width() + 4 + h.get_width() <= 124:     # the hint only where it fits beside the name
+            screen.blit(h, (124 - h.get_width(), y + 4))
+    if not shown:
+        lines = ("нічого не знайдено", "", "Esc - назад") if query else \
+            ("тут з'являться", "програми, які", "ви часто запускаєте") if folders.current == folders.fav() \
+            else ("порожньо", "утримуйте %s -" % lcd.OK, "дії з теками")
+        for k, line in enumerate(lines):
+            s_ = menufolders.f_small.render(line, True, DIM)
+            screen.blit(s_, (76 - s_.get_width() / 2, 50 + k * 11))
     # scroll indicators
     if top > 0:
         pygame.draw.polygon(screen, DIM, [(120, 18), (124, 23), (116, 23)])
-    if top + VISIBLE < len(ITEMS):
+    if top + VISIBLE < len(shown):
         pygame.draw.polygon(screen, DIM, [(120, 127), (124, 122), (116, 122)])
     lcd.flip()
 
@@ -388,8 +441,51 @@ def run(cmd, cwd):
     idle_t = time.monotonic()   # the time in the app was not idle time: back in the menu, the count starts anew
 
 
+def launch(item):
+    """Run a menu item; False when the menu is to end. Counted for the favourites."""
+    _, _, cmd, cwd = item
+    lcd.play("select")
+    folders.launched(item[0])
+    if cmd is None:
+        return False
+    if cmd == "aichat":
+        # runs on the LCD text console (tty7); systemd stops this menu
+        # and brings it back when the chat ends
+        message("AI CHAT", "starting...")
+        subprocess.run(["sudo", "-n", "/usr/bin/systemctl", "start",
+                        "--no-block", "ai-chat.service"])
+    elif str(cmd).startswith("term:"):
+        # like the AI chat: a text-console tool on tty7, back to the menu on exit
+        tool = cmd.split(":", 1)[1]
+        message(item[0], "starting...")
+        subprocess.run(["sudo", "-n", "/usr/bin/systemctl", "start",
+                        "--no-block", "lcd-term@%s.service" % tool])
+    elif cmd == "hdmi":
+        return hdmi_console()
+    elif cmd == "sound":
+        lcd.set_sound(not lcd.sound_enabled())
+        lcd.play("select")
+    elif cmd == "poweroff":
+        if confirm_poweroff():
+            poweroff()
+    else:
+        run(cmd, cwd)
+    return True
+
+
+def launch_at(here, sel):
+    """Run the folder's item at sel: (go on, where that item now is - the favourites re-sort by the runs)."""
+    k = here[sel]
+    go = launch(ITEMS[k])
+    now = folders.items(folders.current)
+    return go, now.index(k) if k in now else min(sel, max(0, len(now) - 1))
+
+
+sel_in = {}     # the selection in each folder, kept while moving between them
 sel = 0
 running = True
+press_t = None  # when OK went down: a short press runs the item, a long one opens the folder dialog
+query = ""      # letters typed: the items found in every folder instead of the folder's
 idle_t = time.monotonic()   # the last key: the screensaver after saver_after() seconds without one
 SAVER = next((it for it in ITEMS if it[0] == "SCREENSAVER"), None)
 AQUARIUM = next((it for it in ITEMS if it[0] == "AQUARIUM"), None)
@@ -398,51 +494,72 @@ if AQUARIUM and aquarium_at_boot():   # the device has just been switched on: th
     idle_t = time.monotonic()
 shown = None    # what is on the screen: redraw only when it changes (a full frame cost 40-60 % of
                 # a core on the PicoCalc at 20 fps on an unchanging screen)
+OK_KEYS = (pygame.K_RETURN, pygame.K_KP_ENTER)
 while running:
     keyed = False
+    here = search(query) if query else folders.items(folders.current)
+    sel = max(0, min(sel, len(here) - 1))
     for ev in pygame.event.get():
         if ev.type == pygame.QUIT:  # SIGTERM from systemctl stop
             running = False
+        elif ev.type == pygame.KEYUP and ev.key in OK_KEYS and press_t is not None:
+            press_t = None          # a short press: run it
+            keyed = True
+            shown = None
+            if here:
+                running, sel = launch_at(here, sel)
+                if query:                       # back from the program: the folder, not the search
+                    query, sel = "", 0
         elif ev.type == pygame.KEYDOWN:
             idle_t = time.monotonic()
             keyed = True
             shown = None            # a key (and whatever it opened - an app, help) may change the screen
-            if ev.key == pygame.K_UP:
-                sel = (sel - 1) % len(ITEMS)
+            ch = "" if getattr(ev, "hat", False) else (getattr(ev, "unicode", "") or "")
+            if (ch.isalpha() and ch.isascii()) or (query and ch.isdigit()):
+                query = (query + ch.upper())[:12]       # letters: search every folder as they come
+                sel, top = 0, 0
+                here = search(query)
+            elif query and ev.key == pygame.K_BACKSPACE:
+                query = query[:-1]
+                sel, top = 0, 0
+                here = search(query) if query else folders.items(folders.current)
+            elif query and ev.key == pygame.K_ESCAPE:
+                query, sel, top = "", sel_in.get(folders.current, 0), 0
+                here = folders.items(folders.current)
+            elif ev.key == pygame.K_UP and here:
+                sel = (sel - 1) % len(here)
                 lcd.play("click")
-            elif ev.key == pygame.K_DOWN:
-                sel = (sel + 1) % len(ITEMS)
+            elif ev.key == pygame.K_DOWN and here:
+                sel = (sel + 1) % len(here)
+                lcd.play("click")
+            elif ev.key in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_TAB):
+                if query:                       # out of the search, on to a folder
+                    query, sel = "", sel_in.get(folders.current, 0)
+                sel_in[folders.current] = sel
+                step = -1 if ev.key == pygame.K_LEFT else 1
+                folders.current = (folders.current + step) % folders.count()
+                folders.save()
+                sel, top = sel_in.get(folders.current, 0), 0
+                here = folders.items(folders.current)
                 lcd.play("click")
             elif ev.key == pygame.K_F1 or (ev.key == pygame.K_1 and getattr(ev, "hat", False)):
                 # F1 (keyboard) / KEY1 (HAT): help for the selected item
-                running = show_help(ITEMS[sel][0])
-            elif ev.key in (pygame.K_RETURN, pygame.K_1, pygame.K_RIGHT, pygame.K_SPACE):
-                lcd.play("select")
-                _, _, cmd, cwd = ITEMS[sel]
-                if cmd is None:
-                    running = False
-                elif cmd == "aichat":
-                    # runs on the LCD text console (tty7); systemd stops this menu
-                    # and brings it back when the chat ends
-                    message("AI CHAT", "starting...")
-                    subprocess.run(["sudo", "-n", "/usr/bin/systemctl", "start",
-                                    "--no-block", "ai-chat.service"])
-                elif str(cmd).startswith("term:"):
-                    # like the AI chat: a text-console tool on tty7, back to the menu on exit
-                    tool = cmd.split(":", 1)[1]
-                    message(ITEMS[sel][0], "starting...")
-                    subprocess.run(["sudo", "-n", "/usr/bin/systemctl", "start",
-                                    "--no-block", "lcd-term@%s.service" % tool])
-                elif cmd == "hdmi":
-                    running = hdmi_console()
-                elif cmd == "sound":
-                    lcd.set_sound(not lcd.sound_enabled())
-                    lcd.play("select")
-                elif cmd == "poweroff":
-                    if confirm_poweroff():
-                        poweroff()
-                else:
-                    run(cmd, cwd)
+                if here:
+                    running = show_help(ITEMS[here[sel]][0])
+            elif ev.key in OK_KEYS:
+                press_t = time.monotonic()      # run on the release, unless it is held
+            elif ev.key in (pygame.K_1, pygame.K_SPACE) and here:
+                running, sel = launch_at(here, sel)
+                query = ""
+    if press_t is not None and time.monotonic() - press_t > LONG_PRESS:
+        press_t = None
+        lcd.play("select")
+        menufolders.dialog(screen, clock, folders, ITEMS[here[sel]][0] if here else None)
+        query = ""
+        here = folders.items(folders.current)
+        sel = min(sel, max(0, len(here) - 1))
+        keyed = True
+        shown = None
     if keyed:
         idle_t = time.monotonic()   # after what the key opened (an app, the help): idle starts from now
     wait = saver_after()
@@ -450,9 +567,10 @@ while running:
         run(SAVER[2], SAVER[3])         # any key ends it and comes back here
         idle_t = time.monotonic()
         shown = None
-    state = (sel, battery() if HAS_BATTERY else None, lcd.sound_enabled())
+    state = (folders.current, sel, battery() if HAS_BATTERY else None, lcd.sound_enabled(),
+             press_t is not None, query, query and time.monotonic() % 1 < 0.5)   # the search's cursor blinks
     if state != shown:
-        draw(sel)
+        draw(sel, search(query) if query else folders.items(folders.current), query)
         shown = state
     clock.tick(20)
 

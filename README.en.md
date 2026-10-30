@@ -37,7 +37,8 @@ screensaver of fractals and animations (the SCREENSAVER item).
 | ![menu](docs/gif-picocalc/menu.gif) | ![pong](docs/gif-picocalc/pong.gif) | ![tetris](docs/gif-picocalc/tetris.gif) | ![poker](docs/gif-picocalc/poker.gif) |
 | **Chess** | **Preferans** | **Doom** | **AI chat** |
 | ![chess](docs/gif-picocalc/chess.gif) | ![preferans](docs/gif-picocalc/preferans.gif) | ![doom](docs/gif-picocalc/doom.gif) | ![aichat](docs/gif-picocalc/aichat.gif) |
-| **Books** | **PDF** | **GENERATOR** | **Voltmeter** |
+| **Books** | **PDF** | **STAR TRADER** | A space trader in the spirit of the old 8-bit classic, with our own ships and tables: 3D flight (solid models or the classic green wireframe), docking by hand or by the autopilot to a waltz, a market of 16 goods, 8 galaxies of 256 systems, hyperspace and the jump drive, fights with pirates (packs with a leader, bounty hunters, chases, escape capsules), police and customs, equipment, ranks, missions, the sounds synthesized in numpy; F1 - help. Bluetooth gamepads work (the stick flies, the triggers set the speed) |
+| **GENERATOR** | **Voltmeter** |
 | ![reader](docs/gif-picocalc/reader.gif) | ![pdf](docs/gif-picocalc/pdf.gif) | ![generator](docs/gif-picocalc/generator.gif) | ![voltmeter](docs/gif-picocalc/voltmeter.gif) |
 | **Oscilloscope** | **Logic analyzer** | **Calculator** | **SDR** |
 | ![oscilloscope](docs/gif-picocalc/oscilloscope.gif) | ![logic](docs/gif-picocalc/logic.gif) | ![calc](docs/gif-picocalc/calc.gif) | ![sdr](docs/gif-picocalc/sdr.gif) |
@@ -135,6 +136,7 @@ A 172×103×20 mm PicoCalc back cover for the zero mod (a Zero 2 W instead of th
 | **SCREENSAVER** | A screensaver with the animations of our Raspberry Pi Pico W DVI LCD dashboard ([pico-dvi-python](https://github.com/iyalosovetsky/pico-dvi-python)): a Julia set, a plasma, a lava lamp, ripples, a kaleidoscope flower (2.5 minutes each at half the dashboard's pace, the same formulas and palettes, numpy) and a clock with the date at the bottom; starts by itself after 3 minutes without a key in the menu (`~/.config/lcdtoy/screensaver` - seconds, 0 - never), any key - back |
 | **SDR** | A receiver on an RTL-SDR stick (RTL2832U on USB, tested with the RTL-SDR Blog V4, 0.5 - 1766 MHz): spectrum and waterfall, WFM / NFM / AM / USB / LSB to the speaker, squelch, station memory, frequency typed in digits, a 2 MHz overview. `rtl_tcp` + numpy DSP. The GIF: USB at 7.499 MHz, the carrier of a 7.5 MHz square from GENERATOR (switched off - gone from the waterfall), then the 2 MHz overview |
 | **FLIPPER** | Scanning with a Flipper Zero on USB through its CLI, receive only: Sub-GHz (decoded protocols on a chosen frequency, e.g. "KeeLoq 64bit · AN-Motors · btn 8"), IR remotes, RFID 125 kHz, NFC - a timestamped list |
+| **BLUETOOTH** | Gamepads and other Bluetooth devices: search, pairing (trusted and connected), disconnecting, forgetting; each device keeps its own list. Gamepads are named by their USB ids (a DualSense and a DualShock 4 both call themselves "Wireless Controller"). Unblocks Bluetooth if rfkill has it off |
 | **AI CHAT** | Chat with an LLM (llama.cpp / any OpenAI-compatible server) on the text console, US/UA keyboard. Servers are in `~/.config/lcdtoy/ai-chat.json` (url, token, model), `/provider NAME` switches; the menu shows the current one |
 | **CONSOLE** | Leaves the menu and opens a text console with login on the LCD (tty7); `lcdmenu` brings the menu back |
 | **HDMI** | Lends the USB keyboard to the console on the monitor (tty1); the HAT buttons stay with the menu, KEY3 takes the keyboard back |
@@ -163,7 +165,7 @@ How the pieces fit together:
 |---|---|
 | `install.sh` | One-shot installer (packages, driver, fonts, services) for the HAT or the PicoCalc |
 | `app/lcd.py` | Shared display + input layer for all pygame apps (from a keyboard also characters with Shift / Caps Lock, US) |
-| `app/menu.py` | Launcher menu (scrolling list) |
+| `app/menu.py`, `app/menufolders.py` | Launcher menu: folders as icons on the left (Favourites, Games, Tools, System, Other), the folder's items on the right; the programs run often come into Favourites by themselves (staying in their own folders too); a long OK press - move the item to a folder, create / rename / remove a folder (`~/.config/lcdtoy/menu-folders.json`) |
 | `app/pong.py`, `app/tetris.py`, `app/poker.py`, `app/chessgame.py` | The games |
 | `app/preferans.py` | 128×128 Preferans front-end for the PyPref engine |
 | `app/reader.py`, `app/books.py`, `app/pdfdoc.py` | The reader: UI, EPUB / FB2 / TXT / ZIP parsing (FB2 and TXT in any encoding), PDF pages via `pdftoppm` |
@@ -178,6 +180,8 @@ How the pieces fit together:
 | `app/radio.py` | RADIO: the radio-browser.info API, reading the stream with ICY metadata, ffmpeg -> ALSA, volume through `amixer` |
 | `app/synth.py` | SYNTH: instrument and drum synthesis (additive, FM, Karplus-Strong, noise), pygame mixer, the rhythm machine on its own thread |
 | `app/sdr.py` | SDR: `rtl_tcp` in the background, numpy DSP (filters, WFM / NFM / AM / SSB demodulators), spectrum and waterfall, sound through `aplay` |
+| `app/startrader.py`, `app/stargfx.py`, `app/stargalaxy.py`, `app/starmusic.py` | STAR TRADER: the game and its screens; the 3D renderer (models, planets, station, dashboard); the galaxies and markets; the synthesized sounds and waltz |
+| `app/bluetooth.py` | BLUETOOTH: `bluetoothctl` (agent, search, pairing), the device lists, gamepad names from the Modalias |
 | `app/flipper.py` | FLIPPER: the Flipper Zero CLI over its USB serial port, the receive commands `subghz rx` / `ir rx` / `rfid read` / `nfc scanner`, grouping and showing the results |
 | `app/calcpad.py` | Calculator: a `calc -q -p` session in a pipe, 2D plots / heat map / 3D surface |
 | `app/ai_chat.py` | Streaming chat client for a llama.cpp / OpenAI-compatible server |
@@ -201,6 +205,9 @@ How the pieces fit together:
 | Secondary action (pause, difficulty, all-in, game menu) | KEY2 | 2 |
 | Back to the menu | KEY3 | Esc |
 | Help for the selected main-menu item (controls, commands) | KEY1 | F1 |
+| Menu folder (previous / next) | joystick ← / → | ← / → or Tab |
+| Find an item in every folder | - | type letters it has in that order, not necessarily together (BK - BOOKS); the most run first (Backspace - erase, Esc - leave the search) |
+| Folder actions: move the item to a folder, create, rename, remove (its items go to "Other") | hold the joystick press | hold Enter |
 
 Per game:
 
