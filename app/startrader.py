@@ -208,6 +208,8 @@ class Ship:
         self.gone = False
         self.colour = gfx.TYPES[kind][4]
         self.hp = HP.get(kind, 3)
+        self.max_hp = self.hp
+        self.pod = None                       # an escape capsule: "pirate" or "civil" - who sits in it
         self.target = None
         self.hostile = False                  # attacks the player
         self.mode = "attack"
@@ -412,12 +414,32 @@ class World:
             self.ships.append(s)
         self.events.append(("pirates", n))
 
+    def run_away(self, s, dt, pl, top):
+        """Flee: nose away from the player (a little off his line), all the speed it has; far enough - gone."""
+        d = s.pos - pl.pos
+        dist = length(d)
+        if s.break_dir is None:
+            s.break_dir = unit(np.array([self.rnd.gauss(0, 1) for _ in range(3)])) * 0.3
+        s.R = turn_to(s.R, unit(unit(d) + s.break_dir), TURN_RATE.get(s.kind, 1.0) * 0.9, dt, 0.6)
+        s.speed = min(top, s.speed + 500 * dt)
+        if dist > 14000:
+            s.gone = True
+            self.events.append(("escaped", s))
+
     def dogfight(self, s, dt, pl):
         """Come in on the player's tail (aiming ahead of him), shoot when lined up, break off when too close,
-        come round again."""
+        come round again; badly hit - run for it."""
         d = pl.pos - s.pos
         dist = length(d)
         rate = TURN_RATE.get(s.kind, 1.2)
+        if s.mode == "flee":
+            self.run_away(s, dt, pl, 1450.0)
+            return
+        if s.hp <= s.max_hp * (0.15 if s.kind == "groza" else 0.35) and s.kind not in ("truten", "vulyk", "sokil"):
+            s.mode = "flee"
+            s.break_dir = None
+            self.events.append(("flee", s))
+            return
         if s.mode == "break":
             s.break_t -= dt
             s.R = turn_to(s.R, s.break_dir, rate, dt, 1.2)
@@ -517,6 +539,8 @@ class World:
                     q = self.st_R.T @ (s.pos - self.st_pos)
                     if q[2] > -STATION_R:                              # in through the slot
                         s.gone = True
+            elif s.role == "flee" and pl is not None:                  # a trader we shot at
+                self.run_away(s, dt, pl, 900.0 if s.kind == "mazha" else 1250.0)
             elif s.role == "missile":
                 tg = s.target
                 if tg is None or tg.gone or s.age > 14:
@@ -542,7 +566,7 @@ class World:
             elif s.role == "patrol":
                 s.phase += dt * 700 / 3800
                 s.R = turn_to(s.R, unit(self.patrol_point(s.phase + 0.35) - s.pos), 0.8, dt)
-            if s.role not in ("drift", "missile", "cargo") and not s.hostile:   # keep clear of the player
+            if s.role not in ("drift", "missile", "cargo", "flee") and not s.hostile:   # keep clear of the player
                 d = player_pos - s.pos
                 dist = length(d)
                 if dist < 1000 and np.dot(d, s.R[:, 2]) > 0:
@@ -561,6 +585,14 @@ class World:
         self.ships = [x for x in self.ships if not x.gone]
         self.blasts.append(Blast(s, self.rnd))
         self.events.append(("boom", s))
+        if s.kind in ("chumak", "mazha", "osa", "shulika", "sokil", "groza") and self.rnd.random() < 0.45:
+            d = unit(np.array([self.rnd.gauss(0, 1) for _ in range(3)]))      # the pilot ejects
+            c = Ship("kapsula", s.pos + d * s.me.radius * 0.6, basis(d, np.array((0, 1.0, 0))), 0.0, "cargo")
+            c.spin = (0.0, 0.0, self.rnd.uniform(-2, 2))
+            c.drift = d * 260 + s.R[:, 2] * s.speed * 0.3
+            c.pod = "pirate" if (s.hostile and s.kind != "sokil") or s.bounty else "civil"
+            self.ships.append(c)
+            self.events.append(("pod", c))
         n = {"mazha": (1, 3), "chumak": (0, 2), "osa": (0, 1), "shulika": (0, 2), "asteroid": (0, 1)}.get(s.kind, (0, 0))
         for _ in range(self.rnd.randint(*n)):                          # what it carried, in canisters
             d = unit(np.array([self.rnd.gauss(0, 1) for _ in range(3)]))
@@ -606,6 +638,7 @@ class Game:
         self.new_game()
         self.music = starmusic.Music()
         self.sfx = starmusic.Sfx()
+        self.engine = starmusic.Engine(self.sfx)
         self.loader = Loader(self)
         self.loader.start()
         self.loaded = False
@@ -640,6 +673,7 @@ class Game:
         self.jump_t = 0.0
         self.dock_music = False
         self.enemy_beams = []
+        self.prisoners = {}
         self.flash_t = -1.0
         self.flash_front = True
         self.police_called = False
@@ -740,8 +774,25 @@ class Game:
         self.visits[self.here] = self.visits.get(self.here, 0) + 1
         self.market = [list(x) for x in galaxy.market(self.system(), self.visits[self.here])]
         self.inspect()
+        self.hand_over()
         self.mission_step()
         self.save()
+
+    def hand_over(self):
+        """The capsules we picked up: pirates to the police (60 Cr each), the rescued home (25 Cr each)."""
+        pr = getattr(self, "prisoners", {})
+        p, c = pr.get("pirate", 0), pr.get("civil", 0)
+        if not p and not c:
+            return
+        pay = p * 60 + c * 25
+        self.credits += pay
+        parts = []
+        if p:
+            parts.append("пілотів-піратів передано поліції: %d" % p)
+        if c:
+            parts.append("врятованих пілотів відправлено додому: %d" % c)
+        self.notices.append(("КАПСУЛИ", "%s. Винагорода - %d Кр." % ("; ".join(parts).capitalize(), pay)))
+        self.prisoners = {}
 
     def inspect(self):
         """A strict state's customs: illegal goods taken, a fine of 25 Cr a tonne, a mark on the record."""
@@ -1099,6 +1150,14 @@ class Game:
                         self.sfx.play("lock")
             elif kind == "shot":
                 self.enemy_fire(ship, ev[2])
+            elif kind == "flee":
+                self.say("%s тікає!" % gfx.TYPES[ship.kind][0], 2)
+            elif kind == "escaped":
+                if ship.hostile:
+                    self.say("%s утік" % gfx.TYPES[ship.kind][0], 2)
+            elif kind == "pod":
+                if self.msg_t < self.t + 1:
+                    self.say("Рятувальна капсула!", 1.5)
             elif kind == "incoming":
                 self.say("УВАГА: ракета! " + ("e - РЕБ" if "ecm" in self.equip else "збийте її!"), 3)
                 lcd.play("error")
@@ -1195,16 +1254,30 @@ class Game:
             best.hp -= dmg
             best.by_player = True
             self.sfx.play("zap")
-            if not best.hostile and best.kind not in ("asteroid", "kontejner"):
+            if best.pod == "civil":
+                self.crime(10)
+            elif not best.hostile and best.kind not in ("asteroid", "kontejner", "kapsula"):
                 self.crime(3)
                 if best.kind == "sokil" or best.role in ("depart", "arrive"):
                     best.hostile = best.kind in ("sokil", "osa", "shulika")   # fighters shoot back
+                if not best.hostile and best.role in ("depart", "arrive", "patrol"):
+                    best.role = "flee"                                       # the rest run
+                    best.break_dir = None
             if best.hp <= 0:
                 self.world.destroy(best)
 
     def scoop(self, c, front):
         """Fly into a canister slowly, nose first: it goes into the hold (if there is room)."""
         w = self.world
+        if c.pod:
+            if not front or self.speed > 0.45 * MAX_SPEED:
+                return                                     # a capsule just bounces off: slower, nose first
+            c.gone = True
+            w.ships = [x for x in w.ships if not x.gone]
+            self.prisoners[c.pod] = self.prisoners.get(c.pod, 0) + 1
+            self.sfx.play("scoop")
+            self.say("Капсула на борту: %s" % ("пілот-пірат" if c.pod == "pirate" else "врятований пілот"), 2.5)
+            return
         name, unit_ = galaxy.GOODS[c.item][:2]
         if not front or self.speed > 0.45 * MAX_SPEED:
             c.hp = 0
@@ -1989,9 +2062,10 @@ def market_screen(game):
     """Buy and sell: ↑ ↓ - the good, → - buy one, ← - sell one, Enter - buy all you can, Backspace - sell all."""
     goods = galaxy.GOODS
     sel = 0
-    f = gfx.font("DejaVuSansCondensed.ttf", 11)
-    fb = gfx.font("DejaVuSansCondensed-Bold.ttf", 11)
-    fh = gfx.font("DejaVuSans-Bold.ttf", 13)
+    big = 1.0 if gfx.HAT else 1.5                      # the PicoCalc's market in bigger letters (the HAT's are doubled)
+    f = gfx.font("DejaVuSansCondensed.ttf", 11 * big)
+    fb = gfx.font("DejaVuSansCondensed-Bold.ttf", 11 * big)
+    fh = gfx.font("DejaVuSans-Bold.ttf", 13 * big)
     row = 14
     top = 40
     while True:
@@ -2041,10 +2115,10 @@ def market_screen(game):
         hat = gfx.HAT
         # columns: name, price, (the stock - not on the HAT: it shows the chosen one's below), in the hold
         cols = ((6, "товар", 0), (W - 70, "ціна", 1), (W - 4, "трюм", 1)) if hat else \
-            ((6, "товар", 0), (196, "ціна", 1), (250, "є", 1), (310, "трюм", 1))
+            ((6, "товар", 0), (W - 104, "ціна", 1), (W - 56, "є", 1), (W - 4, "трюм", 1))
         for x, t, al in cols:
             img = f.render(t, True, c["lo"])
-            frame.blit(img, (x - img.get_width() if al else x, y0))
+            frame.blit(img, (x - img.get_width() if al else x + (f.get_height() + 6 if x < 20 else 0), y0))
         top = y0 + f.get_height() + 2
         row = f.get_height() + (1 if not hat else 2)
         foot = 3 * (f.get_height() + 2) + 6
@@ -2058,12 +2132,14 @@ def market_screen(game):
             col = c["sel"] if i == sel else (c["hi"] if game.cargo[i] else c["lo"])
             ff = fb if i == sel else f
             name = goods[i][0] + ("" if goods[i][6] else " ⚠")
-            frame.blit(gfx.fit(ff.render(name, True, col), (W - 130) if hat else 170), (6, y))
+            ic = gfx.goods_icon(i, row - 2, game.style == "wire")
+            frame.blit(ic, (5, y))
+            frame.blit(gfx.fit(ff.render(name, True, col), (W - 130 - row) if hat else W - 160 - row), (8 + row, y))
             img = ff.render("%.1f" % price, True, col)
             frame.blit(img, (cols[1][0] - img.get_width(), y))
             if not hat:
-                img = ff.render(("%d %s" % (stock, goods[i][1])) if stock else "-", True, col)
-                frame.blit(img, (250 - img.get_width(), y))
+                img = ff.render(("%d" % stock) if stock else "-", True, col)
+                frame.blit(img, (cols[2][0] - img.get_width(), y))
             if game.cargo[i]:
                 img = ff.render("%d" % game.cargo[i], True, c["sel"])
                 frame.blit(img, (cols[-1][0] - img.get_width(), y))
@@ -2074,7 +2150,8 @@ def market_screen(game):
             lines_ += ["є: %d %s · → купити ← продати" % (stock, goods[sel][1]) if stock else
                        "немає в продажу · ← продати"]
         else:
-            lines_ += ["→ купити · ← продати · Esc - назад", "Enter - купити скільки влізе · ⌫ - продати все"]
+            lines_ += ["є %d %s · → купити ← продати" % (stock, goods[sel][1]) if stock else "немає · ← продати",
+                       "Enter - скільки влізе · ⌫ - продати все"]
         for k, t in enumerate(lines_):
             img = gfx.fit((fb if k == 0 else f).render(t, True, c["hi"] if k == 0 else c["lo"]))
             frame.blit(img, (W / 2 - img.get_width() / 2, y))
@@ -2099,9 +2176,10 @@ def owned(game, key):
 def shop_screen(game):
     """Equipment: ↑ ↓ - the item, Enter - buy it (what this station's tech level sells)."""
     sel = 0
-    f = gfx.font("DejaVuSansCondensed.ttf", 11)
-    fb = gfx.font("DejaVuSansCondensed-Bold.ttf", 11)
-    fh = gfx.font("DejaVuSans-Bold.ttf", 13)
+    big = 1.0 if gfx.HAT else 1.5                      # the PicoCalc's market in bigger letters (the HAT's are doubled)
+    f = gfx.font("DejaVuSansCondensed.ttf", 11 * big)
+    fb = gfx.font("DejaVuSansCondensed-Bold.ttf", 11 * big)
+    fh = gfx.font("DejaVuSans-Bold.ttf", 13 * big)
     while True:
         tech = game.system().tech
         sold = [e for e in EQUIPMENT if e[3] <= tech]
@@ -2566,7 +2644,14 @@ def hyperspace(game, galactic=False):
 
 
 def flight(game):
-    """Out of the slot, fly until docked (True) or dead / quit to the menu (False)."""
+    """Out of the slot, fly until docked, dead, rescued or quit (the engine's hum stops with it)."""
+    try:
+        return _flight(game)
+    finally:
+        game.engine.stop()
+
+
+def _flight(game):
     game.reset_ship()
     game.keys.clear()
     while not game.world.planet.prewarm():
@@ -2597,6 +2682,7 @@ def flight(game):
                 if key == pygame.K_ESCAPE or (hat and ev.key == pygame.K_3):
                     game.keys.clear()
                     game.music.stop(300)
+                    game.engine.stop()
                     r = pause(game)
                     last = time.monotonic()
                     if r == "quit":
@@ -2615,6 +2701,7 @@ def flight(game):
                     game.set_view((pygame.K_F1, pygame.K_F2, pygame.K_F3, pygame.K_F4).index(key))
                 elif key == pygame.K_g:
                     game.keys.clear()
+                    game.engine.stop()
                     chart(game)
                     last = time.monotonic()
                 elif key == pygame.K_h:
@@ -2631,6 +2718,7 @@ def flight(game):
             elif ev.type == pygame.KEYUP:
                 game.keys.discard(key)
         r = game.update(dt)
+        game.engine.set(1.0 if game.jump_t > 0 else game.speed / MAX_SPEED, on=r is None)
         if r == "hyper":
             hyperspace(game)
             last = time.monotonic()

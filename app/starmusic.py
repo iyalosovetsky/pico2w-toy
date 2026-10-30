@@ -169,8 +169,11 @@ def danube():
     f = np.fft.rfft(out, size)
     f *= (1 / (1 + (np.fft.rfftfreq(size, 1.0 / RATE) / 3500.0) ** 4)).astype(np.float32)
     out = np.fft.irfft(f, size)[:len(out)].astype(np.float32)
-    out *= 0.85 / max(1e-6, np.abs(out).max()) * lcd.VOLUME
-    return out
+    # loud enough beside the game's sounds: a soft compressor (tanh) lifts the quiet passages - the pad and the
+    # hall had left the peaks where they were and everything else lower
+    out /= max(1e-6, np.abs(out).max())
+    out = np.tanh(1.7 * out) / np.tanh(1.7)
+    return out * 0.92 * lcd.VOLUME
 
 
 # ---------------------------------------------------------------- sound effects
@@ -395,6 +398,36 @@ def ecm():
     return y * 0.7
 
 
+ENGINE_STEPS = 12
+
+
+def engine_loop(k):
+    """The drive at step k (0 - idling .. 11 - flat out), pitched for a small speaker (it plays next to nothing
+    under ~150 Hz): a tone at 90..220 Hz with its overtones, a throb, turbine noise at 400..1000 Hz and a soft
+    whine climbing with the speed - all periodic in the loop, so it has no seam."""
+    rnd = np.random.default_rng(20 + k)
+    x = k / (ENGINE_STEPS - 1.0)
+    f = 90.0 + 130.0 * x
+    periods = max(8, int(round(f * 0.8)))                # about 0.8 s, a whole number of the tone's periods
+    n = int(round(periods * RATE / f))
+    dur = n / RATE
+    t = np.arange(n) / RATE
+
+    def per(hz):                                         # the nearest frequency that fits the loop exactly
+        return max(1, round(hz * dur)) / dur
+    ff = per(f)
+    tone = sum(a * np.sin(2 * np.pi * h * ff * t) for h, a in ((1, 1.0), (2, 0.6), (3, 0.4), (4, 0.25)))
+    spec = np.fft.rfft(rnd.normal(0, 1, n))              # periodic noise: shaped in the loop's own spectrum
+    hz = np.fft.rfftfreq(n, 1.0 / RATE)
+    spec *= np.exp(-((hz - (400 + 600 * x)) / (300 + 200 * x)) ** 2)
+    noise = np.fft.irfft(spec, n)
+    noise /= max(1e-6, np.abs(noise).max())
+    whine = np.sin(2 * np.pi * per(700 + 900 * x) * t)
+    throb = 1 + 0.2 * np.sin(2 * np.pi * per(ff / 4) * t)
+    y = (0.5 * tone / 2.25 + (0.45 + 0.25 * x) * noise + (0.08 + 0.12 * x) * whine) * throb
+    return y / np.abs(y).max()
+
+
 def lock():
     """A target locked: two short rising beeps."""
     out = []
@@ -409,7 +442,8 @@ class Sfx:
 
     MAKERS = {"crash_heavy": crash_chip, "crash": lambda: crash(False), "explosion": explosion,
               "boom": lambda: explosion(7, 1.7), "laser": laser, "zap": zap, "missile": missile, "lock": lock,
-              "hyper": hyper, "jump": jump, "scoop": scoop, "elaser": elaser, "shield": shield, "ecm": ecm}
+              "hyper": hyper, "jump": jump, "scoop": scoop, "elaser": elaser, "shield": shield, "ecm": ecm,
+              **{"engine%d" % k: (lambda k=k: engine_loop(k)) for k in range(ENGINE_STEPS)}}
 
     def __init__(self):
         self.snd = {}
@@ -418,6 +452,7 @@ class Sfx:
         """The sounds from buffers() (made in a worker, turned into mixer sounds here)."""
         if lcd.sound_enabled():
             pygame.mixer.set_num_channels(16)           # lasers, hits and blasts overlap
+            pygame.mixer.set_reserved(8)                # 5 - the waltz, 6 and 7 - the engine: effects take 8..15
             for name in self.MAKERS:
                 if name in bufs and name not in self.snd:
                     self.snd[name] = pygame.mixer.Sound(buffer=bufs[name].tobytes())
@@ -431,6 +466,44 @@ class Sfx:
     def play(self, name):
         if lcd.sound_enabled():
             self.get(name).play()
+
+
+class Engine:
+    """The drive's hum on two channels of its own: a loop a speed step, a quick crossfade between steps,
+    louder the faster we go."""
+
+    def __init__(self, sfx):
+        self.sfx = sfx
+        self.cur = -1
+        self.which = 0
+        self.chans = None
+
+    def set(self, level, on=True):
+        if not lcd.sound_enabled():
+            return
+        if self.chans is None:
+            self.chans = [pygame.mixer.Channel(6), pygame.mixer.Channel(7)]
+        if not on:
+            if self.cur >= 0:
+                for c in self.chans:
+                    c.fadeout(250)
+            self.cur = -1
+            return
+        level = max(0.0, min(1.0, level))
+        k = int(round(level * (ENGINE_STEPS - 1)))
+        vol = 0.32 + 0.55 * level
+        if k != self.cur:
+            snd = self.sfx.get("engine%d" % k)
+            old = self.chans[self.which]
+            self.which ^= 1
+            self.chans[self.which].play(snd, loops=-1, fade_ms=80)
+            if self.cur >= 0:
+                old.fadeout(120)
+            self.cur = k
+        self.chans[self.which].set_volume(vol)
+
+    def stop(self):
+        self.set(0, on=False)
 
 
 class Music:

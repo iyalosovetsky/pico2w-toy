@@ -964,6 +964,122 @@ def draw_stars(surf, stars, R, f, cx, cy, style):
         fill(WIRE if style == "wire" else cols[i], (sx[i], sy[i], 1, 1))
 
 
+# ---------------------------------------------------------------- the goods' little pictures
+
+def _icon_paint(i, c):
+    """Good i drawn on a 48x48 canvas c (the order of stargalaxy.GOODS)."""
+    def P(*pts):
+        return [(x, y) for x, y in pts]
+    dark = (30, 30, 34)
+    if i == 0:                                         # food: a loaf
+        ellipse(c, (150, 95, 40), (4, 14, 40, 26))
+        ellipse(c, (205, 145, 70), (6, 12, 36, 22))
+        for x in (14, 22, 30):
+            line(c, (150, 95, 40), (x, 16), (x + 5, 26), 3)
+    elif i == 1:                                       # textiles: a bolt of cloth
+        rect(c, (70, 110, 200), (8, 14, 30, 24))
+        for y in (18, 24, 30):
+            line(c, (110, 150, 235), (8, y), (38, y), 2)
+        ellipse(c, (50, 85, 165), (32, 14, 12, 24))
+        ellipse(c, (110, 150, 235), (35, 21, 6, 10))
+    elif i == 2:                                       # radioactives: the trefoil
+        circle(c, (240, 210, 40), (24, 24), 21)
+        for k in range(3):
+            a0 = math.radians(90 + k * 120)
+            pts = [(24, 24)] + [(24 + 18 * math.cos(a0 + d), 24 - 18 * math.sin(a0 + d))
+                                for d in np.linspace(-0.5, 0.5, 6)]
+            poly(c, dark, pts)
+        circle(c, (240, 210, 40), (24, 24), 6)
+        circle(c, dark, (24, 24), 4)
+    elif i == 3:                                       # robots: a head
+        line(c, (150, 155, 165), (24, 4), (24, 12), 2)
+        circle(c, (240, 80, 60), (24, 4), 3)
+        rect(c, (150, 155, 165), (8, 12, 32, 28), border_radius=6)
+        rect(c, (40, 44, 52), (12, 18, 24, 10), border_radius=3)
+        circle(c, (90, 220, 255), (18, 23), 3)
+        circle(c, (90, 220, 255), (30, 23), 3)
+        rect(c, (90, 95, 105), (16, 32, 16, 4))
+    elif i == 4:                                       # drinks: a bottle
+        poly(c, (40, 140, 70), P((20, 4), (28, 4), (28, 14), (34, 20), (34, 44), (14, 44), (14, 20), (20, 14)))
+        rect(c, (235, 225, 190), (15, 26, 18, 10))
+        rect(c, (200, 60, 50), (20, 2, 8, 4))
+    elif i == 5:                                       # luxuries: a crown
+        poly(c, (235, 190, 50), P((6, 38), (6, 14), (15, 26), (24, 8), (33, 26), (42, 14), (42, 38)))
+        rect(c, (200, 150, 30), (6, 36, 36, 6))
+        for x, col in ((15, (220, 40, 60)), (24, (60, 120, 240)), (33, (40, 190, 90))):
+            circle(c, col, (x, 31), 3)
+    elif i == 6:                                       # stimulants: a capsule
+        poly(c, (220, 50, 60), P((10, 30), (24, 16), (30, 22), (16, 36)))
+        circle(c, (220, 50, 60), (13, 33), 5)
+        poly(c, (240, 240, 240), P((24, 16), (32, 8), (38, 14), (30, 22)))
+        circle(c, (240, 240, 240), (35, 11), 5)
+    elif i == 7:                                       # computers: a chip
+        for k in range(5):
+            line(c, (190, 190, 200), (12 + k * 6, 4), (12 + k * 6, 44), 2)
+            line(c, (190, 190, 200), (4, 12 + k * 6), (44, 12 + k * 6), 2)
+        rect(c, (35, 40, 50), (9, 9, 30, 30))
+        rect(c, (60, 180, 120), (16, 16, 16, 16), 2)
+    elif i == 8:                                       # machinery: a gear
+        pts = []
+        for k in range(16):
+            a0 = math.pi * 2 * k / 16
+            r = 21 if k % 2 == 0 else 15
+            pts.append((24 + r * math.cos(a0), 24 + r * math.sin(a0)))
+        poly(c, (150, 160, 175), pts)
+        circle(c, (95, 105, 120), (24, 24), 9)
+        circle(c, (0, 0, 0, 0), (24, 24), 4)
+    elif i in (9, 13, 14):                             # alloys (a stack), gold and platinum: bars
+        col = {9: ((120, 135, 150), (165, 180, 195)), 13: ((210, 160, 40), (250, 215, 90)),
+               14: ((175, 180, 190), (225, 230, 240))}[i]
+        bars = ((6, 30), (22, 30), (14, 18)) if i == 9 else ((8, 24),)
+        for x, y in bars:
+            w = 20 if i == 9 else 32
+            poly(c, col[0], P((x, y + 12), (x + w, y + 12), (x + w - 4, y), (x + 4, y)))
+            poly(c, col[1], P((x + 4, y), (x + w - 4, y), (x + w - 7, y - 4), (x + 7, y - 4)))
+    elif i == 10:                                      # firearms: a blaster
+        poly(c, (70, 75, 85), P((4, 16), (36, 16), (40, 20), (40, 24), (22, 24), (18, 40), (8, 40), (10, 24), (4, 24)))
+        rect(c, (240, 90, 40), (36, 18, 8, 4))
+        rect(c, (110, 115, 125), (8, 18, 22, 3))
+    elif i == 11:                                      # furs: a pelt
+        for k in range(14):
+            a0 = math.pi * 2 * k / 14
+            circle(c, (120, 80, 45), (24 + 15 * math.cos(a0), 24 + 13 * math.sin(a0)), 7)
+        ellipse(c, (160, 115, 70), (10, 12, 28, 24))
+        for x in (16, 24, 32):
+            line(c, (120, 80, 45), (x, 16), (x - 2, 32), 2)
+    elif i == 12:                                      # minerals: rocks with a crystal
+        poly(c, (115, 105, 95), P((4, 40), (10, 26), (22, 22), (28, 34), (22, 42)))
+        poly(c, (90, 82, 75), P((22, 42), (28, 30), (40, 32), (44, 42)))
+        poly(c, (150, 120, 200), P((26, 30), (30, 8), (36, 6), (36, 30)))
+        poly(c, (190, 160, 240), P((30, 8), (33, 4), (36, 6)))
+    else:                                              # gems: a cut stone
+        poly(c, (80, 200, 240), P((10, 18), (16, 10), (32, 10), (38, 18), (24, 40)))
+        poly(c, (170, 235, 255), P((16, 10), (24, 18), (32, 10)))
+        poly(c, (40, 150, 200), P((10, 18), (24, 18), (24, 40)))
+        poly(c, (120, 220, 250), P((24, 18), (38, 18), (24, 40)))
+
+
+_icons = {}
+
+
+def goods_icon(i, size, wire=False):
+    """Good i's little picture, size pixels square: painted big, scaled down smoothly; the classic look
+    turns it to green shades."""
+    key = (i, int(size), wire)
+    if key not in _icons:
+        c = pygame.Surface((48, 48), pygame.SRCALPHA)
+        _icon_paint(i, c)
+        if wire:
+            rgb = pygame.surfarray.pixels3d(c)
+            lum = (rgb[..., 0] * 0.3 + rgb[..., 1] * 0.59 + rgb[..., 2] * 0.11) / 255.0
+            lum = 0.35 + 0.65 * lum
+            for k, v in enumerate(WIRE):
+                rgb[..., k] = (lum * v).astype(np.uint8)
+            del rgb
+        _icons[key] = pygame.transform.smoothscale(c, (int(size), int(size)))
+    return _icons[key]
+
+
 # ---------------------------------------------------------------- the dashboard
 
 YEL, RED, MAG, GRN, CYA = (240, 225, 40), (230, 40, 30), (230, 50, 230), (50, 230, 60), (60, 230, 240)
