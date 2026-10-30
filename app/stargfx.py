@@ -368,6 +368,20 @@ def vulyk():
     return m
 
 
+def groza():
+    """The stolen prototype: a long dagger with swept fins and a raised canopy, twin engines."""
+    body = [(0, 0, 80), (-16, 0, -40), (16, 0, -40), (0, 10, -30), (0, -8, -36), (-8, 6, 20), (8, 6, 20),
+            (0, 12, 5)]
+    fins = []
+    for s_ in (-1, 1):
+        fins.append([(s_ * 10, 0, -10), (s_ * 62, -4, -46), (s_ * 14, 0, -42), (s_ * 10, 2, -12), (s_ * 58, -2, -44),
+                     (s_ * 14, 2, -40)])
+    m = Model.build([body] + fins)
+    add_window(m, 5, (0, 1, 0.6))
+    add_engines(m, 0.55, (255, 120, 220), 6)
+    return m
+
+
 def truten():
     m = Model.build([ring_pts(5, 28, -8) + ring_pts(5, 16, 12, math.pi / 5, -4)])
     for fi in range(len(m.faces)):
@@ -441,6 +455,9 @@ TYPES = {
     "vulyk": ("Вулик", "чужинці · матка", vulyk,
               dict(DARK, hull=(44, 82, 62), hull2=(36, 70, 54), dark=(22, 40, 32), stern=(36, 70, 54),
                    trim=(140, 255, 160), strip=(120, 255, 140)), (120, 255, 140)),
+    "groza": ("Гроза", "викрадений прототип", groza,
+              dict(DARK, hull=(40, 38, 46), hull2=(30, 28, 36), dark=(20, 18, 24), stern=(26, 24, 30),
+                   trim=(230, 190, 90), window=(255, 120, 220)), (255, 80, 200)),
     "truten": ("Трутень", "чужинці · дрон", truten,
                dict(DARK, hull=(54, 96, 72), hull2=(44, 80, 60), dark=(26, 46, 36), stern=(44, 80, 60),
                     trim=(140, 255, 160)), (120, 255, 140)),

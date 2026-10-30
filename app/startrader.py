@@ -61,7 +61,7 @@ VIEWS = ["Передній огляд", "Задній огляд", "Лівий �
 # each view's camera axes (right, up, forward as columns) in the ship's frame
 VIEW_ROT = [np.eye(3), np.array([[-1.0, 0, 0], [0, 1, 0], [0, 0, -1]]),
             np.array([[0, 0, -1.0], [0, 1, 0], [1, 0, 0]]), np.array([[0, 0, 1.0], [0, 1, 0], [-1, 0, 0]])]
-HP = {"osa": 3, "sokil": 5, "chumak": 4, "mazha": 6, "shulika": 6, "vulyk": 12, "truten": 1, "rocket": 1,
+HP = {"groza": 30, "osa": 3, "sokil": 5, "chumak": 4, "mazha": 6, "shulika": 6, "vulyk": 12, "truten": 1, "rocket": 1,
       "kapsula": 1, "kontejner": 1, "asteroid": 3}                 # laser hits a ship takes
 LASER_RANGE = 7000.0
 LASER_EVERY = 0.16                    # seconds between pulses
@@ -85,7 +85,7 @@ LASERS = {"pulse": (LASER_EVERY, 1, 0.065), "beam": (0.1, 1, 0.045), "military":
 RANKS = [(0, "Нешкідливий"), (5, "Майже нешкідливий"), (12, "Слабкий"), (25, "Середній"), (50, "Вище середнього"),
          (100, "Вправний"), (250, "Небезпечний"), (600, "Смертоносний"), (1500, "ЕЛІТА")]
 BOUNTY = {"shulika": (30, 70), "osa": (12, 30), "truten": (5, 10), "vulyk": (200, 400)}
-TURN_RATE = {"osa": 1.6, "shulika": 1.25, "sokil": 1.5, "truten": 2.0, "vulyk": 0.6}
+TURN_RATE = {"groza": 2.1, "osa": 1.6, "shulika": 1.25, "sokil": 1.5, "truten": 2.0, "vulyk": 0.6}
 CARGO_MAX = 20                        # tonnes (every unit of any good takes a place); +15 with the big bay
 JUMP_SPEED = 26000.0                  # the in-system jump drive: world units a second
 HYPER_COUNT = 10                      # seconds of the hyperspace countdown
@@ -215,6 +215,7 @@ class Ship:
         self.break_dir = None
         self.fire_t = 1.5
         self.bounty = 0
+        self.mission = None
         self.missile = False                  # a pirate's one missile
         self.by_player = False                # the player's laser or missile hit it last
 
@@ -427,7 +428,8 @@ class World:
         lead = pl.pos + pl.R[:, 2] * pl.speed * min(1.5, dist / 2200.0)
         want = unit(lead - s.pos)
         s.R = turn_to(s.R, want, rate, dt)
-        s.speed += clamp((1300.0 if dist > 2500 else 850.0) - s.speed, -500 * dt, 400 * dt)
+        top = 1500.0 if s.kind == "groza" else 1300.0
+        s.speed += clamp((top if dist > 2500 else top * 0.65) - s.speed, -500 * dt, 400 * dt)
         head_on = float(np.dot(s.R[:, 2], pl.R[:, 2])) < -0.6           # coming at each other
         if dist < 700 or (head_on and dist < 1400):
             s.mode = "break"
@@ -436,7 +438,7 @@ class World:
             s.break_dir = unit(unit(side) - want * 0.4)
             return
         s.fire_t -= dt
-        if s.kind == "shulika" and s.missile and 2500 < dist < 7000 and self.rnd.random() < 0.15 * dt:
+        if s.kind in ("shulika", "groza") and s.missile and 2500 < dist < 7000 and self.rnd.random() < 0.15 * dt:
             s.missile = False                                          # one missile a pirate, sometimes
             m = Ship("rocket", s.pos + s.R[:, 2] * 120, s.R.copy(), s.speed + 400, "emissile")
             self.ships.append(m)
@@ -672,6 +674,8 @@ class Game:
         self.kills = 0
         self.legal = 0
         self.rank_name = RANKS[0][1]
+        self.missions = {}                             # "groza", "docs": {"state": ..., "sys": index}
+        self.notices = []                              # (title, text) to show at the station
         self.missiles = MISSILES
         self.equip = set()
         self.laser = "pulse"
@@ -688,7 +692,7 @@ class Game:
 
     def save(self):
         data = {"galaxy": self.galnum, "here": self.here, "target": self.target, "credits": round(self.credits, 1), "cargo": self.cargo,
-                "kills": self.kills, "legal": self.legal, "missiles": self.missiles, "equip": sorted(self.equip),
+                "kills": self.kills, "legal": self.legal, "missions": self.missions, "missiles": self.missiles, "equip": sorted(self.equip),
                 "laser": self.laser,
                 "fuel": round(self.fuel, 2), "visits": {str(k): v for k, v in self.visits.items()}}
         try:
@@ -722,6 +726,8 @@ class Game:
         self.visits = {int(k): v for k, v in d.get("visits", {}).items()}
         self.kills = int(d.get("kills", 0))
         self.legal = int(d.get("legal", 0))
+        self.missions = dict(d.get("missions", {}))
+        self.notices = []
         self.missiles = int(d.get("missiles", MISSILES))
         self.equip = set(d.get("equip", []))
         self.laser = d.get("laser", "pulse") if d.get("laser") in LASERS else "pulse"
@@ -729,10 +735,72 @@ class Game:
         self.world = World(self.gal[self.here])
 
     def dock(self):
-        """At the station: a fresh market for this visit, the game saved (the old way: only when docked)."""
+        """At the station: the police look in the hold (strict states), missions move on, a fresh market for
+        this visit, the game saved (the old way: only when docked)."""
         self.visits[self.here] = self.visits.get(self.here, 0) + 1
         self.market = [list(x) for x in galaxy.market(self.system(), self.visits[self.here])]
+        self.inspect()
+        self.mission_step()
         self.save()
+
+    def inspect(self):
+        """A strict state's customs: illegal goods taken, a fine of 25 Cr a tonne, a mark on the record."""
+        if self.system().gov < 5 or random.random() > 0.8:
+            return
+        bad = [(i, n) for i, n in enumerate(self.cargo) if n and not galaxy.GOODS[i][6]]
+        if not bad:
+            return
+        tons = sum(n for _, n in bad)
+        fine = min(self.credits, tons * 25.0)
+        self.credits -= fine
+        for i, _ in bad:
+            self.cargo[i] = 0
+        self.legal = min(255, self.legal + 10)
+        goods = ", ".join("%s %d т" % (galaxy.GOODS[i][0], n) for i, n in bad)
+        self.notices.append(("МИТНИЙ ОГЛЯД", "Поліція станції «%s» оглянула трюм. Конфісковано: %s. Штраф %.0f Кр. "
+                             "Відтепер ви на обліку: %s." % (self.system().name, goods, fine, self.legal_name())))
+
+    def pick_system(self, lo, hi):
+        """A system lo..hi light years away (reachable, not this one) for a mission."""
+        here = self.system()
+        far = [s for s in self.gal if lo <= here.dist(s) <= hi]
+        return random.choice(far).idx if far else random.choice([s for s in self.gal if s is not here]).idx
+
+    def mission_step(self):
+        """The two missions: offered once the commander has some fights behind him, paid at the next station."""
+        g = self.missions.setdefault("groza", {"state": "none"})
+        d = self.missions.setdefault("docs", {"state": "none"})
+        if g["state"] == "none" and self.kills >= 8:
+            g.update(state="active", sys=self.pick_system(6, 20))
+            self.notices.append(("ВИКРАДЕНО ПРОТОТИП", "Увага, командире! З військової верфі викрадено прототип "
+                                 "винищувача «Гроза» - швидкий, важко броньований, з новим лазером. Розвідка бачила "
+                                 "його в системі %s. Знайдіть і знищіть його. Нагорода - 5000 Кр. Систему позначено "
+                                 "на галактичній карті." % self.gal[g["sys"]].name))
+        elif g["state"] == "killed":
+            g["state"] = "done"
+            self.credits += 5000
+            self.notices.append(("ПОДЯКА ФЛОТУ", "«Гроза» знищена. Флот вдячний вам, командире: на ваш рахунок "
+                                 "переказано 5000 Кр."))
+        if d["state"] == "none" and g["state"] == "done" and self.kills >= 30:
+            d.update(state="active", sys=self.pick_system(14, 26))
+            self.notices.append(("ТАЄМНІ ДОКУМЕНТИ", "Командире, розвідка добула плани вулика чужинців. Доставте "
+                                 "документи на станцію системи %s. Чужинці знають про них і полюватимуть на вас у "
+                                 "гіперпросторі - стрибки зриватимуться частіше. Нагорода - 10000 Кр і військовий "
+                                 "лазер." % self.gal[d["sys"]].name))
+        elif d["state"] == "active" and self.here == d.get("sys"):
+            d["state"] = "done"
+            self.credits += 10000
+            self.laser = "military"
+            self.notices.append(("ДОКУМЕНТИ ДОСТАВЛЕНО", "Документи в руках розвідки. 10000 Кр на вашому рахунку, "
+                                 "у вашому кораблі - військовий лазер. Чужинцям доведеться шукати вас ще довше."))
+
+    def mission_target(self):
+        """The system a mission sends us to, if any."""
+        for key in ("groza", "docs"):
+            m = self.missions.get(key, {})
+            if m.get("state") == "active":
+                return m.get("sys")
+        return None
 
     def arrive(self):
         """Out of hyperspace: far out, the planet ahead (the station near it, beyond the jump drive's reach)."""
@@ -749,6 +817,15 @@ class Game:
         self.hyper_t = None
         self.jump_t = 0.0
         self.lock = None
+        g = self.missions.get("groza", {})
+        if not w.deep and g.get("state") == "active" and g.get("sys") == self.here:
+            d = unit(self.R[:, 2] * 0.7 + np.array([random.gauss(0, 0.5) for _ in range(3)]))
+            p = self.pos + d * 7000
+            sh = Ship("groza", p, basis(self.pos - p, np.array((0, 1.0, 0))), 1200.0, "pirate")
+            sh.hostile = True
+            sh.mission = "groza"
+            sh.missile = True
+            w.ships.append(sh)
         self.beam_end = None
         self.enemy_beams = []
         self.police_called = False
@@ -1006,6 +1083,9 @@ class Game:
                 self.sfx.play("boom" if ship.kind not in ("rocket", "kontejner") else "zap")
                 if ship.kind not in ("rocket", "kontejner"):
                     self.say("Знищено: %s" % gfx.TYPES[ship.kind][0], 2)
+                if ship.mission == "groza" and ship.by_player:
+                    self.missions["groza"]["state"] = "killed"
+                    self.say("«Гроза» знищена! Нагорода - на станції", 4)
                 if ship.by_player and ship.kind not in ("rocket", "kontejner", "asteroid"):
                     self.kills += 1
                     if ship.bounty:
@@ -1071,7 +1151,7 @@ class Game:
             return
         d = s.pos - self.pos
         front = float(np.dot(d, self.R[:, 2])) > 0
-        dmg = {"osa": 0.1, "truten": 0.08, "vulyk": 0.25}.get(s.kind, 0.16)
+        dmg = {"osa": 0.1, "truten": 0.08, "vulyk": 0.25, "groza": 0.22}.get(s.kind, 0.16)
         sh = "fs" if front else "as_"
         v = getattr(self, sh) - dmg
         setattr(self, sh, max(0.0, v))
@@ -1734,8 +1814,10 @@ def station_screen(game):
     """Docked: the station, the system, our ship in the hangar, money, fuel and hold; launch / the market /
     fuel / the galaxy / the system's data / the ship book / the look / out. Returns "launch" or "quit"."""
     sel = 0
-    t0 = time.monotonic()
     game.music.stop(2500)                              # the waltz fades as we roll into the hangar
+    while game.notices:
+        notice_screen(game, *game.notices.pop(0))
+    t0 = time.monotonic()
     me = gfx.mesh("chumak")
     fn = gfx.font("DejaVuSans-Bold.ttf", 15)
     fi = gfx.font("DejaVuSansCondensed.ttf", 11)
@@ -1824,6 +1906,44 @@ def station_screen(game):
             img = fi.render("Ціль: %s, %.1f св. р." % (tg.name, sys_.dist(tg)), True, lo)
             frame.blit(img, (W / 2 - img.get_width() / 2, 56))
         draw_list(items, sel, 196, H - 2, fm, mc)
+        show()
+        clock.tick(30)
+
+
+def notice_screen(game, title, text):
+    """A message at the station - customs, a mission's briefing, a reward: the text types itself out."""
+    f = gfx.font("DejaVuSansCondensed.ttf", 12)
+    fh = gfx.font("DejaVuSans-Bold.ttf", 15)
+    t0 = time.monotonic()
+    lcd.play("check")
+    lines_ = wrap(f, text, W - 24)
+    total = sum(len(l) for l in lines_)
+    while True:
+        n = int((time.monotonic() - t0) * 45)              # letters so far
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                return
+            if ev.type == pygame.KEYDOWN:
+                if n < total:
+                    t0 -= 1000                             # the first key shows it all, the next goes on
+                else:
+                    return
+        c = screen_colours(game)
+        frame.fill(c["bg"])
+        gfx.rect(frame, c["lo"], (6, 6, W - 12, H - 12), 1)
+        img = gfx.fit(fh.render(title, True, c["sel"]), W - 24)
+        frame.blit(img, (W / 2 - img.get_width() / 2, 16))
+        y = 24 + img.get_height() + 8
+        left = n
+        for ln in lines_:
+            if left <= 0 or y > H - 40:
+                break
+            frame.blit(f.render(ln[:left], True, c["hi"]), (12, y))
+            left -= len(ln)
+            y += f.get_height() + 2
+        if n >= total and int(time.monotonic() * 2) % 2:
+            img = f.render("Enter - далі", True, c["lo"])
+            frame.blit(img, (W / 2 - img.get_width() / 2, H - 26))
         show()
         clock.tick(30)
 
@@ -2071,6 +2191,12 @@ def status_screen(game):
                                                              "military": "військовий"}[game.laser]),
                 ("Ракети", "%d" % game.missiles)] + [(e[1], "✓") for e in EQUIPMENT
                                                      if e[0] in game.equip]
+        for key, name in (("groza", "Місія «Гроза»"), ("docs", "Місія «Документи»")):
+            m = game.missions.get(key, {})
+            if m.get("state") in ("active", "killed"):
+                rows.append((name, game.gal[m["sys"]].name if m["state"] == "active" else "звітуйте на станції"))
+            elif m.get("state") == "done":
+                rows.append((name, "виконано"))
         for k, v in rows:
             col = c["warn"] if k == "Закон" and game.legal else (c["sel"] if k == "Ранг" else c["hi"])
             frame.blit(f.render(k, True, c["lo"]), (10, y))
@@ -2320,6 +2446,12 @@ def chart(game):
         if game.target is not None and game.target != order[sel]:
             gx, gy = x[game.target], y[game.target]
             gfx.rect(frame, c["lo"], (gx - 5, gy - 5, 10, 10), 1)
+        mt = game.mission_target()
+        if mt is not None:                             # the mission's system: a pulsing diamond
+            mx, my = x[mt], y[mt]
+            r = 7 + 3 * math.sin(time.monotonic() * 5)
+            col = (255, 90, 200) if not wire else gfx.WIRE
+            gfx.lines(frame, col, True, [(mx, my - r), (mx + r, my), (mx, my + r), (mx - r, my)], 2)
         # the panel
         if gfx.HAT:
             t1 = gfx.fit(fh.render("%s %.1f св.р." % (tgt.name, d), True, lc))
@@ -2359,7 +2491,8 @@ def hyperspace(game, galactic=False):
         misjump = False
     else:
         d = jump_dist(game)
-        misjump = not game.world.deep and random.random() < MISJUMP
+        hunted = game.missions.get("docs", {}).get("state") == "active"
+        misjump = not game.world.deep and random.random() < (0.3 if hunted else MISJUMP)
         game.fuel = max(0.0, game.fuel - (d * 0.5 if misjump else d))
     game.music.stop(200)
     game.sfx.play("hyper")
@@ -2412,6 +2545,8 @@ def hyperspace(game, galactic=False):
     game.arrive()
     if galactic:
         game.say("Галактика %d! Система %s" % (game.galnum + 1, game.system().name), 5)
+    elif any(sh.mission == "groza" for sh in game.world.ships):
+        game.say("Система %s · УВАГА: тут «Гроза»!" % game.system().name, 5)
     else:
         game.say("Ласкаво просимо до системи %s" % game.system().name, 4)
 
