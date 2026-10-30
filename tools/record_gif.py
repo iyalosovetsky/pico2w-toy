@@ -36,25 +36,38 @@ def stable_grab(tries=4):
     return img
 
 
-frames, stamps = [], []
+def mem_free_mb():
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) // 1024
+    except OSError:
+        pass
+    return 1 << 20
+
+
+# each frame kept as it comes: repeated ones merged (their time on screen added up), the rest scaled and
+# quantized at once - a 320x320 frame is 300 KB in RGB, 100 KB as 128 colours (a long recording of the full
+# frames once took all of a Zero 2 W's memory and hung it)
+out, shown = [], []                  # the distinct frames and when each came on the screen
+last_raw = None
 start = time.monotonic()
 while time.monotonic() - start < args.seconds:
     t = time.monotonic()
-    frames.append(stable_grab())
-    stamps.append(t)
+    img = stable_grab()
+    raw = img.tobytes()
+    if raw != last_raw:
+        last_raw = raw
+        w, h = img.size
+        scale = args.scale if w <= 128 else 1  # the 320x320 PicoCalc is recorded 1:1
+        out.append(img.resize((w * scale, h * scale), Image.NEAREST).quantize(colors=128, dither=Image.Dither.NONE))
+        shown.append(t)
+    if mem_free_mb() < 60:
+        print("stopping early: little memory left", file=sys.stderr)
+        break
     time.sleep(max(0, 1 / args.fps - (time.monotonic() - t)))
-
-# drop repeated frames, keeping their time on screen
-out, durations = [], []
-for img, t, t_next in zip(frames, stamps, stamps[1:] + [start + args.seconds]):
-    ms = int((t_next - t) * 1000)
-    if out and img.tobytes() == out[-1].tobytes():
-        durations[-1] += ms
-        continue
-    out.append(img)
-    durations.append(ms)
-w, h = out[0].size
-scale = args.scale if w <= 128 else 1  # the 320x320 PicoCalc is recorded 1:1
-out = [img.resize((w * scale, h * scale), Image.NEAREST).quantize(colors=128, dither=Image.Dither.NONE) for img in out]
+end = time.monotonic()
+durations = [int((b - a) * 1000) for a, b in zip(shown, shown[1:] + [end])]
 out[0].save(args.out, save_all=True, append_images=out[1:], duration=durations, loop=0, optimize=True)
 print("%s: %d frames, %.1f KB" % (args.out, len(out), os.path.getsize(args.out) / 1024))

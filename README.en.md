@@ -43,8 +43,8 @@ screensaver of fractals and animations (the SCREENSAVER item).
 | ![oscilloscope](docs/gif-picocalc/oscilloscope.gif) | ![logic](docs/gif-picocalc/logic.gif) | ![calc](docs/gif-picocalc/calc.gif) | ![sdr](docs/gif-picocalc/sdr.gif) |
 | **SERIAL: shape editor** | **SERIAL: toolpath and a run** | **SERIAL: an array of holes** | **Screensaver** |
 | ![serial editor](docs/gif-picocalc/serial-editor.gif) | ![serial toolpath](docs/gif-picocalc/serial-toolpath.gif) | ![serial array](docs/gif-picocalc/serial-array.gif) | ![screensaver](docs/gif-picocalc/screensaver.gif) |
-| **STAR TRADER** | **BLUETOOTH** | | |
-| ![startrader](docs/gif-picocalc/startrader.gif) | ![bluetooth](docs/gif-picocalc/bluetooth.gif) | | |
+| **STAR TRADER** | **STAR TRADER: the demo** | **BLUETOOTH** | |
+| ![startrader](docs/gif-picocalc/startrader.gif) | ![startrader demo](docs/gif-picocalc/startrader-demo.gif) | ![bluetooth](docs/gif-picocalc/bluetooth.gif) | |
 
 *(GIFs recorded 1:1 from the PicoCalc framebuffer, 320×320, with `tools/record_gif.py`; SERIAL with `tools/serial_gif.py`: the real app on the PicoCalc, scripted keys and a pretend machine, `tools/fake_grbl.py`.)*
 
