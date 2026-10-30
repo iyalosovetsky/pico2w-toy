@@ -231,6 +231,47 @@ def missile():
     return y / np.abs(y).max()
 
 
+def hyper():
+    """Into hyperspace: a swirl of tones climbing and spreading, a rising hiss, a thump at the end."""
+    rnd = np.random.default_rng(8)
+    n = int(2.9 * RATE)
+    t = np.arange(n) / RATE
+    y = np.zeros(n)
+    for k, d in enumerate((1.0, 1.26, 1.5, 2.0)):
+        f = (180 + 900 * (t / 2.9) ** 2) * d * (1 + 0.02 * np.sin(2 * np.pi * (5 + k) * t))
+        y += np.sin(2 * np.pi * np.cumsum(f) / RATE) * (0.5 / (k + 1))
+    y *= np.clip(t / 0.4, 0, 1) * np.clip((2.9 - t) / 0.3, 0, 1)
+    hiss = band(rnd.uniform(-1, 1, n), 1500, 7000) * (t / 2.9) ** 2 * 0.8
+    thump = np.sin(2 * np.pi * 60 * np.clip(t - 2.55, 0, None)) * np.exp(-np.clip(t - 2.55, 0, None) * 9) * (t > 2.55)
+    y = y + hiss + thump * 1.4
+    return y / np.abs(y).max()
+
+
+def jump():
+    """The jump drive kicking in: a low surge and a whoosh that fades."""
+    rnd = np.random.default_rng(9)
+    n = int(1.4 * RATE)
+    t = np.arange(n) / RATE
+    f = 70 + 160 * (1 - np.exp(-t * 4))
+    surge = np.sin(2 * np.pi * np.cumsum(f) / RATE) * np.exp(-t * 1.6)
+    whoosh = band(rnd.uniform(-1, 1, n), 300, 3000) * np.sin(np.pi * np.clip(t / 1.4, 0, 1)) * 0.9
+    y = surge + whoosh
+    y[:int(0.01 * RATE)] *= np.linspace(0, 1, int(0.01 * RATE))
+    return y / np.abs(y).max()
+
+
+def scoop():
+    """A canister taken aboard: a clunk of the hatch and a rising chirp."""
+    n = int(0.35 * RATE)
+    t = np.arange(n) / RATE
+    clunk = np.sin(2 * np.pi * 140 * t) * np.exp(-t * 30) + 0.4 * band(np.random.default_rng(10).uniform(-1, 1, n),
+                                                                      200, 1500) * np.exp(-t * 40)
+    f = 600 + 1400 * np.clip((t - 0.08) / 0.2, 0, 1)
+    chirp = np.sin(2 * np.pi * np.cumsum(f) / RATE) * ((t > 0.08) & (t < 0.3)) * 0.5
+    y = clunk + chirp
+    return y / np.abs(y).max()
+
+
 def lock():
     """A target locked: two short rising beeps."""
     out = []
@@ -244,7 +285,8 @@ class Sfx:
     """The game's own effects, made on first use and kept."""
 
     MAKERS = {"crash_heavy": crash_chip, "crash": lambda: crash(False), "explosion": explosion,
-              "boom": lambda: explosion(7, 1.7), "laser": laser, "zap": zap, "missile": missile, "lock": lock}
+              "boom": lambda: explosion(7, 1.7), "laser": laser, "zap": zap, "missile": missile, "lock": lock,
+              "hyper": hyper, "jump": jump, "scoop": scoop}
 
     def __init__(self):
         self.snd = {}

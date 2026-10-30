@@ -7,15 +7,20 @@ planet and sun, the station that turns about its slot, traffic coming and going,
 station's turn, fly in slowly) or by the docking computer - to a waltz, the opening of Strauss's "The Blue
 Danube" (public domain, our own synthesized arrangement).
 
+Stage 2: the galaxy - 256 systems, each its own planet, sun and station; the market, fuel, the 3D chart, the
+system data, hyperspace with a countdown, the in-system jump drive, a save at every docking. Ships blown
+up leave cargo canisters to scoop; our own end - the camera circles the wreck and draws away.
+
 Keys: ← → (or [ ]) - roll, ↑ ↓ - pitch (↑ dives, like a stick; i - the other way), Space / = - faster,
 / / - - slower, a / Enter - the laser, m - a missile at the ship in the sights, c - the docking computer,
-Tab - the look, Esc - the pause menu. HAT: the joystick, KEY1 faster,
+g - the chart, h - hyperspace, j - the jump drive, Tab - the look, Esc - the pause menu. HAT: the joystick, KEY1 faster,
 KEY2 slower, KEY3 - the menu.
 """
 import json
 import math
 import os
 import random
+import threading
 import time
 
 import numpy as np
@@ -23,6 +28,7 @@ import pygame
 import stargfx as gfx                 # before lcd.init(): it keeps pygame's own draw and font
 import lcd
 import starmusic
+import stargalaxy as galaxy
 
 screen = lcd.init()
 clock = pygame.time.Clock()
@@ -51,8 +57,10 @@ HP = {"osa": 2, "sokil": 3, "chumak": 4, "mazha": 6, "shulika": 3, "vulyk": 12, 
 LASER_RANGE = 7000.0
 LASER_EVERY = 0.16                    # seconds between pulses
 MISSILES = 3
-SYSTEM = "Ортея"
-SYSTEM_INFO = "Сільськогосподарська · Демократія · Тех. рівень 7"
+CARGO_MAX = 20                        # tonnes (every unit of any good takes a place)
+JUMP_SPEED = 26000.0                  # the in-system jump drive: world units a second
+HYPER_COUNT = 10                      # seconds of the hyperspace countdown
+SAVE = os.path.expanduser("~/.config/lcdtoy/startrader-save.json")
 
 
 def cross(a, b):
@@ -174,12 +182,13 @@ class Ship:
 
 
 class Blast:
-    """A ship blown apart: its faces fly off spinning and cool down, a fireball (modern) or a cloud of dots
-    (classic) in the middle."""
-    LIFE = 2.2
+    """A ship blown apart: its faces fly off spinning and cool down, small shards with them, a fireball
+    (modern) or a cloud of dots (classic) in the middle."""
+    LIFE = 4.0
 
-    def __init__(self, ship, rnd):
+    def __init__(self, ship, rnd, life=None, spread=1.0):
         me = ship.me
+        self.life = life or self.LIFE
         self.pos = ship.pos.copy()
         self.vel = ship.R[:, 2] * ship.speed * 0.4
         self.size = me.radius
@@ -190,27 +199,52 @@ class Blast:
         for i, f in enumerate(me.faces):
             P = V[f]
             c = P.mean(axis=0)
-            v = self.vel + N[i] * rnd.uniform(60, 260) + np.array([rnd.uniform(-60, 60) for _ in range(3)])
-            ax = unit(np.array([rnd.gauss(0, 1) for _ in range(3)]))
-            self.frags.append((c, P - c, v, ax, rnd.uniform(1.5, 6.0), me.base[i]))
+            v = self.vel + (N[i] * rnd.uniform(60, 260) + np.array([rnd.uniform(-60, 60) for _ in range(3)])) * spread
+            x, y, z = unit(np.array([rnd.gauss(0, 1) for _ in range(3)]))
+            K = np.array([[0, -z, y], [z, 0, -x], [-y, x, 0]])           # R(a) = I + sin a K + (1 - cos a) K^2
+            self.frags.append((c, P - c, v, K, K @ K, rnd.uniform(1.5, 6.0), me.base[i]))
         self.dots = np.array([unit(np.array([rnd.gauss(0, 1) for _ in range(3)])) * rnd.uniform(0.3, 1.0)
                               for _ in range(70)]) * self.size * 2.2
+        # shards: tiny triangles turning in the screen's plane (cheap), flying out faster than the faces
+        self.shards = []
+        sv = []
+        for _ in range(26):
+            sv.append(self.vel + unit(np.array([rnd.gauss(0, 1) for _ in range(3)])) * rnd.uniform(150, 420) * spread)
+            shape = [(math.cos(a) * rnd.uniform(0.5, 1), math.sin(a) * rnd.uniform(0.5, 1))
+                     for a in (0, 2.1 + rnd.uniform(-0.4, 0.4), 4.2 + rnd.uniform(-0.4, 0.4))]
+            self.shards.append((shape, rnd.uniform(-9, 9), self.size * rnd.uniform(0.05, 0.12),
+                                me.base[rnd.randrange(len(me.base))]))
+        self.shard_v = np.array(sv)
 
 
 class World:
-    def __init__(self, seed=7):
+    """One star system: its planet at the origin (size and look from the galaxy), the sun, the station in
+    orbit with its slot facing away from the planet, the traffic."""
+
+    def __init__(self, system=None, seed=7):
+        self.system = system
+        if system is not None:
+            seed = system.seed
         self.rnd = random.Random(seed)
-        self.sun_dir = unit(np.array((0.9, 0.55, -0.35)))
+        r = random.Random(seed + 1)
+
+        def rand_dir():
+            return unit(np.array([r.gauss(0, 1) for _ in range(3)]))
+        home = system is None or system.name == galaxy.START
+        self.planet_r = PLANET_R if home else system.radius_km * 4.6
+        self.sun_dir = unit(np.array((0.9, 0.55, -0.35))) if home else rand_dir()
         self.sun_pos = self.sun_dir * SUN_DIST
-        self.st_dir = unit(np.array((0.35, 0.25, -1.0)))
-        self.st_pos = self.st_dir * (PLANET_R + 28000)
+        # the station on the sunny side, mostly: its slot is lit as we come in
+        self.st_dir = unit(np.array((0.35, 0.25, -1.0))) if home else unit(self.sun_dir * 0.8 + rand_dir())
+        self.arrive_dir = unit(self.st_dir + rand_dir() * 0.35)
+        self.st_pos = self.st_dir * (self.planet_r * 2.17)
         self.st_base = basis(-self.st_dir, np.array((0.0, 1.0, 0.0)))   # the model's +z to the planet
         self.slot_n = self.st_dir.copy()                                # the slot looks away from it
         self.st_angle = 0.0
         self.st_R = self.st_base
         self.station = gfx.mesh("station")
-        self.planet = gfx.Planet("earth", 11)
-        self.stars = gfx.starfield()
+        self.planet = gfx.Planet("earth", 11) if home else gfx.Planet(system.kind, seed % 997)
+        self.stars = gfx.starfield(3 if home else seed % 991)
         self.ships = []
         self.blasts = []
         self.events = []                  # ("boom", ship) - for the game's sounds and messages
@@ -251,7 +285,7 @@ class World:
         for _ in range(10):
             d = unit(self.slot_n * 0.8 + np.array([self.rnd.uniform(-1, 1) for _ in range(3)]))
             p = self.st_pos + d * self.rnd.uniform(16000, 24000)
-            if length(p - player_pos) > 8000 and length(p) > PLANET_R * 1.3:
+            if length(p - player_pos) > 8000 and length(p) > self.planet_r * 1.3:
                 break
         sh = Ship(kind, p, basis(self.slot_mouth(3000) - p, np.array((0, 1.0, 0))), 1100.0, "arrive")
         sh.wp = self.slot_mouth(3000)
@@ -285,7 +319,10 @@ class World:
                     self.ships.append(self.new_arriving(player_pos))
         for s in self.ships:
             s.age += dt
-            if s.role == "drift":
+            if s.role in ("drift", "cargo"):
+                if s.role == "cargo":                                  # canisters tumble and drift away
+                    if s.age > 150 or length(s.pos - player_pos) > 40000:
+                        s.gone = True
                 s.R = turn(s.R, s.spin[0] * dt, s.spin[1] * dt, s.spin[2] * dt)
             elif s.role == "depart":
                 if s.age > 4:
@@ -324,12 +361,15 @@ class World:
             elif s.role == "patrol":
                 s.phase += dt * 700 / 3800
                 s.R = turn_to(s.R, unit(self.patrol_point(s.phase + 0.35) - s.pos), 0.8, dt)
-            if s.role not in ("drift", "missile"):                         # keep clear of the player
+            if s.role not in ("drift", "missile", "cargo"):                # keep clear of the player
                 d = player_pos - s.pos
                 dist = length(d)
                 if dist < 1000 and np.dot(d, s.R[:, 2]) > 0:
                     s.R = turn_to(s.R, unit(-d + s.R[:, 2] * dist * 0.5), 1.4, dt)
-            s.pos = s.pos + s.R[:, 2] * s.speed * dt
+            if s.role == "cargo":
+                s.pos = s.pos + s.drift * dt
+            else:
+                s.pos = s.pos + s.R[:, 2] * s.speed * dt
         self.ships = [s for s in self.ships if not s.gone]
         self.update_blasts(dt)
 
@@ -340,11 +380,22 @@ class World:
         self.ships = [x for x in self.ships if not x.gone]
         self.blasts.append(Blast(s, self.rnd))
         self.events.append(("boom", s))
+        n = {"mazha": (1, 3), "chumak": (0, 2), "osa": (0, 1), "shulika": (0, 2), "asteroid": (0, 1)}.get(s.kind, (0, 0))
+        for _ in range(self.rnd.randint(*n)):                          # what it carried, in canisters
+            d = unit(np.array([self.rnd.gauss(0, 1) for _ in range(3)]))
+            c = Ship("kontejner", s.pos + d * s.me.radius * 0.5, basis(d, np.array((0, 1.0, 0))),
+                     self.rnd.uniform(20, 70), "cargo")
+            c.spin = tuple(self.rnd.uniform(-1.2, 1.2) for _ in range(3))
+            c.drift = d * c.speed + s.R[:, 2] * s.speed * 0.3
+            goods = galaxy.GOODS
+            c.item = 12 if s.kind == "asteroid" else \
+                self.rnd.choices(range(len(goods)), [g[4] for g in goods])[0]
+            self.ships.append(c)
 
     def update_blasts(self, dt):
         for b in self.blasts:
             b.age += dt
-        self.blasts = [b for b in self.blasts if b.age < Blast.LIFE]
+        self.blasts = [b for b in self.blasts if b.age < b.life]
 
     # -- geometry
 
@@ -369,7 +420,8 @@ class Game:
             "small": gfx.font("DejaVuSansCondensed.ttf", 10),
             "mono": gfx.font("DejaVuSansMono-Bold.ttf", 9),
         }
-        self.world = World()
+        self.gal, self.start = galaxy.generate()
+        self.new_game()
         self.music = starmusic.Music()
         self.sfx = starmusic.Sfx()
         self.dust = gfx.stardust_init()
@@ -399,6 +451,85 @@ class Game:
         self.beam_hit = False
         self.missiles = MISSILES
         self.lock = None
+        self.hyper_t = None
+        self.jump_t = 0.0
+
+    # -- the commander
+
+    def new_game(self):
+        self.here = self.start
+        self.target = None
+        self.credits = 100.0
+        self.cargo = [0] * len(galaxy.GOODS)
+        self.fuel = galaxy.JUMP_MAX
+        self.visits = {}
+        self.market = None
+        self.world = World(self.gal[self.here])
+
+    def system(self):
+        return self.gal[self.here]
+
+    def held(self):
+        return sum(self.cargo)
+
+    def save(self):
+        data = {"here": self.here, "target": self.target, "credits": round(self.credits, 1), "cargo": self.cargo,
+                "fuel": round(self.fuel, 2), "visits": {str(k): v for k, v in self.visits.items()}}
+        try:
+            os.makedirs(os.path.dirname(SAVE), exist_ok=True)
+            with open(SAVE + ".tmp", "w") as f:
+                json.dump(data, f)
+            os.replace(SAVE + ".tmp", SAVE)
+        except OSError:
+            pass
+
+    @staticmethod
+    def saved():
+        try:
+            with open(SAVE) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return None
+
+    def load(self):
+        d = self.saved()
+        if not d:
+            self.new_game()
+            return
+        self.here = int(d.get("here", self.start)) % len(self.gal)
+        self.target = d.get("target")
+        self.credits = float(d.get("credits", 100.0))
+        cargo = list(d.get("cargo", []))
+        self.cargo = (cargo + [0] * len(galaxy.GOODS))[:len(galaxy.GOODS)]
+        self.fuel = float(d.get("fuel", galaxy.JUMP_MAX))
+        self.visits = {int(k): v for k, v in d.get("visits", {}).items()}
+        self.world = World(self.gal[self.here])
+
+    def dock(self):
+        """At the station: a fresh market for this visit, the game saved (the old way: only when docked)."""
+        self.visits[self.here] = self.visits.get(self.here, 0) + 1
+        self.market = [list(x) for x in galaxy.market(self.system(), self.visits[self.here])]
+        self.save()
+
+    def arrive(self):
+        """Out of hyperspace: far out, the planet ahead (the station near it, beyond the jump drive's reach)."""
+        w = self.world
+        self.pos = w.arrive_dir * w.planet_r * 6.2
+        self.R = basis(-self.pos, np.array((0.0, 1.0, 0.0)))
+        self.speed = 0.5 * MAX_SPEED
+        self.roll = self.pitch = self.yaw = 0.0
+        self.autodock = False
+        self.hyper_t = None
+        self.jump_t = 0.0
+        self.lock = None
+        self.beam_end = None
+
+    def mass_locked(self):
+        """The jump drive will not start near anything big."""
+        w = self.world
+        if length(self.pos - w.st_pos) < 24000 or length(self.pos) < w.planet_r * 1.5:
+            return True
+        return any(s.role not in ("drift", "missile") and length(s.pos - self.pos) < 9000 for s in w.ships)
 
     def say(self, text, secs=3.0):
         self.msg, self.msg_t = text, self.t + secs
@@ -486,6 +617,16 @@ class Game:
         self.R = turn(self.R, self.roll * dt, self.pitch * dt, self.yaw * dt)
         old = self.pos
         self.pos = self.pos + self.R[:, 2] * self.speed * dt
+        if self.jump_t > 0:
+            self.jump_t -= dt
+            if self.mass_locked():
+                self.jump_t = 0.0
+                self.say("Масова блокада", 1.5)
+            else:
+                self.pos = self.pos + self.R[:, 2] * JUMP_SPEED * dt
+        if self.hyper_t is not None and self.t >= self.hyper_t:
+            self.hyper_t = None
+            return "hyper"
         w.update_ships(dt, self.pos)
         self.weapons(dt)
         # recharge: the banks slowly, the shields from the banks
@@ -522,6 +663,11 @@ class Game:
         for s in w.ships:
             if s.role == "missile":
                 continue
+            if s.role == "cargo":
+                d = s.pos - self.pos
+                if np.dot(d, d) < 150 ** 2:
+                    self.scoop(s, np.dot(d, self.R[:, 2]) > 0)
+                continue
             d = s.pos - self.pos
             reach = s.me.radius * 0.75 + 80
             if np.dot(d, d) < reach * reach:
@@ -533,7 +679,7 @@ class Game:
                     s.R = basis(d, s.R[:, 1])
                 return self.hit(0.2 + 0.4 * self.speed / MAX_SPEED, front, "Зіткнення!")
         # the planet
-        alt = length(self.pos) - PLANET_R
+        alt = length(self.pos) - w.planet_r
         if alt < 60:
             self.dead = True
             return "dead"
@@ -547,7 +693,7 @@ class Game:
         """The ship nearest the crosshair within the cone (a missile's lock)."""
         best, bc = None, cone
         for s in self.world.ships:
-            if s.role == "missile":
+            if s.role in ("missile", "cargo"):
                 continue
             d = s.pos - self.pos
             L = length(d)
@@ -576,8 +722,8 @@ class Game:
         self.lock = lock
         for kind, ship in w.events:                    # what blew up since the last step
             if kind == "boom":
-                self.sfx.play("boom" if ship.kind != "rocket" else "zap")
-                if ship.kind != "rocket":
+                self.sfx.play("boom" if ship.kind not in ("rocket", "kontejner") else "zap")
+                if ship.kind not in ("rocket", "kontejner"):
                     self.say("Знищено: %s" % gfx.TYPES[ship.kind][0], 2)
         w.events.clear()
 
@@ -612,6 +758,26 @@ class Game:
             self.sfx.play("zap")
             if best.hp <= 0:
                 self.world.destroy(best)
+
+    def scoop(self, c, front):
+        """Fly into a canister slowly, nose first: it goes into the hold (if there is room)."""
+        w = self.world
+        name, unit_ = galaxy.GOODS[c.item][:2]
+        if not front or self.speed > 0.45 * MAX_SPEED:
+            c.hp = 0
+            w.destroy(c)
+            self.say("Контейнер розбито - заскоро", 2)
+            return
+        if self.held() >= CARGO_MAX:
+            if self.msg_t < self.t:
+                self.say("Трюм повний", 1.5)
+                lcd.play("error")
+            return
+        c.gone = True
+        w.ships = [x for x in w.ships if not x.gone]
+        self.cargo[c.item] += 1
+        self.sfx.play("scoop")
+        self.say("Підібрано: %s, 1 %s" % (name, unit_), 2)
 
     def fire_missile(self):
         if not self.missiles:
@@ -667,7 +833,7 @@ class Game:
         if tca < 0 or tca > L:
             return False
         d2 = np.dot(self.pos, self.pos) - tca * tca
-        return d2 < PLANET_R * PLANET_R
+        return d2 < self.world.planet_r ** 2
 
     def draw_view(self, surf, dt, overlay=True):
         st = self.style
@@ -693,7 +859,8 @@ class Game:
         pc = RT @ (-self.pos)
         dist = length(pc)
         if pc[2] > 0:
-            r = PLANET_R * F / math.sqrt(max(dist * dist - PLANET_R * PLANET_R, 1.0)) if dist > PLANET_R else 1e5
+            pr = w.planet_r
+            r = pr * F / math.sqrt(max(dist * dist - pr * pr, 1.0)) if dist > pr else 1e5
             Ls = RT @ w.sun_dir                    # from the planet towards the sun
             w.planet.draw(view, CX + pc[0] * F / pc[2], CY - pc[1] * F / pc[2], min(r, 4000), Ls, st)
         # the station and the ships, far to near
@@ -717,7 +884,8 @@ class Game:
             gfx.draw_mesh(view, me, M, t, F, CX, CY, Lc, st, detail=not rough)
         for b in w.blasts:
             self.draw_blast(view, b)
-        gfx.stardust(view, self.dust, dt, self.speed, self.roll, self.pitch, self.yaw, F, CX, CY, st)
+        gfx.stardust(view, self.dust, dt, self.speed + (JUMP_SPEED if self.jump_t > 0 else 0),
+                     self.roll, self.pitch, self.yaw, F, CX, CY, st)
         if not overlay:
             return
         self.draw_beams(view)
@@ -725,15 +893,24 @@ class Game:
         col = gfx.WIRE if st == "wire" else (220, 225, 235)
         for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
             gfx.line(view, col, (CX + dx * 6, CY + dy * 6), (CX + dx * 16, CY + dy * 16))
-        img = self.fonts["label"].render("Передній огляд", True, col)
-        view.blit(img, (W / 2 - img.get_width() / 2, 4))
-        self.draw_dock_hint(view)
+        y = 4
+        if not gfx.HAT:                                 # no room for it on the HAT
+            img = self.fonts["label"].render("Передній огляд", True, col)
+            view.blit(img, (W / 2 - img.get_width() / 2, y))
+            y += img.get_height()
+        hint = self.draw_dock_hint(view)
         if self.msg and self.t < self.msg_t:
-            img = self.fonts["msg"].render(self.msg, True, (255, 210, 90) if st != "wire" else gfx.WIRE)
-            view.blit(img, (W / 2 - img.get_width() / 2, VH - 34))
-        if self.autodock:
-            img = self.fonts["small"].render("КОМП'ЮТЕР СТИКУВАННЯ", True, (120, 220, 255) if st != "wire" else gfx.WIRE)
-            view.blit(img, (W / 2 - img.get_width() / 2, 18))
+            img = gfx.fit(self.fonts["msg"].render(self.msg, True, (255, 210, 90) if st != "wire" else gfx.WIRE))
+            view.blit(img, (W / 2 - img.get_width() / 2, VH - img.get_height() - (hint + 4)))
+        for on, text, c in ((self.autodock, "КОМП'ЮТЕР СТИКУВАННЯ", (120, 220, 255)),
+                            (self.hyper_t is not None, "Гіперстрибок до %s: %d" % (
+                                self.gal[self.target].name if self.target is not None else "?",
+                                max(0, int(math.ceil((self.hyper_t or 0) - self.t)))), (255, 200, 90)),
+                            (self.jump_t > 0, "СТРИБКОВИЙ ДВИГУН", (120, 220, 255))):
+            if on:
+                img = gfx.fit(self.fonts["small"].render(text, True, c if st != "wire" else gfx.WIRE))
+                view.blit(img, (W / 2 - img.get_width() / 2, y))
+                y += img.get_height()
 
     def project(self, p):
         c = self.R.T @ (p - self.pos)
@@ -744,7 +921,7 @@ class Game:
     def draw_blast(self, view, b):
         wire = self.style == "wire"
         a = b.age
-        life = Blast.LIFE
+        life = b.life
         centre = b.pos + b.vel * a
         pc = self.project(centre)
         if pc is None or pc[2] > 40000:
@@ -759,8 +936,9 @@ class Game:
                 if 0 <= sx < W and 0 <= sy < VH:
                     view.fill(col, (int(sx), int(sy), 2, 2))
         fade = 1 - a / life
-        for c0, offs, v, ax, spin, base in b.frags:
-            Rm = rodrigues(ax, spin * a)
+        I3 = np.eye(3)
+        for c0, offs, v, K, K2, spin, base in b.frags:
+            Rm = I3 + math.sin(spin * a) * K + (1 - math.cos(spin * a)) * K2
             P = (c0 + v * a) + offs @ Rm.T - self.pos
             C = P @ self.R
             if C[:, 2].min() < gfx.NEAR:
@@ -770,7 +948,25 @@ class Game:
                 gfx.lines(view, gfx.WIRE if a < life * 0.6 else gfx.WIRE_DIM, True, pts, 1)
             else:
                 hot = gfx.mix((255, 190, 90), base, a / 0.7)
-                gfx.fill_poly(view, gfx.shade(hot, 0.25 + 0.9 * fade), pts)
+                gfx.fill_poly(view, gfx.shade(hot, 0.35 + 0.9 * fade), pts)
+                gfx.lines(view, gfx.shade(gfx.mix((255, 220, 150), (220, 210, 188), a / 0.7), 0.25 + 0.6 * fade),
+                          True, pts, 1)                  # the hull's light trims on the broken plates
+        k = max(0.0, 1 - a / life)
+        C = (b.pos + b.shard_v * a - self.pos) @ self.R
+        for (shape, spin, sz, base), (cx_, cy_, cz) in zip(b.shards, C.tolist()):
+            if cz < gfx.NEAR:
+                continue
+            p = (CX + cx_ * F / cz, CY - cy_ * F / cz)
+            r = sz * F / cz
+            if r < 0.4:
+                continue
+            ang = spin * a
+            ca, sa = math.cos(ang), math.sin(ang)
+            pts = [(p[0] + (x * ca - y * sa) * r, p[1] + (x * sa + y * ca) * r) for x, y in shape]
+            if wire:
+                gfx.lines(view, gfx.WIRE if a < life * 0.6 else gfx.WIRE_DIM, True, pts, 1)
+            else:
+                gfx.fill_poly(view, gfx.shade(gfx.mix((255, 210, 120), base, a / 0.5), 0.3 + 0.9 * k), pts)
         if not wire and a < 0.9:                       # the fireball
             k = 1 - a / 0.9
             step = int(a / 0.9 * 6)
@@ -821,9 +1017,9 @@ class Game:
         rel = self.pos - w.st_pos
         s = float(np.dot(rel, w.slot_n))
         if not (STATION_R < s < 5000) or length(rel - w.slot_n * s) > 1500:
-            return
+            return 30
         if np.dot(self.R[:, 2], -w.slot_n) < 0.7:
-            return
+            return 30
         u = w.st_R[:, 0]
         up_ = u - self.R[:, 2] * np.dot(u, self.R[:, 2])
         e = math.atan2(np.dot(up_, self.R[:, 1]), np.dot(up_, self.R[:, 0]))
@@ -843,8 +1039,14 @@ class Game:
         f = self.fonts["mono"]
         t1 = f.render("ОБЕРТ " + ("✓" if ok_roll else "%+d°" % round(math.degrees(e))), True, good if ok_roll else bad)
         t2 = f.render("ШВИДК " + ("✓" if ok_speed else "↓"), True, good if ok_speed else bad)
+        if gfx.HAT:                                    # side by side above the arc
+            y = VH - r - t1.get_height() - 2
+            view.blit(t1, (4, y))
+            view.blit(t2, (W - 4 - t2.get_width(), y))
+            return r + t1.get_height() + 4
         view.blit(t1, (cx - r - 6 - t1.get_width(), VH - 14))
         view.blit(t2, (cx + r + 6, VH - 14))
+        return 30
 
     def dash_state(self):
         w = self.world
@@ -861,9 +1063,9 @@ class Game:
         safe = dist_st < SAFE_ZONE
         tgt = w.st_pos if safe else np.zeros(3)
         d = unit(RT @ (tgt - self.pos))
-        alt = (length(self.pos) - PLANET_R) / PLANET_R
+        alt = (length(self.pos) - w.planet_r) / w.planet_r
         en = [clamp(self.energy - i, 0, 1) for i in range(4)]
-        return dict(fs=self.fs, as_=self.as_, fv=1.0, ct=0.1, lt=min(1.0, self.laser_temp), al=clamp(alt, 0, 1),
+        return dict(fs=self.fs, as_=self.as_, fv=self.fuel / galaxy.JUMP_MAX, ct=0.1, lt=min(1.0, self.laser_temp), al=clamp(alt, 0, 1),
                     sp=self.speed / MAX_SPEED, missiles=self.missiles,
                     rl=self.roll / ROLL_MAX, dc=self.pitch / PITCH_MAX, en=en, blips=blips,
                     compass=(d[0], d[1], d[2] > 0), safe=safe, t=self.t, **{"as": self.as_})
@@ -899,6 +1101,21 @@ def tunnel(game, inward, secs=1.4):
         clock.tick(30)
 
 
+def draw_list(items, sel, top, bottom, f, colours, centre=True):
+    """Menu rows from top to bottom, scrolled to keep the selected one in view."""
+    row = f.get_height() + 2
+    fits = max(1, int((bottom - top) // row))
+    first = min(max(0, sel - fits // 2), max(0, len(items) - fits))
+    for k, i in enumerate(range(first, min(len(items), first + fits))):
+        on = i == sel
+        img = gfx.fit(f.render(("▶ " if on else "") + items[i], True, colours[0] if on else colours[1]))
+        frame.blit(img, ((W - img.get_width()) / 2 if centre else 8, top + k * row))
+    if first > 0:
+        gfx.poly(frame, colours[1], [(W - 10, top + 2), (W - 4, top + 2), (W - 7, top - 3)])
+    if first + fits < len(items):
+        gfx.poly(frame, colours[1], [(W - 10, bottom - 4), (W - 4, bottom - 4), (W - 7, bottom + 1)])
+
+
 def ask(game, items, title=None, sel=0, back=None):
     """A small menu over the current frame; returns the chosen index or back (Esc)."""
     snap = frame.copy()
@@ -906,8 +1123,10 @@ def ask(game, items, title=None, sel=0, back=None):
     wire = game.style == "wire"
     while True:
         frame.blit(snap, (0, 0))
-        h = 28 + 22 * len(items)
-        box = pygame.Rect(W / 2 - 120, VH / 2 - h / 2, 240, h)
+        row = f.get_height() + 2
+        h = min(H - 8, 16 + row * (len(items) + (1 if title else 0)))
+        bw = 240 if not gfx.HAT else W - 8
+        box = pygame.Rect(W / 2 - bw / 2, max(4, VH / 2 - h / 2) if not gfx.HAT else 4, bw, h)
         sh = pygame.Surface(box.size, pygame.SRCALPHA)
         sh.fill((0, 0, 0, 220) if wire else (8, 12, 26, 225))
         frame.blit(sh, box.topleft)
@@ -916,11 +1135,9 @@ def ask(game, items, title=None, sel=0, back=None):
         if title:
             img = f.render(title, True, gfx.WIRE if wire else (240, 232, 214))
             frame.blit(img, (W / 2 - img.get_width() / 2, y))
-            y += 20
-        for i, it in enumerate(items):
-            col = (gfx.WIRE if wire else (255, 210, 90)) if i == sel else (gfx.WIRE_DIM if wire else (170, 190, 220))
-            img = f.render(("▶ " if i == sel else "") + it, True, col)
-            frame.blit(img, (W / 2 - img.get_width() / 2, y + i * 22))
+            y += row
+        draw_list(items, sel, y, box.bottom - 6, f, ((gfx.WIRE, gfx.WIRE_DIM) if wire else
+                                                       ((255, 210, 90), (170, 190, 220))))
         show()
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
@@ -971,6 +1188,12 @@ def title(game):
     fmono = gfx.font("DejaVuSansMono-Bold.ttf", 13)
     fs = gfx.font("DejaVuSansCondensed-Bold.ttf", 12)
     fm = gfx.font("DejaVuSansMono.ttf", 11)
+    saved = game.saved()
+    if saved:
+        sname = game.gal[int(saved.get("here", game.start)) % len(game.gal)].name
+        prompt = ("Enter - продовжити: %s, %.1f Кр" % (sname, saved.get("credits", 0)), "N - нова гра · Tab - вигляд")
+    else:
+        prompt = ("Натисніть пробіл, командире", "Tab - вигляд · Esc - вихід")
     while True:
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
@@ -980,7 +1203,10 @@ def title(game):
             hat = getattr(ev, "hat", False)
             if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE) or (hat and ev.key == pygame.K_1):
                 lcd.play("select")
-                return "start"
+                return "continue" if saved else "new"
+            if ev.key == pygame.K_n and saved:
+                lcd.play("select")
+                return "new"
             if ev.key == pygame.K_TAB or (hat and ev.key == pygame.K_2):
                 game.toggle_style()
             elif ev.key == pygame.K_ESCAPE or (hat and ev.key == pygame.K_3):
@@ -998,20 +1224,21 @@ def title(game):
                       np.array(HANGAR_L), game.style)
         if wire:
             gfx.rect(frame, gfx.WIRE, (8, 8, W - 16, H - 16), 1)
-            img = fmono.render("--- ЗОРЯНИЙ ТОРГОВЕЦЬ ---", True, gfx.WIRE)
+            img = gfx.fit(fmono.render("--- ЗОРЯНИЙ ТОРГОВЕЦЬ ---", True, gfx.WIRE), W - 24)
             frame.blit(img, (W / 2 - img.get_width() / 2, 20))
-            for i, s in enumerate(("Натисніть пробіл, командире", "Tab - сучасний вигляд")):
-                img = fm.render(s, True, gfx.WIRE)
-                frame.blit(img, (W / 2 - img.get_width() / 2, H - 52 + i * 16))
+            for i, s in enumerate(prompt):
+                img = gfx.fit(fm.render(s, True, gfx.WIRE), W - 24)
+                frame.blit(img, (W / 2 - img.get_width() / 2, H - 14 - (len(prompt) - i) * (img.get_height() + 2)))
         else:
             gfx.rect(frame, (200, 196, 180), (8, 8, W - 16, H - 16), 1)
-            img = fbig.render("ЗОРЯНИЙ ТОРГОВЕЦЬ", True, (240, 232, 214))
+            img = gfx.fit(fbig.render("ЗОРЯНИЙ ТОРГОВЕЦЬ", True, (240, 232, 214)), W - 24)
             frame.blit(img, (W / 2 - img.get_width() / 2, 20))
+            ly = 24 + img.get_height()
             for x in range(30, W - 30, 6):
-                gfx.line(frame, (90, 190, 255), (x, 46), (x + 3, 46))
-            for i, s in enumerate(("Натисніть пробіл, командире", "Tab - класичний вигляд · Esc - вихід")):
-                img = fs.render(s, True, (230, 230, 240) if i == 0 else (150, 200, 240))
-                frame.blit(img, (W / 2 - img.get_width() / 2, H - 52 + i * 18))
+                gfx.line(frame, (90, 190, 255), (x, ly), (x + 3, ly))
+            for i, s in enumerate(prompt):
+                img = gfx.fit(fs.render(s, True, (230, 230, 240) if i == 0 else (150, 200, 240)), W - 24)
+                frame.blit(img, (W / 2 - img.get_width() / 2, H - 14 - (len(prompt) - i) * (img.get_height() + 2)))
         show()
         clock.tick(30)
 
@@ -1048,31 +1275,38 @@ def ships_book(game):
         gfx.draw_mesh(frame, me, spin_matrix(t, -0.35), np.array((0.0, 0.0, z)), F, W / 2, H / 2 - 10,
                       np.array(HANGAR_L), game.style)
         name, role = gfx.TYPES[kinds[i]][:2]
-        hdr = fs.render("РОЗПІЗНАВАННЯ КОРАБЛІВ  %d / %d" % (i + 1, len(kinds)), True,
-                        gfx.WIRE if wire else (150, 200, 240))
+        hdr = gfx.fit(fs.render("РОЗПІЗНАВАННЯ КОРАБЛІВ  %d / %d" % (i + 1, len(kinds)), True,
+                                gfx.WIRE if wire else (150, 200, 240)))
         frame.blit(hdr, (W / 2 - hdr.get_width() / 2, 10))
-        img = fn.render(name, True, gfx.WIRE if wire else (240, 232, 214))
-        frame.blit(img, (W / 2 - img.get_width() / 2, H - 70))
-        img = fs.render(role, True, gfx.WIRE if wire else (170, 190, 220))
-        frame.blit(img, (W / 2 - img.get_width() / 2, H - 48))
-        img = fs.render("← → - інший · Esc - назад", True, gfx.WIRE_DIM if wire else (110, 130, 160))
-        frame.blit(img, (W / 2 - img.get_width() / 2, H - 22))
+        y = H - 4
+        for text, ff, col in reversed(((name, fn, gfx.WIRE if wire else (240, 232, 214)),
+                                       (role, fs, gfx.WIRE if wire else (170, 190, 220)),
+                                       ("← → - інший · Esc - назад", fs, gfx.WIRE_DIM if wire else (110, 130, 160)))):
+            if gfx.HAT and ff is fs and text.startswith("←"):
+                continue
+            img = gfx.fit(ff.render(text, True, col))
+            y -= img.get_height() + 2
+            frame.blit(img, (W / 2 - img.get_width() / 2, y))
         show()
         clock.tick(30)
 
 
 def station_screen(game):
-    """Docked: the station's name and the system, our ship in the hangar; launch / the ship book / the look /
-    out. Returns "launch" or "quit"."""
+    """Docked: the station, the system, our ship in the hangar, money, fuel and hold; launch / the market /
+    fuel / the galaxy / the system's data / the ship book / the look / out. Returns "launch" or "quit"."""
     sel = 0
     t0 = time.monotonic()
     game.music.stop(2500)                              # the waltz fades as we roll into the hangar
     me = gfx.mesh("chumak")
     fn = gfx.font("DejaVuSans-Bold.ttf", 15)
     fi = gfx.font("DejaVuSansCondensed.ttf", 11)
-    fm = gfx.font("DejaVuSans-Bold.ttf", 12)
+    fm = gfx.font("DejaVuSans-Bold.ttf", 11)
     while True:
-        items = ["Злетіти", "Розпізнавання кораблів", "Вигляд: " + STYLE_NAMES[game.style], "Вийти"]
+        sys_ = game.system()
+        need = galaxy.JUMP_MAX - game.fuel
+        items = ["Злетіти", "Ринок", "Заправитись" + (" (%.1f Кр)" % (need * galaxy.FUEL_PRICE) if need > 0.05 else " - повний бак"),
+                 "Галактична карта", "Дані про систему", "Розпізнавання кораблів", "Вигляд: " + STYLE_NAMES[game.style],
+                 "Вийти"]
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 return "quit"
@@ -1092,11 +1326,20 @@ def station_screen(game):
                 if sel == 0:
                     return "launch"
                 if sel == 1:
-                    ships_book(game)
+                    market_screen(game)
                 elif sel == 2:
+                    refuel(game)
+                elif sel == 3:
+                    chart(game)
+                elif sel == 4:
+                    data_screen(game, game.here)
+                elif sel == 5:
+                    ships_book(game)
+                elif sel == 6:
                     game.toggle_style()
                 else:
                     return "quit"
+                game.save()
             elif ev.key == pygame.K_ESCAPE or (hat and ev.key == pygame.K_3):
                 return "quit"
         if game.world.planet.prewarm():
@@ -1107,23 +1350,468 @@ def station_screen(game):
         draw_backdrop(game, t)
         if not wire:                                   # the hangar's floor: a lit grid
             for k in range(9):
-                y = 150 + k * k * 1.6
+                y = 130 + k * k * 1.3
                 gfx.line(frame, (24 + k * 3, 34 + k * 4, 60 + k * 5), (0, y), (W, y))
             for k in range(-8, 9):
-                gfx.line(frame, (30, 44, 74), (W / 2 + k * 6, 150), (W / 2 + k * 40, 280))
-        gfx.draw_mesh(frame, me, spin_matrix(t), np.array((0.0, 0.0, 330.0)), F, W / 2, 130,
+                gfx.line(frame, (30, 44, 74), (W / 2 + k * 6, 130), (W / 2 + k * 40, 240))
+        hi, lo = (gfx.WIRE, gfx.WIRE) if wire else ((240, 232, 214), (150, 200, 240))
+        mc = (gfx.WIRE, gfx.WIRE_DIM) if wire else ((255, 210, 90), (170, 190, 220))
+        if gfx.HAT:                                    # no hangar: the name, the purse, the menu
+            y = 4
+            for text, ff, col in (("«%s»" % sys_.name, fn, hi),
+                                  ("%.1f Кр · %.1f св. р. · %d/%d т" % (game.credits, game.fuel, game.held(), CARGO_MAX),
+                                   fi, lo)):
+                img = gfx.fit(ff.render(text, True, col))
+                frame.blit(img, (W / 2 - img.get_width() / 2, y))
+                y += img.get_height() + 2
+            draw_list(items, sel, y + 6, H - 4, fm, mc)
+            show()
+            clock.tick(30)
+            continue
+        gfx.draw_mesh(frame, me, spin_matrix(t), np.array((0.0, 0.0, 360.0)), F, W / 2, 112,
                       np.array(HANGAR_L), game.style)
-        hdr = fn.render("Станція «%s»" % SYSTEM, True, gfx.WIRE if wire else (240, 232, 214))
-        frame.blit(hdr, (W / 2 - hdr.get_width() / 2, 10))
-        img = fi.render(SYSTEM_INFO, True, gfx.WIRE if wire else (150, 200, 240))
-        frame.blit(img, (W / 2 - img.get_width() / 2, 30))
-        for i, it in enumerate(items):
-            on = i == sel
-            col = (gfx.WIRE if wire else (255, 210, 90)) if on else (gfx.WIRE_DIM if wire else (170, 190, 220))
-            img = fm.render(("▶ " if on else "") + it, True, col)
-            frame.blit(img, (W / 2 - img.get_width() / 2, 214 + i * 22))
+        hdr = fn.render("Станція «%s»" % sys_.name, True, hi)
+        frame.blit(hdr, (W / 2 - hdr.get_width() / 2, 8))
+        img = fi.render("%s · %s · тех. %d" % (galaxy.ECONOMY[sys_.econ], galaxy.GOVERNMENT[sys_.gov], sys_.tech),
+                        True, lo)
+        frame.blit(img, (W / 2 - img.get_width() / 2, 27))
+        img = fi.render("%.1f Кр · паливо %.1f св. р. · трюм %d/%d т" % (game.credits, game.fuel, game.held(),
+                                                                        CARGO_MAX), True, hi)
+        frame.blit(img, (W / 2 - img.get_width() / 2, 42))
+        if game.target is not None:
+            tg = game.gal[game.target]
+            img = fi.render("Ціль: %s, %.1f св. р." % (tg.name, sys_.dist(tg)), True, lo)
+            frame.blit(img, (W / 2 - img.get_width() / 2, 56))
+        draw_list(items, sel, 196, H - 2, fm, mc)
         show()
         clock.tick(30)
+
+
+def refuel(game):
+    need = galaxy.JUMP_MAX - game.fuel
+    if need < 0.05:
+        game.sfx.play("lock")
+        return
+    buy = min(need, game.credits / galaxy.FUEL_PRICE)
+    if buy < 0.05:
+        lcd.play("error")
+        return
+    game.fuel += buy
+    game.credits -= buy * galaxy.FUEL_PRICE
+    lcd.play("point")
+
+
+def screen_colours(game):
+    wire = game.style == "wire"
+    if wire:
+        return dict(bg=(0, 0, 0), hi=gfx.WIRE, lo=gfx.WIRE_DIM, sel=gfx.WIRE, bar=(0, 60, 20), warn=gfx.WIRE,
+                    ok=gfx.WIRE)
+    return dict(bg=(6, 8, 18), hi=(240, 232, 214), lo=(150, 170, 200), sel=(255, 210, 90), bar=(30, 40, 70),
+                warn=(255, 110, 90), ok=(120, 230, 140))
+
+
+def market_screen(game):
+    """Buy and sell: ↑ ↓ - the good, → - buy one, ← - sell one, Enter - buy all you can, Backspace - sell all."""
+    goods = galaxy.GOODS
+    sel = 0
+    f = gfx.font("DejaVuSansCondensed.ttf", 11)
+    fb = gfx.font("DejaVuSansCondensed-Bold.ttf", 11)
+    fh = gfx.font("DejaVuSans-Bold.ttf", 13)
+    row = 14
+    top = 40
+    while True:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                return
+            if ev.type != pygame.KEYDOWN:
+                continue
+            hat = getattr(ev, "hat", False)
+            price, stock = game.market[sel]
+            if ev.key == pygame.K_UP:
+                sel = (sel - 1) % len(goods)
+            elif ev.key == pygame.K_DOWN:
+                sel = (sel + 1) % len(goods)
+            elif ev.key in (pygame.K_RIGHT, pygame.K_RIGHTBRACKET, pygame.K_EQUALS, pygame.K_RETURN, pygame.K_KP_ENTER) \
+                    or (hat and ev.key == pygame.K_1):
+                n = 1 if ev.key in (pygame.K_RIGHT, pygame.K_RIGHTBRACKET, pygame.K_EQUALS) or hat else 999
+                n = min(n, stock, CARGO_MAX - game.held(), int(game.credits // price) if price > 0 else 0)
+                if n > 0:
+                    game.cargo[sel] += n
+                    game.market[sel][1] -= n
+                    game.credits -= n * price
+                    lcd.play("chip")
+                else:
+                    lcd.play("error")
+            elif ev.key in (pygame.K_LEFT, pygame.K_LEFTBRACKET, pygame.K_MINUS, pygame.K_BACKSPACE, pygame.K_DELETE) \
+                    or (hat and ev.key == pygame.K_2):
+                n = 1 if ev.key in (pygame.K_LEFT, pygame.K_LEFTBRACKET, pygame.K_MINUS) or hat else game.cargo[sel]
+                n = min(n, game.cargo[sel])
+                if n > 0:
+                    game.cargo[sel] -= n
+                    game.market[sel][1] += n
+                    game.credits += n * price
+                    lcd.play("chip")
+                else:
+                    lcd.play("error")
+            elif ev.key in (pygame.K_ESCAPE, pygame.K_TAB) or (hat and ev.key == pygame.K_3):
+                if ev.key == pygame.K_TAB:
+                    game.toggle_style()
+                    continue
+                return
+        c = screen_colours(game)
+        frame.fill(c["bg"])
+        img = gfx.fit(fh.render("РИНОК · %s" % game.system().name, True, c["hi"]))
+        frame.blit(img, (W / 2 - img.get_width() / 2, 4))
+        y0 = 8 + img.get_height()
+        hat = gfx.HAT
+        # columns: name, price, (the stock - not on the HAT: it shows the chosen one's below), in the hold
+        cols = ((6, "товар", 0), (W - 70, "ціна", 1), (W - 4, "трюм", 1)) if hat else \
+            ((6, "товар", 0), (196, "ціна", 1), (250, "є", 1), (310, "трюм", 1))
+        for x, t, al in cols:
+            img = f.render(t, True, c["lo"])
+            frame.blit(img, (x - img.get_width() if al else x, y0))
+        top = y0 + f.get_height() + 2
+        row = f.get_height() + (1 if not hat else 2)
+        foot = 3 * (f.get_height() + 2) + 6
+        fits = int((H - foot - top) // row)
+        first = min(max(0, sel - fits // 2), max(0, len(goods) - fits))
+        for k, i in enumerate(range(first, min(len(goods), first + fits))):
+            y = top + k * row
+            price, stock = game.market[i]
+            if i == sel:
+                gfx.rect(frame, c["bar"], (2, y - 1, W - 4, row))
+            col = c["sel"] if i == sel else (c["hi"] if game.cargo[i] else c["lo"])
+            ff = fb if i == sel else f
+            name = goods[i][0] + ("" if goods[i][6] else " ⚠")
+            frame.blit(gfx.fit(ff.render(name, True, col), (W - 130) if hat else 170), (6, y))
+            img = ff.render("%.1f" % price, True, col)
+            frame.blit(img, (cols[1][0] - img.get_width(), y))
+            if not hat:
+                img = ff.render(("%d %s" % (stock, goods[i][1])) if stock else "-", True, col)
+                frame.blit(img, (250 - img.get_width(), y))
+            if game.cargo[i]:
+                img = ff.render("%d" % game.cargo[i], True, c["sel"])
+                frame.blit(img, (cols[-1][0] - img.get_width(), y))
+        y = H - foot + 4
+        price, stock = game.market[sel]
+        lines_ = ["%.1f Кр · трюм %d/%d т" % (game.credits, game.held(), CARGO_MAX)]
+        if hat:
+            lines_ += ["є: %d %s · → купити ← продати" % (stock, goods[sel][1]) if stock else
+                       "немає в продажу · ← продати"]
+        else:
+            lines_ += ["→ купити · ← продати · Esc - назад", "Enter - купити скільки влізе · ⌫ - продати все"]
+        for k, t in enumerate(lines_):
+            img = gfx.fit((fb if k == 0 else f).render(t, True, c["hi"] if k == 0 else c["lo"]))
+            frame.blit(img, (W / 2 - img.get_width() / 2, y))
+            y += img.get_height() + 2
+        if not goods[sel][6] and not hat:
+            img = f.render("⚠ заборонено в суворих державах", True, c["warn"])
+            frame.blit(img, (W / 2 - img.get_width() / 2, 4 + 14))
+        show()
+        clock.tick(30)
+
+
+_previews = {}
+
+
+def planet_preview(sys_, size=110):
+    """A small lit planet of a system for its data screen (made once, ~0.1 s)."""
+    key = (sys_.idx, size)
+    if key not in _previews:
+        tex, air = gfx.planet_texture(sys_.kind, sys_.seed % 997, 128, 64)
+        _previews[key] = gfx.sphere(tex, air, size, (0.65, 0.45, 0.62))
+    return _previews[key]
+
+
+def wrap(f, text, width):
+    out, cur = [], ""
+    for w in text.split():
+        t = (cur + " " + w).strip()
+        if f.size(t)[0] > width and cur:
+            out.append(cur)
+            cur = w
+        else:
+            cur = t
+    if cur:
+        out.append(cur)
+    return out
+
+
+def data_screen(game, idx):
+    """A system's data: its planet, economy, government, tech, people, wealth, size and what it is known for."""
+    sys_ = game.gal[idx]
+    here = game.system()
+    f = gfx.font("DejaVuSansCondensed.ttf", 12)
+    fb = gfx.font("DejaVuSansCondensed-Bold.ttf", 12)
+    fh = gfx.font("DejaVuSans-Bold.ttf", 16)
+    t0 = time.monotonic()
+    while True:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                return
+            if ev.type == pygame.KEYDOWN:
+                if ev.key == pygame.K_TAB:
+                    game.toggle_style()
+                else:
+                    return
+        c = screen_colours(game)
+        wire = game.style == "wire"
+        frame.fill(c["bg"])
+        d = here.dist(sys_)
+        if gfx.HAT:
+            y = 4
+            facts = [(sys_.name, fh, c["hi"]), ("тут" if idx == game.here else "%.1f св. р." % d, f, c["lo"]),
+                     (galaxy.ECONOMY[sys_.econ], fb, c["hi"]), (galaxy.GOVERNMENT[sys_.gov], fb, c["hi"]),
+                     ("тех. %d · %.1f млрд" % (sys_.tech, sys_.pop), fb, c["hi"])]
+            for text, ff, col in facts:
+                img = gfx.fit(ff.render(text, True, col))
+                frame.blit(img, (8, y))
+                y += img.get_height() + 1
+            for ln in wrap(f, sys_.desc, W - 16):
+                if y > H - f.get_height():
+                    break
+                frame.blit(f.render(ln, True, c["lo"]), (8, y))
+                y += f.get_height()
+            show()
+            clock.tick(20)
+            continue
+        if wire:
+            r = 52
+            gfx.circle(frame, gfx.WIRE, (W - 70, 74), r, 1)
+            gfx.ellipse(frame, gfx.WIRE, (W - 70 - r, 74 - r * 0.25, 2 * r, r * 0.5), 1)
+        else:
+            img = planet_preview(sys_)
+            frame.blit(img, (W - 70 - img.get_width() / 2, 74 - img.get_height() / 2))
+        img = fh.render(sys_.name, True, c["hi"])
+        frame.blit(img, (10, 10))
+        y = 36
+        for k, v in (("Відстань", "тут" if idx == game.here else "%.1f св. р." % d),
+                     ("Економіка", galaxy.ECONOMY[sys_.econ]), ("Влада", galaxy.GOVERNMENT[sys_.gov]),
+                     ("Тех. рівень", "%d" % sys_.tech)):
+            frame.blit(f.render(k, True, c["lo"]), (10, y))
+            frame.blit(fb.render(v, True, c["hi"]), (10, y + 13))
+            y += 29
+        y += 4
+        for k, v in (("Населення", "%.1f млрд" % sys_.pop), ("Валовий продукт", "%d млн Кр" % sys_.prod),
+                     ("Радіус", "%d км" % sys_.radius_km)):
+            frame.blit(f.render(k, True, c["lo"]), (10, y))
+            img = fb.render(v, True, c["hi"])
+            frame.blit(img, (W - 10 - img.get_width(), y))
+            y += 16
+        y += 8
+        for ln in wrap(f, sys_.desc, W - 20):
+            frame.blit(f.render(ln, True, c["hi"]), (10, y))
+            y += 16
+        img = f.render("будь-яка клавіша - назад", True, c["lo"])
+        frame.blit(img, (W / 2 - img.get_width() / 2, H - 18))
+        show()
+        clock.tick(20)
+
+
+class ChartCam:
+    def __init__(self):
+        self.yaw, self.pitch, self.dist = 0.5, 0.95, 230.0
+        self.at = np.zeros(3)
+        self.f = 230.0
+
+    def project(self, P):
+        """Points (n, 3) -> screen x, y and depth arrays."""
+        Q = P - self.at
+        c, s = math.cos(self.yaw), math.sin(self.yaw)
+        x, z = Q[:, 0] * c - Q[:, 2] * s, Q[:, 0] * s + Q[:, 2] * c
+        c, s = math.cos(self.pitch), math.sin(self.pitch)
+        y, z = Q[:, 1] * c - z * s, Q[:, 1] * s + z * c
+        z = z + self.dist
+        z = np.maximum(z, 1.0)
+        return W / 2 + x * self.f / z, 150 - y * self.f / z, z
+
+
+def chart(game):
+    """The galaxy in 3D: a tilted spiral turning slowly; stalks from the stars near us to the plane, the jump
+    range as a ring round us, the chosen star with a line to it. ← → - the next star by distance, ↑ ↓ - tilt,
+    z - the whole galaxy / round us, i - the star's data, Enter - make it the hyperspace target, Esc - back."""
+    S = game.gal
+    here = S[game.here]
+    P = np.array([s.pos for s in S])
+    order = sorted(range(len(S)), key=lambda i: here.dist(S[i]))[1:]
+    sel = order.index(game.target) if game.target in order else 0
+    cam = ChartCam()
+    zoom = 1                                            # 0 - the galaxy, 1 - round us
+    names = {}
+    f = gfx.font("DejaVuSansCondensed.ttf", 10)
+    fb = gfx.font("DejaVuSansCondensed-Bold.ttf", 11)
+    fh = gfx.font("DejaVuSans-Bold.ttf", 12)
+    keys = set()
+    last = time.monotonic()
+    while True:
+        now = time.monotonic()
+        dt = min(0.1, now - last)
+        last = now
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                return
+            if ev.type == pygame.KEYUP:
+                keys.discard(ev.key)
+                continue
+            if ev.type != pygame.KEYDOWN:
+                continue
+            hat = getattr(ev, "hat", False)
+            keys.add(ev.key)
+            if ev.key in (pygame.K_RIGHT, pygame.K_RIGHTBRACKET):
+                sel = (sel + 1) % len(order)
+                lcd.play("click")
+            elif ev.key in (pygame.K_LEFT, pygame.K_LEFTBRACKET):
+                sel = (sel - 1) % len(order)
+                lcd.play("click")
+            elif ev.key == pygame.K_z or (hat and ev.key == pygame.K_2):
+                zoom ^= 1
+                lcd.play("move")
+            elif ev.key == pygame.K_i:
+                data_screen(game, order[sel])
+            elif ev.key == pygame.K_TAB:
+                game.toggle_style()
+            elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE) or (hat and ev.key == pygame.K_1):
+                game.target = order[sel]
+                game.sfx.play("lock")
+                return
+            elif ev.key == pygame.K_ESCAPE or (hat and ev.key == pygame.K_3):
+                return
+        if pygame.K_UP in keys:
+            cam.pitch = clamp(cam.pitch + 1.2 * dt, 0.1, 1.5)
+        if pygame.K_DOWN in keys:
+            cam.pitch = clamp(cam.pitch - 1.2 * dt, 0.1, 1.5)
+        cam.yaw += 0.12 * dt
+        want_at = np.array(here.pos) if zoom else np.zeros(3)
+        cam.at += (want_at - cam.at) * min(1.0, dt * 4)
+        cam.dist += ((24.0 if zoom else 235.0) - cam.dist) * min(1.0, dt * 4)
+        c = screen_colours(game)
+        wire = game.style == "wire"
+        frame.fill(c["bg"])
+        tgt = S[order[sel]]
+        # rings on the plane: the galaxy's, or the reach of a full tank and of the fuel we have
+        ringc = (30, 50, 90) if not wire else gfx.WIRE_DIM
+        circles = [(15, ringc), (30, ringc), (45, ringc)] if not zoom else []
+        circles += [(galaxy.JUMP_MAX, (60, 100, 160) if not wire else gfx.WIRE_DIM),
+                    (game.fuel, (90, 200, 255) if not wire else gfx.WIRE)]
+        for r, col in circles:
+            ctr = np.zeros(3) if r in (15, 30, 45) and not zoom else np.array(here.pos)
+            a = np.linspace(0, 2 * math.pi, 49)
+            ring = np.stack([ctr[0] + r * np.cos(a), np.full_like(a, ctr[1]), ctr[2] + r * np.sin(a)], 1)
+            x, y, z = cam.project(ring)
+            pts = list(zip(x.tolist(), y.tolist()))
+            for k in range(0, 48, 1 if r <= galaxy.JUMP_MAX else 2):
+                gfx.line(frame, col, pts[k], pts[k + 1])
+        x, y, z = cam.project(P)
+        base = cam.project(np.column_stack([P[:, 0], np.full(len(P), here.y if zoom else 0.0), P[:, 2]]))
+        near = {i for i in order if here.dist(S[i]) <= galaxy.JUMP_MAX} | {game.here}
+        labels = []                                     # placed name boxes: no two overlap
+        depth = np.argsort(-z)
+        for i in depth.tolist():
+            sx, sy = x[i], y[i]
+            if not (-10 < sx < W + 10 and -10 < sy < 250):
+                continue
+            s_ = S[i]
+            if i in near:
+                gfx.line(frame, (70, 100, 150) if not wire else gfx.WIRE_DIM, (sx, sy), (base[0][i], base[1][i]))
+            size = int(clamp(2.6 * cam.f / z[i], 1, 4))
+            col = gfx.WIRE if wire else s_.sun
+            if not wire and size > 1:
+                gfx.glow(frame, (sx, sy), tuple(v // 4 for v in s_.sun), size * 1.6)
+            frame.fill(col, (int(sx - size / 2), int(sy - size / 2), size, size))
+        for i in sorted(near, key=lambda i: (i != order[sel], here.dist(S[i]))) if zoom and not gfx.HAT else ():
+            img = names.get(i)
+            if img is None:
+                img = names[i] = f.render(S[i].name, True, (180, 190, 210) if not wire else gfx.WIRE)
+            box = pygame.Rect(x[i] + 5, y[i] - 6, img.get_width(), img.get_height())
+            if box.bottom < 250 and box.collidelist(labels) < 0:
+                labels.append(box)
+                frame.blit(img, box)
+        hx, hy = x[game.here], y[game.here]
+        tx, ty = x[order[sel]], y[order[sel]]
+        d = here.dist(tgt)
+        reach = d <= game.fuel
+        lc = (c["ok"] if reach else c["warn"])
+        gfx.line(frame, lc, (hx, hy), (tx, ty), 1)
+        gfx.circle(frame, (90, 200, 255) if not wire else gfx.WIRE, (hx, hy), 6, 1)
+        gfx.rect(frame, c["sel"], (tx - 7, ty - 7, 14, 14), 1)
+        if game.target is not None and game.target != order[sel]:
+            gx, gy = x[game.target], y[game.target]
+            gfx.rect(frame, c["lo"], (gx - 5, gy - 5, 10, 10), 1)
+        # the panel
+        if gfx.HAT:
+            t1 = gfx.fit(fh.render("%s %.1f св.р." % (tgt.name, d), True, lc))
+            t2 = gfx.fit(f.render("%s · тех. %d" % (galaxy.ECONOMY[tgt.econ], tgt.tech), True, c["hi"]))
+            py = H - t1.get_height() - t2.get_height() - 6
+            gfx.rect(frame, c["bg"], (0, py, W, H - py))
+            gfx.line(frame, c["lo"], (0, py), (W, py))
+            frame.blit(t1, (6, py + 3))
+            frame.blit(t2, (6, py + 4 + t1.get_height()))
+        else:
+            gfx.rect(frame, c["bg"], (0, 252, W, H - 252))
+            gfx.line(frame, c["lo"], (0, 252), (W, 252))
+            img = fh.render("ГАЛАКТИКА 1" + ("" if not zoom else " · поруч з %s" % here.name), True, c["hi"])
+            frame.blit(img, (W / 2 - img.get_width() / 2, 4))
+            img = fh.render("%s  %.1f св. р." % (tgt.name, d), True, c["sel"])
+            frame.blit(img, (8, 257))
+            img = f.render("досяжна" if reach else ("далеко: паливо %.1f" % game.fuel), True, lc)
+            frame.blit(img, (W - 8 - img.get_width(), 260))
+            img = f.render("%s · %s · тех. %d" % (galaxy.ECONOMY[tgt.econ], galaxy.GOVERNMENT[tgt.gov], tgt.tech),
+                           True, c["hi"])
+            frame.blit(img, (8, 275))
+            img = f.render("← → зірка · ↑ ↓ нахил · z масштаб · i дані · Enter - ціль · Esc", True, c["lo"])
+            frame.blit(img, (W / 2 - img.get_width() / 2, 300))
+        show()
+        clock.tick(30)
+
+
+def hyperspace(game):
+    """Through hyperspace: rings rushing by while the next system is built, then out far from its planet."""
+    tgt = game.gal[game.target]
+    game.fuel = max(0.0, game.fuel - game.system().dist(tgt))
+    game.music.stop(200)
+    game.sfx.play("hyper")
+    wire = game.style == "wire"
+    t0 = time.monotonic()
+    nxt = game.gal[game.target]
+    box = {}
+
+    def build():                       # numpy only (no pygame surfaces): it lets go of the interpreter
+        try:
+            wd = World(nxt)
+            while not wd.planet.prewarm():
+                pass
+            box["world"] = wd
+        except Exception as e:         # a broken worker must not leave us in hyperspace for ever
+            box["error"] = e
+    th = threading.Thread(target=build, daemon=True)
+    th.start()
+    while True:
+        t = time.monotonic() - t0
+        pygame.event.pump()
+        frame.fill((0, 0, 0) if wire else (3, 3, 10), (0, 0, W, VH))
+        view = frame.subsurface((0, 0, W, VH))
+        for k in range(16):
+            z = (k / 16.0 + t * 0.9) % 1.0
+            r = 4 + 220 * z * z
+            if wire:
+                col = gfx.WIRE if k % 2 else gfx.WIRE_DIM
+            else:
+                h = (k * 0.13 + t * 0.4) % 1.0
+                col = tuple(int(90 + 160 * max(0.0, math.sin(2 * math.pi * (h + o)))) for o in (0, 1 / 3, 2 / 3))
+            gfx.circle(view, col, (CX, CY), r, 1 if wire else 2)
+        game.dash[game.style].draw(frame, game.dash_state())
+        show()
+        clock.tick(30)
+        if ("world" in box or "error" in box) and t > 2.6:
+            break
+        if t > 25:                                     # the worker is stuck: build it here
+            box["error"] = TimeoutError()
+            break
+    game.here = game.target
+    game.target = None
+    game.world = box["world"] if "world" in box else World(game.system())
+    game.arrive()
+    game.say("Ласкаво просимо до системи %s" % game.system().name, 4)
 
 
 def flight(game):
@@ -1168,6 +1856,14 @@ def flight(game):
                     toggle_autodock(game)
                 elif key == pygame.K_m:
                     game.fire_missile()
+                elif key == pygame.K_g:
+                    game.keys.clear()
+                    chart(game)
+                    last = time.monotonic()
+                elif key == pygame.K_h:
+                    start_hyper(game)
+                elif key == pygame.K_j:
+                    start_jump(game)
                 elif key == pygame.K_i:
                     game.invert = not game.invert
                     game.conf["invert"] = game.invert
@@ -1178,6 +1874,10 @@ def flight(game):
             elif ev.type == pygame.KEYUP:
                 game.keys.discard(key)
         r = game.update(dt)
+        if r == "hyper":
+            hyperspace(game)
+            last = time.monotonic()
+            continue
         if game.autodock:
             game.music.start()
         elif r != "docked":
@@ -1187,11 +1887,37 @@ def flight(game):
             tunnel(game, True)
             return "docked"
         if r == "dead":
-            game.draw(dt)
             explode(game)
             return "dead"
         game.draw(dt)
         clock.tick(30)
+
+
+def start_hyper(game):
+    if game.hyper_t is not None:
+        game.hyper_t = None
+        game.say("Гіперстрибок скасовано", 2)
+        return
+    if game.target is None:
+        game.say("Оберіть ціль на карті: g", 2)
+        lcd.play("error")
+        return
+    d = game.system().dist(game.gal[game.target])
+    if d > game.fuel:
+        game.say("Замало палива: %.1f з %.1f св. р." % (game.fuel, d), 2.5)
+        lcd.play("error")
+        return
+    game.hyper_t = game.t + HYPER_COUNT
+    game.sfx.play("lock")
+
+
+def start_jump(game):
+    if game.mass_locked():
+        game.say("Масова блокада: поруч щось велике", 2)
+        lcd.play("error")
+        return
+    game.jump_t = 6.0
+    game.sfx.play("jump")
 
 
 def toggle_autodock(game):
@@ -1212,8 +1938,9 @@ def toggle_autodock(game):
 def pause(game):
     while True:
         items = ["Продовжити", "Комп'ютер стикування: " + ("увімк" if game.autodock else "вимк"),
-                 "Вигляд: " + STYLE_NAMES[game.style], "Тангаж: " + ("↑ угору" if game.invert else "↑ униз"),
-                 "Вийти в меню"]
+                 "Галактична карта", "Гіперстрибок" + (" - скасувати" if game.hyper_t is not None else ""),
+                 "Стрибковий двигун", "Вигляд: " + STYLE_NAMES[game.style],
+                 "Тангаж: " + ("↑ угору" if game.invert else "↑ униз"), "Вийти в меню"]
         r = ask(game, items, "ПАУЗА", back=0)
         if r in (0, None):
             return None
@@ -1221,37 +1948,75 @@ def pause(game):
             toggle_autodock(game)
             return None
         if r == 2:
+            chart(game)
+            return None
+        if r == 3:
+            start_hyper(game)
+            return None
+        if r == 4:
+            start_jump(game)
+            return None
+        if r == 5:
             game.toggle_style()
             game.draw(0.0)
-        elif r == 3:
+        elif r == 6:
             game.invert = not game.invert
             game.conf["invert"] = game.invert
             save_conf(game.conf)
-        elif r == 4:
+        elif r == 7:
             return "quit"
 
 
 def explode(game):
+    """Our ship blows apart; the camera leaves it, circles the wreck from all sides, then draws back while
+    what is left of the ship drifts off into the dark."""
     game.music.stop(200)
     game.sfx.play("explosion")
-    t0 = time.monotonic()
-    snap = frame.copy()
+    w = game.world
+    me = Ship("chumak", game.pos, game.R.copy(), game.speed * 0.3, "wreck")
+    blast = Blast(me, random.Random(int(game.t * 1000)), life=12.0, spread=0.35)   # the wreck stays together
+    w.blasts.append(blast)
+    up = game.R[:, 1].copy()
+    side, back = game.R[:, 0].copy(), -game.R[:, 2].copy()
     f = gfx.font("DejaVuSans-Bold.ttf", 16)
-    rnd = random.Random(3)
-    bits = [(rnd.uniform(-1, 1), rnd.uniform(-1, 1), rnd.uniform(40, 160)) for _ in range(60)]
-    while time.monotonic() - t0 < 3.0:
-        pygame.event.pump()
-        t = time.monotonic() - t0
-        frame.blit(snap, (0, 0))
+    fs = gfx.font("DejaVuSansCondensed.ttf", 11)
+    game.keys.clear()
+    game.autodock = False
+    game.speed = 0.0
+    game.roll = game.pitch = game.yaw = 0.0
+    t0 = time.monotonic()
+    last = t0
+    while True:
+        now = time.monotonic()
+        t, dt = now - t0, min(0.08, now - last)
+        last = now
+        skip = False
+        for ev in pygame.event.get():
+            if ev.type == pygame.KEYDOWN and t > 2.5:
+                skip = True
+        if t > 9.0 or skip:
+            break
+        w.update(dt)
+        w.update_ships(dt, game.pos)
+        game.t += dt
+        centre = blast.pos + blast.vel * blast.age
+        th = 0.6 + t * 0.75                                  # round the wreck...
+        d = 260 + 50 * t + max(0.0, t - 4.5) ** 2 * 200      # ...then away from it
+        cam = centre + (side * math.cos(th) + back * math.sin(th)) * d + up * d * (0.25 + 0.2 * math.sin(t * 0.6))
+        game.pos = cam
+        game.R = basis(centre - cam, up)
+        frame.fill((0, 0, 0))
+        game.draw_view(frame, dt, overlay=False)
         view = frame.subsurface((0, 0, W, VH))
-        if t < 0.25:
-            view.fill((255, 255, 255) if game.style == "wire" else (255, 220, 160))
-        for x, y, v in bits:
-            p = (CX + x * v * t, CY + y * v * t * 0.7)
-            c = gfx.WIRE if game.style == "wire" else gfx.mix((255, 230, 120), (120, 30, 10), t / 3)
-            view.fill(c, (int(p[0]), int(p[1]), 2, 2))
-        img = f.render("КОРАБЕЛЬ ЗНИЩЕНО", True, (255, 120, 90) if game.style != "wire" else gfx.WIRE)
-        view.blit(img, (W / 2 - img.get_width() / 2, VH / 2 - 10))
+        if t < 0.15:
+            view.fill((255, 255, 255) if game.style == "wire" else (255, 220, 160), special_flags=pygame.BLEND_ADD)
+        if t > 0.8:
+            img = gfx.fit(f.render("КОРАБЕЛЬ ЗНИЩЕНО", True, (255, 120, 90) if game.style != "wire" else gfx.WIRE))
+            view.blit(img, (W / 2 - img.get_width() / 2, 8))
+        if t > 2.5:
+            img = gfx.fit(fs.render("будь-яка клавіша", True, (150, 160, 190) if game.style != "wire" else gfx.WIRE_DIM))
+            view.blit(img, (W / 2 - img.get_width() / 2, VH - img.get_height() - 2))
+        game.dash[game.style].draw(frame, game.dash_state())
         show()
         clock.tick(30)
 
@@ -1259,17 +2024,19 @@ def explode(game):
 def main():
     game = Game()
     while True:
-        if title(game) == "quit":
+        r = title(game)
+        if r == "quit":
             return
+        game.new_game() if r == "new" else game.load()
+        game.dock()
         while True:
             if station_screen(game) == "quit":
+                game.save()
                 break
             r = flight(game)
-            if r == "quit":
+            if r in ("quit", "dead"):                  # what happened since the last docking is lost
                 break
-            if r == "dead":
-                game.world = World()
-                break
+            game.dock()
 
 
 if __name__ == "__main__":

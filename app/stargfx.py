@@ -28,11 +28,23 @@ WHITE = (255, 255, 255)
 WIRE, WIRE_DIM = (60, 255, 90), (24, 120, 44)   # the classic look: a green monochrome screen
 
 
+# the HAT's 128x128 shows the 320x320 frame at 0.4: its text is drawn twice as big (and laid out for it)
+UI = 2.0 if lcd.NATIVE_H < 200 else 1.0
+HAT = UI > 1
+
+
 def font(name, px):
     try:
-        return _FontCls(FD + name, max(6, int(px)))
+        return _FontCls(FD + name, max(6, int(px * UI)))
     except (FileNotFoundError, OSError):
-        return _FontCls(None, max(6, int(px)))
+        return _FontCls(None, max(6, int(px * UI)))
+
+
+def fit(img, maxw=W - 8):
+    """Text wider than maxw squeezed to it (the HAT's big letters)."""
+    if img.get_width() <= maxw:
+        return img
+    return pygame.transform.smoothscale(img, (int(maxw), img.get_height()))
 
 
 def add(a, b): return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
@@ -639,34 +651,76 @@ def fbm(u, v, seed, octaves=5, f0=4):
     return out / tot
 
 
-def planet_texture(kind, seed, tw=512, th=256):
+def planet_texture(kind, seed, tw=384, th=192):
     """An equirectangular colour map (th, tw, 3) and the atmosphere's colour."""
     vv, uu = np.mgrid[0:th, 0:tw].astype(np.float32)
     u, v = uu / tw, vv / th
-    if kind == "earth":
+    def ramp(h, stops):
+        """Colours along a height ramp: [(h, (r, g, b)), ...]."""
+        hs = [p for p, _ in stops]
+        return np.stack([np.interp(h, hs, [c[i] for _, c in stops]) for i in range(3)], -1).astype(np.float32)
+    if kind in ("earth", "ocean"):
         h = fbm(u, v, seed)
+        sea = 0.53 if kind == "earth" else 0.66
         ocean = np.array((20, 50, 120), np.float32)
-        land = np.where((h > 0.62)[..., None], np.array((150, 130, 95), np.float32), np.array((60, 100, 55), np.float32))
-        c = np.where((h > 0.53)[..., None], land, ocean * (0.7 + 0.6 * h[..., None]))
+        land = np.where((h > sea + 0.09)[..., None], np.array((150, 130, 95), np.float32), np.array((60, 100, 55), np.float32))
+        c = np.where((h > sea)[..., None], land, ocean * (0.7 + 0.6 * h[..., None]))
         cl = np.clip((fbm(u + v * 0.3, v, seed + 29, 4, 6) - 0.55) * 4, 0, 1)
         c = c * (1 - cl[..., None]) + np.array((230, 232, 240), np.float32) * cl[..., None]
         ice = np.clip((np.abs(v - 0.5) - 0.42) * 30, 0, 1)
         c = c * (1 - ice[..., None]) + 235 * ice[..., None]
         return c, (60, 140, 255)
+    if kind == "desert":
+        h = fbm(u, v, seed, 6, 4)
+        dunes = 0.5 + 0.5 * np.sin((v * 90 + fbm(u, v, seed + 5, 3, 6) * 20))
+        c = ramp(h + 0.05 * dunes, [(0.2, (120, 70, 40)), (0.45, (200, 140, 80)), (0.6, (225, 180, 120)),
+                                    (0.8, (170, 110, 70))])
+        return c, (230, 170, 110)
+    if kind == "ice":
+        h = fbm(u, v, seed, 6, 4)
+        c = ramp(h, [(0.25, (90, 120, 160)), (0.45, (180, 205, 230)), (0.6, (235, 242, 250)), (0.8, (200, 215, 235))])
+        cracks = np.abs(fbm(u, v, seed + 3, 4, 8) - 0.5) < 0.012
+        c = np.where(cracks[..., None], np.array((70, 110, 150), np.float32), c)
+        return c, (170, 210, 255)
+    if kind == "lava":
+        h = fbm(u, v, seed, 6, 4)
+        c = ramp(h, [(0.2, (30, 20, 20)), (0.5, (60, 40, 35)), (0.75, (90, 70, 60))])
+        flow = np.abs(fbm(u, v, seed + 7, 5, 5) - 0.5) < 0.03
+        c = np.where(flow[..., None], np.array((255, 120, 30), np.float32), c)
+        return c, (255, 110, 50)
     h = fbm(u, v, seed + 10, 6, 5)
     c = np.repeat((70 + 120 * h)[..., None], 3, -1) * np.array((1.0, 0.98, 0.95), np.float32)
     rnd = np.random.default_rng(seed)
-    for _ in range(40):
+    for _ in range(40):                     # craters: each worked out on its own patch only
         cu, cv, cr = rnd.random(), rnd.uniform(0.15, 0.85), rnd.uniform(0.008, 0.04)
-        du = (u - cu + 0.5) % 1 - 0.5
-        dd = np.sqrt((du * np.sin(v * np.pi)) ** 2 + (v - cv) ** 2) / cr
-        c = c * np.where(dd < 1, 0.8, 1)[..., None] + np.where((dd > 0.9) & (dd < 1.15), 25, 0)[..., None]
+        j0, j1 = max(0, int((cv - cr * 1.2) * th)), min(th, int((cv + cr * 1.2) * th) + 2)
+        half = cr * 1.2 / max(0.2, math.sin(cv * math.pi))
+        cols = np.arange(int((cu - half) * tw), int((cu + half) * tw) + 2) % tw
+        rows = np.arange(j0, j1)
+        uu, vv = u[np.ix_(rows, cols)], v[np.ix_(rows, cols)]
+        du = (uu - cu + 0.5) % 1 - 0.5
+        dd = np.sqrt((du * np.sin(vv * np.pi)) ** 2 + (vv - cv) ** 2) / cr
+        patch = c[np.ix_(rows, cols)]
+        c[np.ix_(rows, cols)] = patch * np.where(dd < 1, 0.8, 1)[..., None] + \
+            np.where((dd > 0.9) & (dd < 1.15), 25, 0)[..., None]
     return c, (120, 120, 130)
 
 
 def sphere(tex, air, size, L, scale=1):
     """A lit ball, the texture wrapped on it (screen-fixed), light L in screen axes (x right, y up, z to us):
     an RGBA surface size x size (each pixel `scale` screen pixels)."""
+    return to_surface(*sphere_arrays(tex, air, size, L, scale))
+
+
+def to_surface(img, alpha):
+    s = pygame.Surface(img.shape[1::-1], pygame.SRCALPHA)
+    pygame.surfarray.pixels3d(s)[:] = img.swapaxes(0, 1)
+    pygame.surfarray.pixels_alpha(s)[:] = alpha.swapaxes(0, 1)
+    return s
+
+
+def sphere_arrays(tex, air, size, L, scale=1):
+    """The lit ball as numpy arrays (colour, alpha) - no pygame: safe in a worker thread."""
     r = size / 2 - 3
     yy, xx = np.mgrid[0:size, 0:size].astype(np.float32) - size / 2 + 0.5
     d2 = xx * xx + yy * yy
@@ -690,10 +744,7 @@ def sphere(tex, air, size, L, scale=1):
     alpha = np.where(out, hl * 170, alpha)
     edge = inside & (dist > r - 1)
     alpha = np.where(edge, 255 * np.clip(r - dist + 1, 0, 1), alpha)
-    s = pygame.Surface((size, size), pygame.SRCALPHA)
-    pygame.surfarray.pixels3d(s)[:] = np.clip(img, 0, 255).astype(np.uint8).swapaxes(0, 1)
-    pygame.surfarray.pixels_alpha(s)[:] = alpha.astype(np.uint8).swapaxes(0, 1)
-    return s
+    return np.clip(img, 0, 255).astype(np.uint8), alpha.astype(np.uint8)
 
 
 PKEY = (0, 0, 1)                       # space behind a planet sprite: almost black, keyed out
@@ -707,7 +758,8 @@ class Planet:
 
     def __init__(self, kind="earth", seed=11):
         self.tex, self.air = planet_texture(kind, seed)
-        self.masters = [None] * self.PHASES          # made when first needed (or by prewarm on the title)
+        self.masters = [None] * self.PHASES          # pictures, made from the arrays when first drawn
+        self.arrays = [None] * self.PHASES           # the lit masters as numpy (prewarm, maybe in a thread)
         self.cache = {}                              # (phase, angle, size) -> a keyed picture, oldest first
         self.scaled = {}                             # (phase, size) -> the master scaled
         self.pixels = 0
@@ -723,15 +775,21 @@ class Planet:
 
     def master(self, i):
         if self.masters[i] is None:
-            th = math.pi * i / (self.PHASES - 1)
-            self.masters[i] = sphere(self.tex, self.air, self.MASTER, (math.sin(th), 0, math.cos(th)))
+            if self.arrays[i] is None:
+                self.prewarm_one(i)
+            self.masters[i] = to_surface(*self.arrays[i])
+            self.arrays[i] = None
         return self.masters[i]
 
+    def prewarm_one(self, i):
+        th = math.pi * i / (self.PHASES - 1)
+        self.arrays[i] = sphere_arrays(self.tex, self.air, self.MASTER, (math.sin(th), 0, math.cos(th)))
+
     def prewarm(self):
-        """Make one missing master; False while some are left."""
+        """Light one missing master (numpy only: it may run in a worker thread); False while some are left."""
         for i in range(self.PHASES):
-            if self.masters[i] is None:
-                self.master(i)
+            if self.masters[i] is None and self.arrays[i] is None:
+                self.prewarm_one(i)
                 return False
         return True
 
@@ -930,12 +988,14 @@ class Dashboard:
         cx, cy, rx, ry = SC_X, SC_Y - VH, SC_RX, SC_RY
         for i, lab in enumerate(("FS", "AS", "FV", "CT", "LT", "AL")):
             y = y0 + 4 + i * BH
-            s.blit(self.f.render(lab, True, self.lab), (3, y))
+            if not HAT:
+                s.blit(self.f.render(lab, True, self.lab), (3, y))
             line(s, (30, 70, 40) if m else (0, 120, 0), (20, y + BH - 2), (L_COL - 3, y + BH - 2))
         for i, lab in enumerate(("SP", "RL", "DC", "1", "2", "3", "4")):
             y = y0 + 3 + i * BH
-            img = self.f.render(lab, True, self.lab if i < 3 else self.mag)
-            s.blit(img, (W - 3 - img.get_width(), y))
+            if not HAT:
+                img = self.f.render(lab, True, self.lab if i < 3 else self.mag)
+                s.blit(img, (W - 3 - img.get_width(), y))
             line(s, (30, 70, 40) if m else (0, 120, 0), (R_COL + 3, y + BH - 2), (W - 20, y + BH - 2))
         if m:
             e = pygame.Surface((2 * rx + 20, 2 * ry + 20))
@@ -1049,7 +1109,7 @@ class Dashboard:
                 rect(s, WIRE, (p[0] - 1, p[1] - 1, 3, 3), 0 if front else 1)
         if st.get("safe"):
             img = font("DejaVuSansMono-Bold.ttf", 13).render("S", True, self.mark)
-            s.blit(img, (R_COL - 16, H - 18))
+            s.blit(img, (R_COL - 4 - img.get_width(), H - 2 - img.get_height()))
 
 
 def stardust_init(n=36, seed=5):
