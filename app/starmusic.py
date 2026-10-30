@@ -12,7 +12,7 @@ import lcd
 
 RATE = lcd.RATE
 CACHE = os.path.expanduser("~/.cache/lcdtoy")
-BEAT = 0.34                           # a quarter at ~176 a minute: a lively Viennese waltz
+BEAT = 0.46                           # a quarter at ~130 a minute: an unhurried waltz
 NOTES = {"C": 0, "C#": 1, "D": 2, "D#": 3, "E": 4, "F": 5, "F#": 6, "G": 7, "G#": 8, "A": 9, "A#": 10, "B": 11}
 
 # the melody, note:beats (r - a rest); 3 beats a bar
@@ -42,9 +42,10 @@ def voice(f, secs, kind):
     if kind == "lead":                 # a soft flute-and-strings: a little vibrato that comes in late
         vib = 1 + 0.004 * np.sin(2 * np.pi * 5.2 * t) * np.clip((t - 0.25) * 3, 0, 1)
         ph = 2 * np.pi * f * np.cumsum(vib) / RATE
-        y = np.sin(ph) + 0.28 * np.sin(2 * ph) + 0.1 * np.sin(3 * ph)
-        env = np.minimum(1, t / 0.02) * (0.65 + 0.35 * np.exp(-t * 4))
-        rel = min(n, int(0.06 * RATE))
+        k = min(1.0, 400.0 / f)        # the higher the note, the fewer overtones: no squeak
+        y = np.sin(ph) + 0.18 * k * np.sin(2 * ph) + 0.05 * k * np.sin(3 * ph)
+        env = np.minimum(1, t / 0.045) * (0.7 + 0.3 * np.exp(-t * 3))
+        rel = min(n, int(0.09 * RATE))
         env[-rel:] *= np.linspace(1, 0, rel)
     elif kind == "bass":               # a plucked low note
         ph = 2 * np.pi * f * t
@@ -52,14 +53,17 @@ def voice(f, secs, kind):
         env = np.minimum(1, t / 0.008) * np.exp(-t * 5)
     else:                              # the "pah": short and light
         ph = 2 * np.pi * f * t
-        y = np.sin(ph) + 0.2 * np.sin(3 * ph)
-        env = np.minimum(1, t / 0.006) * np.exp(-t * 11)
+        y = np.sin(ph) + 0.08 * np.sin(2 * ph)
+        env = np.minimum(1, t / 0.01) * np.exp(-t * 9)
     return y * env
 
 
 def danube():
     """The whole theme as one buffer (it loops), about 36 seconds."""
     notes = [(a, float(b)) for a, b in (w.split(":") for w in THEME.split())]
+    # the answers up in the fifth and sixth octaves come down one: on a small speaker they only squeak
+    notes = [(n[:-1] + str(int(n[-1]) - 1) if n != "r" and int(n[-1]) >= 5 and n[:-1] not in ("C", "C#") and
+              not (n[-1] == "5" and n[:-1] in ("D", "E")) else n, b) for n, b in notes]
     total = sum(b for _, b in notes)
     out = np.zeros(int((total * BEAT + 1) * RATE), np.float32)
     pos = 0.0
@@ -81,6 +85,10 @@ def danube():
                 z = voice(freq(nm), BEAT * 0.6, "chord") * 0.1
                 out[j:j + len(z)] += z[:max(0, len(out) - j)]
     out = out[:int(total * BEAT * RATE)]
+    f = np.fft.rfft(out)                               # a gentle roll-off above ~3 kHz
+    hz = np.fft.rfftfreq(len(out), 1.0 / RATE)
+    f *= 1 / (1 + (hz / 3000.0) ** 4)
+    out = np.fft.irfft(f, len(out)).astype(np.float32)
     out *= 0.85 / max(1e-6, np.abs(out).max()) * lcd.VOLUME
     return out
 
