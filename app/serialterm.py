@@ -367,6 +367,7 @@ class Job:
 # ---------------------------------------------------------------- screen
 
 screen = lcd.init()
+lcd.pad_keys = False      # a gamepad's arrows must not jog the machine (a pad left on a chair...)
 clock = pygame.time.Clock()
 
 

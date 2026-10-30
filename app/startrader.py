@@ -61,7 +61,7 @@ VIEWS = ["Передній огляд", "Задній огляд", "Лівий �
 # each view's camera axes (right, up, forward as columns) in the ship's frame
 VIEW_ROT = [np.eye(3), np.array([[-1.0, 0, 0], [0, 1, 0], [0, 0, -1]]),
             np.array([[0, 0, -1.0], [0, 1, 0], [1, 0, 0]]), np.array([[0, 0, 1.0], [0, 1, 0], [-1, 0, 0]])]
-HP = {"groza": 30, "osa": 3, "sokil": 5, "chumak": 4, "mazha": 6, "shulika": 6, "vulyk": 12, "truten": 1, "rocket": 1,
+HP = {"groza": 30, "vovk": 12, "yastrub": 8, "osa": 3, "sokil": 5, "chumak": 4, "mazha": 6, "shulika": 6, "vulyk": 12, "truten": 1, "rocket": 1,
       "kapsula": 1, "kontejner": 1, "asteroid": 3}                 # laser hits a ship takes
 LASER_RANGE = 7000.0
 LASER_EVERY = 0.16                    # seconds between pulses
@@ -84,8 +84,8 @@ EQUIPMENT = [
 LASERS = {"pulse": (LASER_EVERY, 1, 0.065), "beam": (0.1, 1, 0.045), "military": (0.09, 2, 0.035)}
 RANKS = [(0, "Нешкідливий"), (5, "Майже нешкідливий"), (12, "Слабкий"), (25, "Середній"), (50, "Вище середнього"),
          (100, "Вправний"), (250, "Небезпечний"), (600, "Смертоносний"), (1500, "ЕЛІТА")]
-BOUNTY = {"shulika": (30, 70), "osa": (12, 30), "truten": (5, 10), "vulyk": (200, 400)}
-TURN_RATE = {"groza": 2.1, "osa": 1.6, "shulika": 1.25, "sokil": 1.5, "truten": 2.0, "vulyk": 0.6}
+BOUNTY = {"vovk": (120, 220), "shulika": (30, 70), "osa": (12, 30), "truten": (5, 10), "vulyk": (200, 400)}
+TURN_RATE = {"groza": 2.1, "vovk": 1.0, "yastrub": 1.7, "osa": 1.6, "shulika": 1.25, "sokil": 1.5, "truten": 2.0, "vulyk": 0.6}
 CARGO_MAX = 20                        # tonnes (every unit of any good takes a place); +15 with the big bay
 JUMP_SPEED = 26000.0                  # the in-system jump drive: world units a second
 HYPER_COUNT = 10                      # seconds of the hyperspace countdown
@@ -217,6 +217,8 @@ class Ship:
         self.break_dir = None
         self.fire_t = 1.5
         self.bounty = 0
+        self.leader = None                    # a wingman keeps station on its leader until the fight begins
+        self.scanned = False
         self.mission = None
         self.missile = False                  # a pirate's one missile
         self.by_player = False                # the player's laser or missile hit it last
@@ -315,6 +317,7 @@ class World:
         self.events = []                  # ("boom", ship) - for the game's sounds and messages
         self.spawn_t = 2.0
         self.pirate_t = 8.0
+        self.hunter_t = 20.0
         if deep:
             self.spawn_t = self.pirate_t = 1e9
             self.deep_pos = self.arrive_dir * 5e7
@@ -398,21 +401,50 @@ class World:
         return 0.25 if self.system is None else (7 - self.system.gov) / 7.0
 
     def pirates(self, pl):
-        """A pack turns up some way off - more and more often in lawless systems."""
+        """Pirates turn up some way off - more and more often in lawless systems: a few on their own, or (the
+        more dangerous the system, the likelier) a pack led by a Vovk with its wingmen in formation."""
         r = self.rnd
-        n = 1 + (r.random() < self.danger()) + (r.random() < self.danger() * 0.5)
         side = unit(np.array([r.gauss(0, 1) for _ in range(3)]))
         centre = pl.pos + side * r.uniform(8000, 11000)
-        for k in range(n):
-            kind = "shulika" if r.random() < 0.6 else "osa"
-            p = centre + unit(np.array([r.gauss(0, 1) for _ in range(3)])) * 600
-            s = Ship(kind, p, basis(pl.pos - p, np.array((0, 1.0, 0))), 1000.0, "pirate")
+        R0 = basis(pl.pos - centre, np.array((0, 1.0, 0)))
+
+        def make(kind, p, leader=None):
+            s = Ship(kind, p, R0.copy(), 1000.0, "pirate")
             s.hostile = True
             s.bounty = r.randint(*BOUNTY[kind])
             s.fire_t = r.uniform(1.0, 3.0)
-            s.missile = r.random() < 0.45
+            s.missile = r.random() < (0.9 if kind == "vovk" else 0.45)
+            s.leader = leader
             self.ships.append(s)
+            return s
+        if r.random() < 0.15 + 0.45 * self.danger():
+            boss = make("vovk", centre)
+            n = 2 + (r.random() < self.danger())
+            for k in range(n):                         # a V behind the leader
+                off = R0 @ np.array(((k % 2) * 2 - 1) * 260.0 * (1 + k // 2) * np.array((1, 0, 0))) - \
+                    R0[:, 2] * 220.0 * (1 + k // 2)
+                w = make("shulika" if r.random() < 0.5 else "osa", centre + off, boss)
+                w.slot = R0.T @ off
+            self.events.append(("pack", n + 1))
+            return
+        n = 1 + (r.random() < self.danger()) + (r.random() < self.danger() * 0.5)
+        for k in range(n):
+            kind = "shulika" if r.random() < 0.6 else "osa"
+            make(kind, centre + unit(np.array([r.gauss(0, 1) for _ in range(3)])) * 600)
         self.events.append(("pirates", n))
+
+    def hunters(self, pl):
+        """Bounty hunters after a wanted commander: a pair of Yastrubs from out of nowhere."""
+        r = self.rnd
+        side = unit(np.array([r.gauss(0, 1) for _ in range(3)]))
+        for k in range(2):
+            p = pl.pos + side * r.uniform(7000, 9000) + unit(np.array([r.gauss(0, 1) for _ in range(3)])) * 500
+            s = Ship("yastrub", p, basis(pl.pos - p, np.array((0, 1.0, 0))), 1200.0, "hunter")
+            s.hostile = True
+            s.fire_t = r.uniform(1.0, 2.5)
+            s.missile = r.random() < 0.5
+            self.ships.append(s)
+        self.events.append(("hunters", 2))
 
     def run_away(self, s, dt, pl, top):
         """Flee: nose away from the player (a little off his line), all the speed it has; far enough - gone."""
@@ -447,10 +479,18 @@ class World:
             if s.break_t <= 0 or dist > 6000:
                 s.mode = "attack"
             return
-        lead = pl.pos + pl.R[:, 2] * pl.speed * min(1.5, dist / 2200.0)
+        ld = s.leader
+        if ld is not None and not ld.gone and ld.mode != "flee" and dist > 4500 and length(ld.pos - pl.pos) > 4500:
+            spot = ld.pos + ld.R @ s.slot                      # in formation: its place in the leader's V
+            go = spot + ld.R[:, 2] * 400 - s.pos
+            s.R = turn_to(s.R, unit(go), rate, dt)
+            s.speed += clamp(ld.speed + clamp(length(spot - s.pos) - 50, -200, 300) - s.speed, -500 * dt, 500 * dt)
+            return
+        # aim ahead of us only to close in; near - straight at us (the lasers hit at once)
+        lead = pl.pos + pl.R[:, 2] * pl.speed * (min(1.5, dist / 2200.0) if dist > 3500 else 0.0)
         want = unit(lead - s.pos)
         s.R = turn_to(s.R, want, rate, dt)
-        top = 1500.0 if s.kind == "groza" else 1300.0
+        top = {"groza": 1500.0, "yastrub": 1550.0, "vovk": 1150.0}.get(s.kind, 1300.0)
         s.speed += clamp((top if dist > 2500 else top * 0.65) - s.speed, -500 * dt, 400 * dt)
         head_on = float(np.dot(s.R[:, 2], pl.R[:, 2])) < -0.6           # coming at each other
         if dist < 700 or (head_on and dist < 1400):
@@ -460,12 +500,13 @@ class World:
             s.break_dir = unit(unit(side) - want * 0.4)
             return
         s.fire_t -= dt
-        if s.kind in ("shulika", "groza") and s.missile and 2500 < dist < 7000 and self.rnd.random() < 0.15 * dt:
+        if s.kind in ("shulika", "groza", "vovk", "yastrub") and s.missile and 2500 < dist < 7000 and \
+                self.rnd.random() < 0.15 * dt:
             s.missile = False                                          # one missile a pirate, sometimes
             m = Ship("rocket", s.pos + s.R[:, 2] * 120, s.R.copy(), s.speed + 400, "emissile")
             self.ships.append(m)
             self.events.append(("incoming", m))
-        if s.fire_t <= 0 and dist < 5500 and float(np.dot(s.R[:, 2], d)) > dist * 0.996:
+        if s.fire_t <= 0 and dist < 5500 and float(np.dot(s.R[:, 2], d)) > dist * (0.99 if dist < 2000 else 0.996):
             s.fire_t = self.rnd.uniform(0.5, 1.1)
             hit = self.rnd.random() < 0.8 * (1 - dist / 6500.0)
             self.events.append(("shot", s, hit))
@@ -479,6 +520,15 @@ class World:
                 packs = sum(1 for s in self.ships if s.role == "pirate")
                 if far and packs == 0 and self.rnd.random() < 0.15 + 0.7 * self.danger():
                     self.pirates(pl)
+            self.hunter_t -= dt
+            if self.hunter_t <= 0:
+                self.hunter_t = self.rnd.uniform(45, 90)
+                if pl.legal >= 50 and not any(s.role == "hunter" for s in self.ships) and not self.deep:
+                    self.hunters(pl)
+            for s in self.ships:                               # the police look us over as they pass
+                if s.kind == "sokil" and not s.hostile and not s.scanned and length(s.pos - player_pos) < 2500:
+                    s.scanned = True
+                    self.events.append(("scan", s))
         self.spawn_t -= dt
         traffic = sum(1 for s in self.ships if s.role in ("depart", "arrive"))
         if self.spawn_t <= 0:
@@ -494,7 +544,7 @@ class World:
         for s in self.ships:
             s.age += dt
             if s.hostile and pl is not None and not pl.dead:
-                if s.role == "pirate" and length(s.pos - self.st_pos) < SAFE_ZONE * 0.7:
+                if s.role == "pirate" and length(s.pos - self.st_pos) < SAFE_ZONE * 0.7:     # hunters come in
                     s.hostile = False                                  # pirates keep out of the police's zone
                     s.role = "depart"
                     s.wp = s.pos + unit(s.pos - self.st_pos) * 60000
@@ -671,6 +721,7 @@ class Game:
         self.lock = None
         self.hyper_t = None
         self.jump_t = 0.0
+        self.thrust = 0.0
         self.dock_music = False
         self.enemy_beams = []
         self.prisoners = {}
@@ -938,9 +989,13 @@ class Game:
         k = self.keys
         roll_t = ((pygame.K_RIGHT in k) - (pygame.K_LEFT in k)) * ROLL_MAX
         pitch_t = ((pygame.K_DOWN in k) - (pygame.K_UP in k)) * PITCH_MAX
+        pad = lcd.pad if getattr(lcd, "pad", None) and lcd.pad.get("connected") else None
+        if pad:                                        # a gamepad's left stick, as far as it is pushed
+            roll_t = clamp(roll_t + pad["lx"] * ROLL_MAX, -ROLL_MAX, ROLL_MAX)
+            pitch_t = clamp(pitch_t + pad["ly"] * PITCH_MAX, -PITCH_MAX, PITCH_MAX)
         if self.invert:
             pitch_t = -pitch_t
-        if roll_t or pitch_t:
+        if abs(roll_t) > 0.3 * ROLL_MAX or abs(pitch_t) > 0.3 * PITCH_MAX:      # a real move, not a stick's drift
             if self.autodock:
                 self.autodock = False
                 self.say("Комп'ютер стикування вимкнено")
@@ -953,6 +1008,8 @@ class Game:
             self.speed = min(MAX_SPEED, self.speed + ACCEL * dt)
         if "slow" in k:
             self.speed = max(0.0, self.speed - ACCEL * dt)
+        if pad and (pad["r2"] or pad["l2"]):           # the triggers: throttle up and down, by how far pressed
+            self.speed = clamp(self.speed + (pad["r2"] - pad["l2"]) * ACCEL * dt, 0.0, MAX_SPEED)
 
     def autopilot(self, dt):
         """Out in front of the slot first (round the station if we are behind it), then in along its axis,
@@ -1176,6 +1233,20 @@ class Game:
                 self.say("Влучила ракета!", 2)
                 if self.energy <= 0:
                     self.dead = True
+            elif kind == "pack":
+                self.say("УВАГА: зграя піратів з ватажком! (%d)" % ship, 3)
+                lcd.play("error")
+            elif kind == "hunters":
+                self.say("Мисливці за головами! Ви в розшуку", 3)
+                lcd.play("error")
+            elif kind == "scan":
+                bad = sum(n for i, n in enumerate(self.cargo) if n and not galaxy.GOODS[i][6])
+                strict = self.world.system is not None and self.world.system.gov >= 5
+                if bad and strict:
+                    self.say("Поліція просканувала: контрабанда!", 2.5)
+                    self.crime(12)
+                else:
+                    self.say("Поліція просканувала корабель", 1.5)
             elif kind == "pirates":
                 self.say("УВАГА: пірати! (%d)" % ship, 3)
                 lcd.play("error")
@@ -1212,7 +1283,7 @@ class Game:
             return
         d = s.pos - self.pos
         front = float(np.dot(d, self.R[:, 2])) > 0
-        dmg = {"osa": 0.1, "truten": 0.08, "vulyk": 0.25, "groza": 0.22}.get(s.kind, 0.16)
+        dmg = {"osa": 0.1, "truten": 0.08, "vulyk": 0.25, "groza": 0.22, "vovk": 0.2, "yastrub": 0.14}.get(s.kind, 0.16)
         sh = "fs" if front else "as_"
         v = getattr(self, sh) - dmg
         setattr(self, sh, max(0.0, v))
@@ -2671,6 +2742,15 @@ def _flight(game):
                 return "quit"
             hat = getattr(ev, "hat", False)
             key = ev.key if ev.type in (pygame.KEYDOWN, pygame.KEYUP) else None
+            pb = getattr(ev, "pad", None)
+            if pb == "stick":                          # the left stick flies the ship itself (analogue)
+                continue
+            if pb in PAD_ACTIONS:                      # a gamepad button with a flight job of its own
+                if ev.type == pygame.KEYDOWN:
+                    PAD_ACTIONS[pb](game)
+                    if pb == "select":
+                        last = time.monotonic()
+                continue
             if key in (pygame.K_SPACE, pygame.K_EQUALS) or (hat and key == pygame.K_1):
                 key = "fast"
             elif key in (pygame.K_SLASH, pygame.K_MINUS) or (hat and key == pygame.K_2):
@@ -2720,8 +2800,12 @@ def _flight(game):
                     game.keys.add(key)
             elif ev.type == pygame.KEYUP:
                 game.keys.discard(key)
+        v0 = game.speed
         r = game.update(dt)
-        game.engine.set(1.0 if game.jump_t > 0 else game.speed / MAX_SPEED, on=r is None)
+        # the hum only under thrust: how hard the speed changes, quick to come, slower to fade
+        push = min(1.0, abs(game.speed - v0) / max(1e-3, dt) / ACCEL) if r is None else 0.0
+        game.thrust += (push - game.thrust) * min(1.0, dt * (12.0 if push > game.thrust else 4.5))
+        game.engine.set(game.speed / MAX_SPEED, on=r is None and game.jump_t <= 0, thrust=game.thrust)
         if r == "hyper":
             hyperspace(game)
             last = time.monotonic()
@@ -2770,6 +2854,22 @@ def rescued(game):
             y += img.get_height() + 6
         show()
         clock.tick(10)
+
+
+def _pad_view(game):
+    game.set_view(game.view + 1)
+
+
+def _pad_chart(game):
+    game.keys.clear()
+    game.engine.stop()
+    chart(game)
+
+
+# gamepad buttons in flight (cross - the laser, as Enter; options - the pause, as Esc; the d-pad - the arrows)
+PAD_ACTIONS = {"circle": lambda g: g.fire_missile(), "square": lambda g: g.ecm(), "triangle": _pad_view,
+               "l1": lambda g: start_jump(g), "r1": lambda g: start_hyper(g), "select": _pad_chart,
+               "thumbl": lambda g: toggle_autodock(g)}
 
 
 def jump_dist(game):

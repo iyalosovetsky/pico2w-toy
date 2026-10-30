@@ -469,8 +469,9 @@ class Sfx:
 
 
 class Engine:
-    """The drive's hum on two channels of its own: a loop a speed step, a quick crossfade between steps,
-    louder the faster we go."""
+    """The drive's hum on two channels of its own: heard only while it pushes (speeding up or slowing down -
+    in space a steady speed is felt no more than on Earth), as loud as the thrust, its pitch by the speed;
+    a loop a speed step, a quick crossfade between steps."""
 
     def __init__(self, sfx):
         self.sfx = sfx
@@ -478,9 +479,11 @@ class Engine:
         self.which = 0
         self.chans = None
 
-    def set(self, level, on=True):
+    def set(self, level, on=True, thrust=1.0):
         if not lcd.sound_enabled():
             return
+        if on and thrust < 0.04:                      # coasting: quiet
+            on = False
         if self.chans is None:
             self.chans = [pygame.mixer.Channel(6), pygame.mixer.Channel(7)]
         if not on:
@@ -491,7 +494,7 @@ class Engine:
             return
         level = max(0.0, min(1.0, level))
         k = int(round(level * (ENGINE_STEPS - 1)))
-        vol = 0.32 + 0.55 * level
+        vol = min(1.0, 0.3 + 0.7 * thrust)
         if k != self.cur:
             snd = self.sfx.get("engine%d" % k)
             old = self.chans[self.which]

@@ -23,6 +23,7 @@ lcd.Surface objects report their size in logical pixels.
 While an app runs it grabs the buttons and keyboards (EVIOCGRAB), so key
 presses don't also land in a text console.
 """
+import array
 import fcntl
 import glob
 import os
@@ -400,8 +401,97 @@ def _is_keyboard(path):
     return all(bits >> code & 1 for code in (28, 30, 44))  # ENTER, A, Z
 
 
+# ---------------------------------------------------------------- gamepads (DualSense, DualShock, Xbox-style)
+
+BTN_GAMEPAD = 0x130
+ABS_RX, ABS_RY, ABS_Z, ABS_RZ, ABS_HAT0X, ABS_HAT0Y = 3, 4, 2, 5, 16, 17
+# a pad button -> (its name for the apps that know pads, the key every app understands)
+PAD_KEYS = {0x130: ("cross", pygame.K_RETURN), 0x131: ("circle", pygame.K_ESCAPE), 0x133: ("triangle", pygame.K_TAB),
+            0x134: ("square", pygame.K_SPACE), 0x136: ("l1", pygame.K_PAGEUP), 0x137: ("r1", pygame.K_PAGEDOWN),
+            0x138: ("l2", None), 0x139: ("r2", None), 0x13a: ("select", None), 0x13b: ("start", pygame.K_ESCAPE),
+            0x13c: ("mode", None), 0x13d: ("thumbl", None), 0x13e: ("thumbr", None)}
+# the sticks and triggers, -1..1 (triggers 0..1), for the apps that want them analogue (a flight game)
+pad = {"lx": 0.0, "ly": 0.0, "rx": 0.0, "ry": 0.0, "l2": 0.0, "r2": 0.0, "connected": False}
+# an app where an arrow key moves something real (SERIAL jogs a CNC) turns the pad's keys off
+pad_keys = True
+ABS_GAS, ABS_BRAKE = 9, 10
+# which axis is what: Sony pads put the right stick on RX/RY and the triggers on Z/RZ; Xbox-style
+# (DirectInput) ones the right stick on Z/RZ and the triggers on GAS/BRAKE
+LAYOUT_SONY = {0: "lx", 1: "ly", ABS_RX: "rx", ABS_RY: "ry", ABS_Z: "l2", ABS_RZ: "r2"}
+LAYOUT_XBOX = {0: "lx", 1: "ly", ABS_Z: "rx", ABS_RZ: "ry", ABS_BRAKE: "l2", ABS_GAS: "r2"}
+_pad_layout = {}
+_pad_fds = set()
+_pad_range = {}                       # fd -> {axis: (min, max)}
+_pad_stick = {}                       # the left stick's emulated arrows: key -> held
+DEAD = 0.1
+
+
+def _capbits(path, kind):
+    try:
+        with open(path + "/device/capabilities/" + kind) as f:
+            words = f.read().split()
+    except OSError:
+        return 0
+    bits = 0
+    for w in words:
+        bits = (bits << (struct.calcsize("l") * 8)) | int(w, 16)
+    return bits
+
+
+def _is_gamepad(path):
+    """A gamepad: the south button and an X axis (a DualSense's touchpad and motion sensors are not)."""
+    return bool(_capbits(path, "key") >> BTN_GAMEPAD & 1) and bool(_capbits(path, "abs") & 1)
+
+
+def _abs_range(fd, axis):
+    buf = array.array("i", [0] * 6)
+    try:
+        fcntl.ioctl(fd, (2 << 30) | (24 << 16) | (ord("E") << 8) | (0x40 + axis), buf)
+        return buf[1], buf[2]
+    except OSError:
+        return 0, 255
+
+
+def _pad_axis(fd, code, value):
+    """An axis moved: the analogue state, the d-pad and the left stick as arrow keys for every app."""
+    lo, hi = _pad_range.get(fd, {}).get(code, (0, 255))
+    if code in (ABS_HAT0X, ABS_HAT0Y):
+        keys = (pygame.K_LEFT, pygame.K_RIGHT) if code == ABS_HAT0X else (pygame.K_UP, pygame.K_DOWN)
+        for k, on in ((keys[0], value < 0), (keys[1], value > 0)):
+            if _pad_stick.get(("hat", k), False) != on:
+                _pad_stick[("hat", k)] = on
+                _post_pad(k, on, "dpad")
+        return
+    name = _pad_layout.get(fd, LAYOUT_SONY).get(code)
+    if name is None:
+        return
+    if name in ("l2", "r2"):
+        pad[name] = max(0.0, min(1.0, (value - lo) / float(max(1, hi - lo))))
+        return
+    v = (value - (lo + hi) / 2.0) / max(1.0, (hi - lo) / 2.0)
+    v = 0.0 if abs(v) < DEAD else max(-1.0, min(1.0, (v - DEAD * (1 if v > 0 else -1)) / (1 - DEAD)))
+    pad[name] = v
+    if name in ("lx", "ly"):                           # pushed well over: an arrow; back near the middle: let go
+        keys = (pygame.K_LEFT, pygame.K_RIGHT) if name == "lx" else (pygame.K_UP, pygame.K_DOWN)
+        for k, sign in ((keys[0], -1), (keys[1], 1)):
+            held = _pad_stick.get(("stick", k), False)
+            if not held and v * sign > 0.6:
+                _pad_stick[("stick", k)] = True
+                _post_pad(k, True, "stick")
+            elif held and v * sign < 0.35:
+                _pad_stick[("stick", k)] = False
+                _post_pad(k, False, "stick")
+
+
+def _post_pad(key, down, name):
+    if not pad_keys:
+        return
+    pygame.event.post(pygame.event.Event(pygame.KEYDOWN if down else pygame.KEYUP, key=key, mod=0, unicode="",
+                                         scancode=0, hat=False, pad=name))
+
+
 def _scan_inputs():
-    """Open HAT buttons and keyboards that are not open yet."""
+    """Open HAT buttons, keyboards and gamepads that are not open yet."""
     global _last_scan
     _last_scan = time.monotonic()
     known = set(_input_paths.values())
@@ -412,12 +502,18 @@ def _scan_inputs():
         try:
             with open(path + "/device/name") as f:
                 name = f.read().strip()
-            if name.startswith("button@") or _is_keyboard(path):  # HAT buttons or a keyboard
+            gamepad = _is_gamepad(path)
+            if name.startswith("button@") or _is_keyboard(path) or gamepad:  # HAT buttons, a keyboard, a pad
                 fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
                 _inputs.append(fd)
                 _input_paths[fd] = dev
                 if name.startswith("button@"):
                     _hat_fds.add(fd)
+                if gamepad:
+                    _pad_fds.add(fd)
+                    _pad_layout[fd] = LAYOUT_SONY if _capbits(path, "abs") >> ABS_RX & 1 else LAYOUT_XBOX
+                    _pad_range[fd] = {a: _abs_range(fd, a) for a in _pad_layout[fd]}
+                    pad["connected"] = True
                 if _grabbing and (fd in _hat_fds or _grab_keyboards):
                     _grab(fd, True)
         except OSError:
@@ -430,7 +526,13 @@ BTN_TOUCH = 330
 
 
 def _is_touchscreen(path):
-    """A touch screen: BTN_TOUCH among its keys and absolute axes."""
+    """A touch screen: BTN_TOUCH among its keys and absolute axes (a gamepad's touchpad is not one)."""
+    try:
+        with open(path + "/device/name") as f:
+            if "touchpad" in f.read().lower():
+                return False
+    except OSError:
+        return False
     try:
         with open(path + "/device/capabilities/key") as f:
             words = f.read().split()
@@ -537,6 +639,13 @@ def _pump_buttons():
             continue
         for i in range(0, len(data) - _EVENT.size + 1, _EVENT.size):
             _, _, etype, code, value = _EVENT.unpack_from(data, i)
+            if fd in _pad_fds:                         # a gamepad: its buttons as keys, its axes as above
+                if etype == 1 and code in PAD_KEYS and value in (0, 1):
+                    name, key = PAD_KEYS[code]
+                    _post_pad(key if key is not None else pygame.K_UNKNOWN, bool(value), name)
+                elif etype == 3:
+                    _pad_axis(fd, code, value)
+                continue
             if etype == 2 and fd not in _hat_fds:
                 # EV_REL from a keyboard: the PicoCalc's right Shift switched its driver
                 # to mouse mode, arrows now move a pointer and their key-up never
@@ -721,4 +830,13 @@ def _drop_input(fd):
     _inputs.remove(fd)
     _input_paths.pop(fd, None)
     _hat_fds.discard(fd)
+    if fd in _pad_fds:                                 # the pad went to sleep or out of range: let go of it all
+        _pad_fds.discard(fd)
+        _pad_range.pop(fd, None)
+        _pad_layout.pop(fd, None)
+        pad.update(lx=0.0, ly=0.0, rx=0.0, ry=0.0, l2=0.0, r2=0.0, connected=bool(_pad_fds))
+        for (kind, k), held in list(_pad_stick.items()):
+            if held:
+                _post_pad(k, False, kind)
+        _pad_stick.clear()
     os.close(fd)

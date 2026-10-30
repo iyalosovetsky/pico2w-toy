@@ -382,6 +382,32 @@ def groza():
     return m
 
 
+def vovk():
+    """The pirate leader: a heavy wedge with two fangs reaching forward."""
+    body = [(0, 0, 40), (-60, -6, -34), (60, -6, -34), (-26, 16, -30), (26, 16, -30), (0, -14, -32), (-34, 8, 0),
+            (34, 8, 0)]
+    parts = [body]
+    for s_ in (-1, 1):
+        parts.append([(s_ * 44, 0, -10), (s_ * 41, 3, 50), (s_ * 34, 0, -10), (s_ * 40, -4, -12), (s_ * 40, 1, 46)])
+    m = Model.build(parts)
+    add_window(m, 6, (0, 1, 0.5))
+    add_engines(m, 0.45, (255, 110, 60), 7)
+    return m
+
+
+def yastrub():
+    """The bounty hunter: a long arrow with swept wings."""
+    body = [(0, 0, 70), (-8, 6, -30), (8, 6, -30), (0, -6, -30), (0, 10, 0)]
+    parts = [body]
+    for s_ in (-1, 1):
+        parts.append([(s_ * 6, 0, 10), (s_ * 58, -2, -40), (s_ * 10, 0, -30), (s_ * 6, 2, 0), (s_ * 56, 0, -38),
+                      (s_ * 10, 2, -28)])
+    m = Model.build(parts)
+    add_window(m, 4, (0, 1, 0.8))
+    add_engines(m, 0.5, (120, 255, 200), 5)
+    return m
+
+
 def truten():
     m = Model.build([ring_pts(5, 28, -8) + ring_pts(5, 16, 12, math.pi / 5, -4)])
     for fi in range(len(m.faces)):
@@ -450,6 +476,12 @@ TYPES = {
     "shulika": ("Шуліка", "пірат", shulika,
                 dict(DARK, hull=(124, 50, 46), hull2=(104, 40, 40), dark=(58, 28, 28), trim=(240, 190, 120)),
                 (255, 80, 60)),
+    "vovk": ("Вовк", "ватажок піратів", vovk,
+             dict(DARK, hull=(96, 46, 40), hull2=(80, 38, 34), dark=(48, 24, 22), stern=(56, 28, 26),
+                  trim=(250, 170, 90)), (255, 80, 60)),
+    "yastrub": ("Яструб", "мисливець за головами", yastrub,
+                dict(DARK, hull=(60, 90, 84), hull2=(50, 76, 70), dark=(28, 42, 40), stern=(34, 50, 48),
+                     trim=(170, 255, 220)), (255, 200, 60)),
     "mazha": ("Віз", "важкий вантажовоз", mazha,
               dict(DARK, hull=(132, 112, 80), hull2=(112, 94, 68), dark=(60, 52, 40)), (255, 220, 80)),
     "vulyk": ("Вулик", "чужинці · матка", vulyk,
