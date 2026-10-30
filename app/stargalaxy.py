@@ -11,6 +11,7 @@ N_SYSTEMS = 256
 RADIUS = 46.0                        # light years
 JUMP_MAX = 7.0                       # a full tank
 START = "Ортея"
+GALAXIES = 8                          # the galactic hyperdrive takes us on to the next (and round to the first)
 
 SYLL = ["ор", "те", "я", "ла", "ве", "ри", "са", "но", "ди", "ка", "ус", "ен", "ар", "ти", "бо", "ге", "за", "ми",
         "ру", "хо", "ле", "ан", "із", "ок", "ма", "ре", "ва", "ін", "ол", "ес", "ну", "дра", "кси", "тор", "лі",
@@ -52,15 +53,18 @@ def make_name(rnd, used):
             return n
 
 
-def generate(seed=1):
-    """The systems and the start's index; every system within reach of the main cluster."""
+def generate(number=0):
+    """Galaxy `number`: the systems and the start's index (Ortea in the first; a central-ish system in the
+    others); every system within reach of the main cluster. Each galaxy turns its spiral its own way."""
+    seed = 1 + number * 7919
     rnd = random.Random(seed)
+    twist = number * 0.9
     systems, used = [], set()
     for i in range(N_SYSTEMS):
         s = System()
         s.idx = i
         t = rnd.random() ** 0.7
-        a = (i % 2) * math.pi + t * 5.2 + rnd.gauss(0, 0.35)
+        a = (i % 2) * math.pi + t * (5.2 - number * 0.25) + twist + rnd.gauss(0, 0.35)
         r = 4 + (RADIUS - 4) * t
         s.x, s.z = r * math.cos(a), r * math.sin(a)
         s.y = rnd.gauss(0, 2.2 * (1.2 - t))
@@ -81,9 +85,10 @@ def generate(seed=1):
         systems.append(s)
     connect(systems)
     start = min(systems, key=lambda s: abs(math.hypot(s.x, s.z) - RADIUS * 0.45) + abs(s.y))
-    start.name = START
-    start.econ, start.gov, start.tech, start.kind = 5, 6, 7, "earth"
-    start.desc = "Ортея відома гостинними мешканцями, та рекордними врожаями."
+    if number == 0:
+        start.name = START
+        start.econ, start.gov, start.tech, start.kind = 5, 6, 7, "earth"
+        start.desc = "Ортея відома гостинними мешканцями, та рекордними врожаями."
     return systems, start.idx
 
 

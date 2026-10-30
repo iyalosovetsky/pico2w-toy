@@ -1116,34 +1116,52 @@ class Dashboard:
             s.blit(img, (R_COL - 4 - img.get_width(), H - 2 - img.get_height()))
 
 
-def stardust_init(n=36, seed=5):
+def stardust_init(n=80, seed=5):
+    """Dust all round the ship, in the ship's own frame (x right, y up, z ahead), in a box that wraps."""
     rnd = random.Random(seed)
-    return [[rnd.uniform(-600, 600), rnd.uniform(-450, 450), rnd.uniform(60, 1600)] for _ in range(n)]
+    return [[rnd.uniform(-DX, DX), rnd.uniform(-DY, DY), rnd.uniform(-DZ, DZ)] for _ in range(n)]
 
 
-def stardust(surf, dust, dt, speed, roll, pitch, yaw, f, cx, cy, style, rnd=random.Random(9)):
-    """The dust drifts by: turns against the ship (roll about z, pitch about x, yaw about y), slides back
-    by the speed."""
+DX, DY, DZ = 700.0, 520.0, 1600.0
+
+
+def stardust(surf, dust, dt, speed, roll, pitch, yaw, f, cx, cy, style, V=None):
+    """The dust drifts by: turns against the ship (roll about z, pitch about x, yaw about y), slides back by
+    the speed, wraps round the box; drawn through the view V (the camera's axes in the ship's frame - the
+    rear and side views see it pass the other way)."""
     h = surf.get_height()
     cr, sr = math.cos(roll * dt), math.sin(roll * dt)
     cp, sp = math.cos(pitch * dt), math.sin(pitch * dt)
     cy_, sy_ = math.cos(-yaw * dt), math.sin(-yaw * dt)
     col = WIRE_DIM if style == "wire" else (160, 175, 220)
+    if V is None:
+        V = np.eye(3)
+    (a0, a1, a2), (b0, b1, b2), (c0, c1, c2) = V.T.tolist()      # rows: camera x, y, z in ship axes
     for d in dust:
         x, y, z = d
-        ox, oy = cx + x * f / z, cy - y * f / z
+        ox, oy, oz = a0 * x + a1 * y + a2 * z, b0 * x + b1 * y + b2 * z, c0 * x + c1 * y + c2 * z
         x, y = x * cr - y * sr, x * sr + y * cr
         y, z = y * cp - z * sp, y * sp + z * cp
         x, z = x * cy_ + z * sy_, -x * sy_ + z * cy_
         z -= speed * dt
-        if z < 40 or z > 1800:
-            x, y, z = rnd.uniform(-600, 600), rnd.uniform(-450, 450), (rnd.uniform(900, 1600) if z < 40 else 60)
-            d[:] = [x, y, z]
-            continue
+        wrapped = False
+        for i, (v, lim) in enumerate(((x, DX), (y, DY), (z, DZ))):
+            if v < -lim or v > lim:
+                wrapped = True
+        if wrapped:
+            x = (x + DX) % (2 * DX) - DX
+            y = (y + DY) % (2 * DY) - DY
+            z = (z + DZ) % (2 * DZ) - DZ
         d[:] = [x, y, z]
-        px, py = cx + x * f / z, cy - y * f / z
+        qx, qy, qz = a0 * x + a1 * y + a2 * z, b0 * x + b1 * y + b2 * z, c0 * x + c1 * y + c2 * z
+        if qz < 40:
+            continue
+        px, py = cx + qx * f / qz, cy - qy * f / qz
         if 0 <= px < W and 0 <= py < h:
-            if abs(px - ox) + abs(py - oy) < 40:
-                line(surf, col, (ox, oy), (px, py))
-            else:
-                surf.fill(col, (int(px), int(py), 1, 1))
+            if not wrapped and oz > 40:
+                ox_, oy_ = cx + ox * f / oz, cy - oy * f / oz
+                if abs(px - ox_) + abs(py - oy_) < 40:
+                    line(surf, col, (ox_, oy_), (px, py))
+                    continue
+            surf.fill(col, (int(px), int(py), 1, 1))
+

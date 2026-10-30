@@ -57,6 +57,10 @@ SCAN_RANGE = 12000.0
 SUN_DIST, SUN_R = 2.5e6, 1.2e5
 
 STYLE_NAMES = {"modern": "сучасний", "wire": "класичний"}
+VIEWS = ["Передній огляд", "Задній огляд", "Лівий огляд", "Правий огляд"]
+# each view's camera axes (right, up, forward as columns) in the ship's frame
+VIEW_ROT = [np.eye(3), np.array([[-1.0, 0, 0], [0, 1, 0], [0, 0, -1]]),
+            np.array([[0, 0, -1.0], [0, 1, 0], [1, 0, 0]]), np.array([[0, 0, 1.0], [0, 1, 0], [-1, 0, 0]])]
 HP = {"osa": 3, "sokil": 5, "chumak": 4, "mazha": 6, "shulika": 6, "vulyk": 12, "truten": 1, "rocket": 1,
       "kapsula": 1, "kontejner": 1, "asteroid": 3}                 # laser hits a ship takes
 LASER_RANGE = 7000.0
@@ -72,7 +76,9 @@ EQUIPMENT = [
     ("beam", "Променевий лазер", 1000, 4, "частіше й холодніше"),
     ("energy", "Енергоблок", 1500, 8, "банки й щити заряджаються вдвічі швидше"),
     ("capsule", "Рятувальна капсула", 1000, 6, "переживе загибель корабля (вантаж - ні)"),
+    ("scoop", "Паливозбірник", 525, 5, "біля сонця набирає паливо"),
     ("military", "Військовий лазер", 6000, 10, "удвічі сильніший і холодніший"),
+    ("galhyper", "Галактичний гіперпривід", 5000, 10, "один стрибок у наступну галактику"),
 ]
 # the lasers: seconds between pulses, damage, heat a pulse
 LASERS = {"pulse": (LASER_EVERY, 1, 0.065), "beam": (0.1, 1, 0.045), "military": (0.09, 2, 0.035)}
@@ -593,7 +599,8 @@ class Game:
             "small": gfx.font("DejaVuSansCondensed.ttf", 10),
             "mono": gfx.font("DejaVuSansMono-Bold.ttf", 9),
         }
-        self.gal, self.start = galaxy.generate()
+        self.galnum = 0
+        self.gal, self.start = galaxy.generate(0)
         self.new_game()
         self.music = starmusic.Music()
         self.sfx = starmusic.Sfx()
@@ -619,6 +626,7 @@ class Game:
         self.dead = False
         self.hit_t = -9.0
         self.slow = 0.0
+        self.view = 0
         self.laser_temp = 0.0
         self.overheat = False
         self.fire_t = 0.0
@@ -646,7 +654,13 @@ class Game:
 
     # -- the commander
 
+    def set_galaxy(self, n):
+        if n != self.galnum:
+            self.galnum = n
+            self.gal, self.start = galaxy.generate(n)
+
     def new_game(self):
+        self.set_galaxy(0)
         self.here = self.start
         self.target = None
         self.credits = 100.0
@@ -672,7 +686,7 @@ class Game:
         return CARGO_MAX + (15 if "bay" in self.equip else 0)
 
     def save(self):
-        data = {"here": self.here, "target": self.target, "credits": round(self.credits, 1), "cargo": self.cargo,
+        data = {"galaxy": self.galnum, "here": self.here, "target": self.target, "credits": round(self.credits, 1), "cargo": self.cargo,
                 "kills": self.kills, "legal": self.legal, "missiles": self.missiles, "equip": sorted(self.equip),
                 "laser": self.laser,
                 "fuel": round(self.fuel, 2), "visits": {str(k): v for k, v in self.visits.items()}}
@@ -697,6 +711,7 @@ class Game:
         if not d:
             self.new_game()
             return
+        self.set_galaxy(int(d.get("galaxy", 0)) % galaxy.GALAXIES)
         self.here = int(d.get("here", self.start)) % len(self.gal)
         self.target = d.get("target")
         self.credits = float(d.get("credits", 100.0))
@@ -738,12 +753,41 @@ class Game:
         self.police_called = False
         self.legal = max(0, self.legal - 16)           # a new system: the old record fades
 
+    def sun_alt(self):
+        """Height above the sun's surface (deep space: none)."""
+        w = self.world
+        return 1e12 if w.deep else length(self.pos - w.sun_pos) - SUN_R
+
+    def heat(self):
+        """The cabin temperature from the sun: 0 far off, 1 at its surface."""
+        return clamp(1 - self.sun_alt() / (0.6 * SUN_R), 0.0, 1.0)
+
+    def jump_speed(self):
+        """The jump drive opens up in empty space: a third of the clearance to the nearest big thing a second
+        (never past it in one frame), at least JUMP_SPEED."""
+        w = self.world
+        if w.deep:
+            return JUMP_SPEED
+        clear = min(length(self.pos) - w.planet_r * 1.5, length(self.pos - w.st_pos) - 24000,
+                    self.sun_alt() - 0.3 * SUN_R)
+        return clamp(clear / 3.0, JUMP_SPEED, JUMP_SPEED * 12)      # capped: flying away it would run off
+
     def mass_locked(self):
         """The jump drive will not start near anything big."""
         w = self.world
-        if length(self.pos - w.st_pos) < 24000 or length(self.pos) < w.planet_r * 1.5:
+        if length(self.pos - w.st_pos) < 24000 or length(self.pos) < w.planet_r * 1.5 or self.sun_alt() < 0.3 * SUN_R:
             return True
         return any(s.role not in ("drift", "missile") and length(s.pos - self.pos) < 9000 for s in w.ships)
+
+    @property
+    def VR(self):
+        """The camera: the ship's frame turned to the view we look through."""
+        return self.R @ VIEW_ROT[self.view]
+
+    def set_view(self, v):
+        if v != self.view:
+            self.view = v % 4
+            lcd.play("move")
 
     def say(self, text, secs=3.0):
         self.msg, self.msg_t = text, self.t + secs
@@ -837,7 +881,7 @@ class Game:
                 self.jump_t = 0.0
                 self.say("Масова блокада", 1.5)
             else:
-                self.pos = self.pos + self.R[:, 2] * JUMP_SPEED * dt
+                self.pos = self.pos + self.R[:, 2] * self.jump_speed() * dt
         if self.hyper_t is not None and self.t >= self.hyper_t:
             self.hyper_t = None
             return "hyper"
@@ -895,6 +939,24 @@ class Game:
                     s.speed = max(s.speed, 60.0)
                     s.R = basis(d, s.R[:, 1])
                 return self.hit(0.2 + 0.4 * self.speed / MAX_SPEED, front, "Зіткнення!")
+        # the sun: hot near it, fuel for the scoops, death at its surface
+        ht = self.heat()
+        if ht > 0:
+            if self.sun_alt() < 0:
+                self.dead = True
+                return "dead"
+            if "scoop" in self.equip and ht > 0.35 and self.speed > 200 and self.fuel < galaxy.JUMP_MAX:
+                self.fuel = min(galaxy.JUMP_MAX, self.fuel + 0.2 * dt)
+                if self.msg_t < self.t:
+                    self.say("Паливозбірник: %.1f св. р." % self.fuel, 0.6)
+            if ht > 0.8:
+                self.energy -= (ht - 0.8) * 1.2 * dt
+                if self.msg_t < self.t:
+                    self.say("Перегрів кабіни!", 0.8)
+                    lcd.play("error")
+                if self.energy <= 0:
+                    self.dead = True
+                    return "dead"
         # the planet
         alt = length(self.pos) - w.planet_r
         if alt < 60:
@@ -916,7 +978,7 @@ class Game:
             L = length(d)
             if L < 1 or L > reach:
                 continue
-            c = float(np.dot(d, self.R[:, 2])) / L
+            c = float(np.dot(d, self.VR[:, 2])) / L
             if c > bc:
                 best, bc = s, c
         return best
@@ -1031,7 +1093,7 @@ class Game:
             self.say("Лазер перегрівся!", 1.5)
         self.energy -= 0.012
         self.sfx.play("laser")
-        RT = self.R.T
+        RT = self.VR.T
         best, bz = None, LASER_RANGE
         for s in self.world.ships:
             if s.role == "missile":
@@ -1046,7 +1108,7 @@ class Game:
             if self.msg_t < self.t:
                 self.say("Не стріляйте по станції!", 1.5)
         self.beam_t = self.t + 0.08
-        self.beam_end = self.pos + self.R[:, 2] * bz
+        self.beam_end = self.pos + self.VR[:, 2] * bz
         self.beam_hit = best is not None or bz < LASER_RANGE
         if best is not None:
             best.hp -= dmg
@@ -1107,7 +1169,7 @@ class Game:
             self.say("Немає цілі в прицілі", 1.5)
             lcd.play("error")
             return
-        m = Ship("rocket", self.pos + self.R[:, 2] * 140 - self.R[:, 1] * 30, self.R.copy(),
+        m = Ship("rocket", self.pos + self.VR[:, 2] * 140 - self.VR[:, 1] * 30, self.VR.copy(),
                  self.speed + 500, "missile")
         m.target = tg
         m.by_player = True
@@ -1140,7 +1202,8 @@ class Game:
     # -- drawing
 
     def obj(self, pos, R):
-        return self.R.T @ R, self.R.T @ (pos - self.pos)
+        VT = self.VR.T
+        return VT @ R, VT @ (pos - self.pos)
 
     def hidden_by_planet(self, p):
         d = p - self.pos
@@ -1164,8 +1227,9 @@ class Game:
             w.planet.gap = 0.3 if rough else 0.12
         surf.fill((0, 0, 0) if st == "wire" else (3, 3, 10), (0, 0, W, VH))
         view = surf.subsurface((0, 0, W, VH))
-        gfx.draw_stars(view, w.stars, self.R, F, CX, CY, st)
-        RT = self.R.T
+        VR = self.VR
+        gfx.draw_stars(view, w.stars, VR, F, CX, CY, st)
+        RT = VR.T
         # the sun, unless the planet is in the way
         sc = RT @ (w.sun_pos - self.pos)
         sd = length(sc) if not w.deep else 0.0
@@ -1206,7 +1270,7 @@ class Game:
         for b in w.blasts:
             self.draw_blast(view, b)
         gfx.stardust(view, self.dust, dt, self.speed + (JUMP_SPEED if self.jump_t > 0 else 0),
-                     self.roll, self.pitch, self.yaw, F, CX, CY, st)
+                     self.roll, self.pitch, self.yaw, F, CX, CY, st, VIEW_ROT[self.view])
         if not overlay:
             return
         self.draw_beams(view)
@@ -1217,10 +1281,13 @@ class Game:
             gfx.line(view, col, (CX + dx * 6, CY + dy * 6), (CX + dx * 16, CY + dy * 16))
         y = 4
         if not gfx.HAT:                                 # no room for it on the HAT
-            img = self.fonts["label"].render("Передній огляд", True, col)
+            img = self.fonts["label"].render(VIEWS[self.view], True, col)
             view.blit(img, (W / 2 - img.get_width() / 2, y))
             y += img.get_height()
-        hint = self.draw_dock_hint(view)
+        hint = self.draw_dock_hint(view) if self.view == 0 else 30
+        if gfx.HAT and self.view:
+            img = self.fonts["small"].render(VIEWS[self.view].split()[0].upper(), True, col)
+            view.blit(img, (4, 4))
         if self.msg and self.t < self.msg_t:
             img = gfx.fit(self.fonts["msg"].render(self.msg, True, (255, 210, 90) if st != "wire" else gfx.WIRE))
             view.blit(img, (W / 2 - img.get_width() / 2, VH - img.get_height() - (hint + 4)))
@@ -1235,13 +1302,14 @@ class Game:
                 y += img.get_height()
 
     def project(self, p):
-        c = self.R.T @ (p - self.pos)
+        c = self.VR.T @ (p - self.pos)
         if c[2] < gfx.NEAR:
             return None
         return CX + c[0] * F / c[2], CY - c[1] * F / c[2], float(c[2])
 
     def draw_blast(self, view, b):
         wire = self.style == "wire"
+        VR = self.VR
         a = b.age
         life = b.life
         centre = b.pos + b.vel * a
@@ -1251,7 +1319,7 @@ class Game:
         if wire:                                       # the old way: a cloud of dots flying apart
             col = gfx.WIRE if a < life * 0.6 else gfx.WIRE_DIM
             P = (centre + b.dots * (0.25 + a)) - self.pos
-            C = P @ self.R
+            C = P @ VR
             ok = C[:, 2] > gfx.NEAR
             for x, y, z in C[ok].tolist():
                 sx, sy = CX + x * F / z, CY - y * F / z
@@ -1262,7 +1330,7 @@ class Game:
         for c0, offs, v, K, K2, spin, base in b.frags:
             Rm = I3 + math.sin(spin * a) * K + (1 - math.cos(spin * a)) * K2
             P = (c0 + v * a) + offs @ Rm.T - self.pos
-            C = P @ self.R
+            C = P @ VR
             if C[:, 2].min() < gfx.NEAR:
                 continue
             pts = [(CX + x * F / z, CY - y * F / z) for x, y, z in C.tolist()]
@@ -1274,7 +1342,7 @@ class Game:
                 gfx.lines(view, gfx.shade(gfx.mix((255, 220, 150), (220, 210, 188), a / 0.7), 0.25 + 0.6 * fade),
                           True, pts, 1)                  # the hull's light trims on the broken plates
         k = max(0.0, 1 - a / life)
-        C = (b.pos + b.shard_v * a - self.pos) @ self.R
+        C = (b.pos + b.shard_v * a - self.pos) @ VR
         for (shape, spin, sz, base), (cx_, cy_, cz) in zip(b.shards, C.tolist()):
             if cz < gfx.NEAR:
                 continue
@@ -1322,7 +1390,7 @@ class Game:
         wire = self.style == "wire"
         self.enemy_beams = [(s, until) for s, until in self.enemy_beams if self.t < until and not s.gone]
         for s, _ in self.enemy_beams:
-            c = self.R.T @ (s.pos - self.pos)
+            c = self.VR.T @ (s.pos - self.pos)
             if c[2] > gfx.NEAR:
                 a = (CX + c[0] * F / c[2], CY - c[1] * F / c[2])
             else:                                      # from behind: in from the edge it is nearest
@@ -1412,7 +1480,7 @@ class Game:
             safe = False
         alt = (length(self.pos) - w.planet_r) / w.planet_r
         en = [clamp(self.energy - i, 0, 1) for i in range(4)]
-        return dict(fs=self.fs, as_=self.as_, fv=self.fuel / galaxy.JUMP_MAX, ct=0.1, lt=min(1.0, self.laser_temp), al=clamp(alt, 0, 1),
+        return dict(fs=self.fs, as_=self.as_, fv=self.fuel / galaxy.JUMP_MAX, ct=max(0.08, self.heat()), lt=min(1.0, self.laser_temp), al=clamp(alt, 0, 1),
                     sp=self.speed / MAX_SPEED, missiles=self.missiles,
                     rl=self.roll / ROLL_MAX, dc=self.pitch / PITCH_MAX, en=en, blips=blips,
                     compass=None if w.deep else (d[0], d[1], d[2] > 0), safe=safe, t=self.t, **{"as": self.as_})
@@ -1540,7 +1608,8 @@ def title(game):
     fl = gfx.font("DejaVuSansCondensed.ttf", 10)
     saved = game.saved()
     if saved:
-        sname = game.gal[int(saved.get("here", game.start)) % len(game.gal)].name
+        sgal = game.gal if int(saved.get("galaxy", 0)) == game.galnum else galaxy.generate(int(saved.get("galaxy", 0)))[0]
+        sname = sgal[int(saved.get("here", 0)) % len(sgal)].name
         prompt = ("Enter - продовжити: %s, %.1f Кр" % (sname, saved.get("credits", 0)), "N - нова гра · Tab - вигляд")
     else:
         prompt = ("Натисніть пробіл, командире", "Tab - вигляд · Esc - вихід")
@@ -1561,9 +1630,13 @@ def title(game):
             elif ev.key == pygame.K_TAB or (hat and ev.key == pygame.K_2):
                 game.toggle_style()
             elif ev.key == pygame.K_ESCAPE or (hat and ev.key == pygame.K_3):
+                game.music.stop(300)
                 return "quit"
         ready = game.poll_loader()
+        if ready and not want:
+            game.music.start()                         # the Blue Danube over the title, the old way
         if want and ready:
+            game.music.stop(900)
             return want
         t = time.monotonic() - t0
         wire = game.style == "wire"
@@ -2258,7 +2331,8 @@ def chart(game):
         else:
             gfx.rect(frame, c["bg"], (0, 252, W, H - 252))
             gfx.line(frame, c["lo"], (0, 252), (W, 252))
-            img = fh.render("ГАЛАКТИКА 1" + ("" if not zoom else " · поруч з %s" % here.name), True, c["hi"])
+            img = fh.render("ГАЛАКТИКА %d" % (game.galnum + 1) + ("" if not zoom else " · поруч з %s" % here.name), True,
+                        c["hi"])
             frame.blit(img, (W / 2 - img.get_width() / 2, 4))
             img = fh.render("%s  %.1f св. р." % (tgt.name, d), True, c["sel"])
             frame.blit(img, (8, 257))
@@ -2273,12 +2347,19 @@ def chart(game):
         clock.tick(30)
 
 
-def hyperspace(game):
-    """Through hyperspace: rings rushing by while the next system is built, then out far from its planet."""
-    tgt = game.gal[game.target]
-    d = jump_dist(game)
-    misjump = not game.world.deep and random.random() < MISJUMP
-    game.fuel = max(0.0, game.fuel - (d * 0.5 if misjump else d))
+def hyperspace(game, galactic=False):
+    """Through hyperspace: rings rushing by while the next system is built, then out far from its planet.
+    galactic - the galactic hyperdrive: into the next galaxy, near the same place in it, no fuel used."""
+    if galactic:
+        old = game.system()
+        game.set_galaxy((game.galnum + 1) % galaxy.GALAXIES)
+        game.target = min(range(len(game.gal)), key=lambda i: game.gal[i].dist(old))
+        game.here = game.target
+        misjump = False
+    else:
+        d = jump_dist(game)
+        misjump = not game.world.deep and random.random() < MISJUMP
+        game.fuel = max(0.0, game.fuel - (d * 0.5 if misjump else d))
     game.music.stop(200)
     game.sfx.play("hyper")
     wire = game.style == "wire"
@@ -2328,7 +2409,10 @@ def hyperspace(game):
     game.target = None
     game.world = box["world"] if "world" in box else World(game.system())
     game.arrive()
-    game.say("Ласкаво просимо до системи %s" % game.system().name, 4)
+    if galactic:
+        game.say("Галактика %d! Система %s" % (game.galnum + 1, game.system().name), 5)
+    else:
+        game.say("Ласкаво просимо до системи %s" % game.system().name, 4)
 
 
 def flight(game):
@@ -2375,6 +2459,10 @@ def flight(game):
                     game.fire_missile()
                 elif key == pygame.K_e:
                     game.ecm()
+                elif key == pygame.K_v:
+                    game.set_view(game.view + 1)
+                elif key in (pygame.K_F1, pygame.K_F2, pygame.K_F3, pygame.K_F4):
+                    game.set_view((pygame.K_F1, pygame.K_F2, pygame.K_F3, pygame.K_F4).index(key))
                 elif key == pygame.K_g:
                     game.keys.clear()
                     chart(game)
@@ -2463,12 +2551,21 @@ def start_hyper(game):
     game.sfx.play("lock")
 
 
+def galactic_jump(game):
+    if "galhyper" not in game.equip:
+        game.say("Немає галактичного гіперприводу", 2)
+        lcd.play("error")
+        return
+    game.equip.discard("galhyper")
+    hyperspace(game, galactic=True)
+
+
 def start_jump(game):
     if game.mass_locked():
         game.say("Масова блокада: поруч щось велике", 2)
         lcd.play("error")
         return
-    game.jump_t = 6.0
+    game.jump_t = 8.0
     game.sfx.play("jump")
 
 
@@ -2489,33 +2586,44 @@ def toggle_autodock(game):
 
 def pause(game):
     while True:
-        items = ["Продовжити", "Комп'ютер стикування: " + ("увімк" if game.autodock else "вимк"),
+        items = ["Продовжити", "Огляд: " + VIEWS[game.view].split()[0].lower(),
+                 "Комп'ютер стикування: " + ("увімк" if game.autodock else "вимк"),
                  "Галактична карта", "Гіперстрибок" + (" - скасувати" if game.hyper_t is not None else ""),
-                 "Стрибковий двигун", "Вигляд: " + STYLE_NAMES[game.style],
+                 "Стрибковий двигун"] + (["Галактичний стрибок"] if "galhyper" in game.equip else []) + [
+                 "Вигляд: " + STYLE_NAMES[game.style],
                  "Тангаж: " + ("↑ угору" if game.invert else "↑ униз"), "Вийти в меню"]
         r = ask(game, items, "ПАУЗА", back=0)
         if r in (0, None):
             return None
         if r == 1:
+            game.set_view(game.view + 1)
+            game.draw(0.0)
+            continue
+        if r == 2:
             toggle_autodock(game)
             return None
-        if r == 2:
+        if r == 3:
             chart(game)
             return None
-        if r == 3:
+        if r == 4:
             start_hyper(game)
             return None
-        if r == 4:
+        if r == 5:
             start_jump(game)
             return None
-        if r == 5:
+        if "galhyper" in game.equip:
+            if r == 6:
+                galactic_jump(game)
+                return None
+            r -= 1
+        if r == 6:
             game.toggle_style()
             game.draw(0.0)
-        elif r == 6:
+        elif r == 7:
             game.invert = not game.invert
             game.conf["invert"] = game.invert
             save_conf(game.conf)
-        elif r == 7:
+        elif r == 8:
             return "quit"
 
 
@@ -2534,6 +2642,7 @@ def explode(game):
     fs = gfx.font("DejaVuSansCondensed.ttf", 11)
     game.keys.clear()
     game.autodock = False
+    game.view = 0                                      # the circling camera is a front view
     game.speed = 0.0
     game.roll = game.pitch = game.yaw = 0.0
     t0 = time.monotonic()
