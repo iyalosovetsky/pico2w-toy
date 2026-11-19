@@ -35,6 +35,7 @@ ITEMS = [
     ("RADIO", "online", ["/usr/bin/python3", HERE + "/radio.py"], HERE),
     ("SDR", "rtl-sdr", ["/usr/bin/python3", HERE + "/sdr.py"], HERE),
     ("FLIPPER", "scan", ["/usr/bin/python3", HERE + "/flipper.py"], HERE),
+    ("ДІМ", "HA", ["/usr/bin/python3", HERE + "/house.py"], HERE),
     ("BLUETOOTH", "gamepads", ["/usr/bin/python3", HERE + "/bluetooth.py"], HERE),
     ("SCREENSAVER", "demo", ["/usr/bin/python3", HERE + "/screensaver.py"], HERE),
     ("AQUARIUM", "demo", ["/usr/bin/python3", HERE + "/aquarium.py"], HERE),
@@ -166,6 +167,9 @@ font_small = pygame.font.Font(None, 14)
 clock = pygame.time.Clock()
 import menufolders  # noqa: E402  (its fonts need pygame started by lcd.init)
 folders = menufolders.Folders([it[0] for it in ITEMS])
+font_item_uk = menufolders._dejavu("DejaVuSans-Bold.ttf", 40 if lcd.S > 1 else 16)   # names not in latin letters
+ITEM_ICONS = {"ДІМ": "home"}         # items drawn with an icon before the name (menufolders.draw_icon)
+ALIAS = {"ДІМ": "dim house home"}    # the search: latin letters typed find these too
 LONG_PRESS = 0.6  # s of OK held: the folder dialog instead of running the item
 
 
@@ -197,7 +201,7 @@ def search(q):
     q = q.lower().replace(" ", "")
     found = []
     for k, (name, _, _, _) in enumerate(ITEMS):
-        n = name.lower()
+        n = ALIAS.get(name, name).lower()
         rest = iter(n)
         if all(c in rest for c in q):            # each letter found after the one before
             found.append((-folders.launches.get(name, 0.0), not n.startswith(q[:1]), k))
@@ -243,12 +247,22 @@ def draw(sel, shown, query=""):
             name_c, hint_c = BG, (60, 60, 60)
         else:
             name_c, hint_c = FG, DIM
-        n = font_item.render(name, True, name_c)
-        if n.get_width() > 96:                                # SCREENSAVER: a size smaller
-            n = font_item_narrow.render(name, True, name_c)
-        screen.blit(n, (28, y))
+        x = 28
+        if name in ITEM_ICONS:                                # ДІМ: a house before the name
+            icon = ITEM_ICONS[name]
+            menufolders.draw_icon(screen, icon, x + 5, y + 7, name_c if i == sel else menufolders.ICONS[icon][0],
+                                  ACCENT if i == sel else BG, 0.7)
+            x += 13
+        if not name.isascii():                                # Cyrillic: the default font has none
+            n = font_item_uk.render(name, True, name_c)
+            screen.blit(n, (x, y + 7 - n.get_height() / 2))
+        else:
+            n = font_item.render(name, True, name_c)
+            if n.get_width() > 96:                            # SCREENSAVER: a size smaller
+                n = font_item_narrow.render(name, True, name_c)
+            screen.blit(n, (x, y))
         h = font_small.render(hint, True, hint_c)
-        if 28 + n.get_width() + 4 + h.get_width() <= 124:     # the hint only where it fits beside the name
+        if x + n.get_width() + 4 + h.get_width() <= 124:      # the hint only where it fits beside the name
             screen.blit(h, (124 - h.get_width(), y + 4))
     if not shown:
         lines = ("нічого не знайдено", "", "Esc - назад") if query else \

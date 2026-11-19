@@ -138,6 +138,7 @@ A 172×103×20 mm PicoCalc back cover for the zero mod (a Zero 2 W instead of th
 | **SCREENSAVER** | A screensaver with the animations of our Raspberry Pi Pico W DVI LCD dashboard ([pico-dvi-python](https://github.com/iyalosovetsky/pico-dvi-python)): a Julia set, a plasma, a lava lamp, ripples, a kaleidoscope flower (2.5 minutes each at half the dashboard's pace, the same formulas and palettes, numpy) and a clock with the date at the bottom; starts by itself after 3 minutes without a key in the menu (`~/.config/lcdtoy/screensaver` - seconds, 0 - never), taking 5-minute turns with the STAR TRADER demo, any key - back |
 | **SDR** | A receiver on an RTL-SDR stick (RTL2832U on USB, tested with the RTL-SDR Blog V4, 0.5 - 1766 MHz): spectrum and waterfall, WFM / NFM / AM / USB / LSB to the speaker, squelch, station memory, frequency typed in digits, a 2 MHz overview. `rtl_tcp` + numpy DSP. The GIF: USB at 7.499 MHz, the carrier of a 7.5 MHz square from GENERATOR (switched off - gone from the waterfall), then the 2 MHz overview |
 | **FLIPPER** | Scanning with a Flipper Zero on USB through its CLI, receive only: Sub-GHz (decoded protocols on a chosen frequency, e.g. "KeeLoq 64bit · AN-Motors · btn 8"), IR remotes, RFID 125 kHz, NFC - a timestamped list |
+| **ДІМ** (HOME) | The house plan from above, floor by floor, with the Home Assistant devices on it: the rooms from the house3d plan server (the same plan as the house's 3D model; cached - it works without the network too), the devices where they are (lights, sockets and relays, curtains, the projector screen and the gate, media, climate, temperatures, motion and door sensors), a room glows while a light in it is on. Arrows - a device, Enter - on / off, open / close, pause; Space - details (brightness, volume, temperature, the curtains' position); Tab / 0-3 - the floor. Gates, doors and locks only after a «Так / Ні» (yes / no) question. HA directly over its WebSocket API (our own client on the standard library), the address and the token in `~/.config/lcdtoy/house.env` (an example: `config/house.env.example`; the token from a separate HA user without admin rights) |
 | **BLUETOOTH** | Gamepads and other Bluetooth devices: search, pairing (trusted and connected), disconnecting, forgetting; each device keeps its own list. Gamepads are named by their USB ids (a DualSense and a DualShock 4 both call themselves "Wireless Controller"). Unblocks Bluetooth if rfkill has it off |
 | **AI CHAT** | Chat with an LLM (llama.cpp / any OpenAI-compatible server) on the text console, US/UA keyboard. Servers are in `~/.config/lcdtoy/ai-chat.json` (url, token, model), `/provider NAME` switches; the menu shows the current one |
 | **CONSOLE** | Leaves the menu and opens a text console with login on the LCD (tty7); `lcdmenu` brings the menu back |
@@ -183,6 +184,7 @@ How the pieces fit together:
 | `app/synth.py` | SYNTH: instrument and drum synthesis (additive, FM, Karplus-Strong, noise), pygame mixer, the rhythm machine on its own thread |
 | `app/sdr.py` | SDR: `rtl_tcp` in the background, numpy DSP (filters, WFM / NFM / AM / SSB demodulators), spectrum and waterfall, sound through `aplay` |
 | `app/startrader.py`, `app/stargfx.py`, `app/stargalaxy.py`, `app/starmusic.py` | STAR TRADER: the game and its screens; the 3D renderer (models, planets, station, dashboard); the galaxies and markets; the synthesized sounds and waltz |
+| `app/house.py`, `app/hawire.py` | ДІМ: the plan screen, the icons, the details and the confirmation; the plan from the house3d server and its cache, the WebSocket client and the Home Assistant API (states, areas, `subscribe_entities`, `call_service`), the devices placed as in the 3D model (`js/devices.js`) |
 | `app/bluetooth.py` | BLUETOOTH: `bluetoothctl` (agent, search, pairing), the device lists, gamepad names from the Modalias |
 | `app/flipper.py` | FLIPPER: the Flipper Zero CLI over its USB serial port, the receive commands `subghz rx` / `ir rx` / `rfid read` / `nfc scanner`, grouping and showing the results |
 | `app/calcpad.py` | Calculator: a `calc -q -p` session in a pipe, 2D plots / heat map / 3D surface |
@@ -194,7 +196,7 @@ How the pieces fit together:
 | `firmware/mkpanel.py` | Generates the panel init file (`waveshare144.bin`, prebuilt copy included) |
 | `fonts/` | Console fonts 5×7 (console, 25×18 chars) and 6×10 (AI chat, 21×12) + `build-fonts.sh` |
 | `config/` | Everything that goes into the system: `hat/`, `picocalc/` and shared - see [Configuration](#6-configuration) |
-| `tools/` | `vkeys.py` virtual keyboard, `snap.py` screenshot, `record_gif.py` GIF recorder, `serial_gif.py` + `fake_grbl.py` SERIAL's GIFs |
+| `tools/` | `vkeys.py` virtual keyboard, `snap.py` screenshot, `record_gif.py` GIF recorder, `serial_gif.py` + `fake_grbl.py` SERIAL's GIFs, `fake_ha.py` a pretend Home Assistant for ДІМ (the entities from the house plan) |
 | `case/` | Case: FreeCAD model (`pico-toy.FCStd`) and STL files for printing |
 | `docs/` | GIFs, photos, wiring diagram, case preview |
 
@@ -456,6 +458,7 @@ HAT files (`config/hat/`):
 | `rtl-sdr-blacklist.conf` | `/etc/modprobe.d/` | Keeps the kernel's DVB-T driver off an RTL-SDR stick (otherwise `rtl_tcp` cannot open it) |
 | `rtl-sdr.rules` | `/etc/udev/rules.d/61-rtl-sdr.rules` | RTL-SDR access for the menu (a service, not a seated user - the package's `uaccess` rule does not cover it) |
 | `ai-chat.env` | `/etc/default/lcd-ai-chat` | `AI_URL` - the first provider of `~/.config/lcdtoy/ai-chat.json` (the list of servers with tokens) |
+| `house.env.example` | `~/.config/lcdtoy/house.env` (by hand, mode 600) | ДІМ: `HA_URL` (comma-separated, tried in turn), `HA_TOKEN`, `PLAN_URL`, `CONFIRM` (more entities that ask first). Make the token as a separate HA user without admin rights: Settings - People - add, «Administrator» off; log in as it - Profile - Security - Long-lived access tokens |
 
 The HDMI consoles keep the normal font; the 5×7 font is set only on tty7 (LCD) by `lcd-console.service`.
 `/boot/firmware/cmdline.txt` gets `video=HDMI-A-1:<mode>D` and `fbcon=map:0000001`.

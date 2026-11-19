@@ -26,7 +26,7 @@ MAX_FOLDERS = 6                      # with «Інше»: what fits the column o
 DEFAULT = [
     ("Улюблене", "star", []),
     ("Ігри", "games", ["PONG", "TETRIS", "POKER", "CHESS", "PREFERANS", "DOOM", "PICO RUSH", "STAR TRADER"]),
-    ("Інструменти", "tools", ["GENERATOR", "SERIAL", "CALC", "SDR", "FLIPPER", "PYTHON", "BASIC", "EDIT",
+    ("Інструменти", "tools", ["GENERATOR", "SERIAL", "CALC", "SDR", "FLIPPER", "ДІМ", "PYTHON", "BASIC", "EDIT",
                               "AI CHAT"]),
     ("Система", "gear", ["BLUETOOTH", "SOUND", "CONSOLE", "HDMI", "POWER OFF"]),
 ]
@@ -35,7 +35,7 @@ ICONS = {"star": ((255, 200, 0), "Улюблене"), "games": ((240, 90, 80), "
          "tools": ((90, 160, 255), "Інструменти"), "gear": ((175, 175, 185), "Система"),
          "heart": ((255, 110, 160), "Обране"), "music": ((110, 220, 130), "Музика"),
          "book": ((255, 160, 70), "Читання"), "flag": ((80, 220, 220), "Проєкти"),
-         "folder": ((230, 190, 90), "Тека"), "other": ((200, 200, 200), OTHER)}
+         "folder": ((230, 190, 90), "Тека"), "home": ((120, 200, 255), "Дім"), "other": ((200, 200, 200), OTHER)}
 CHOICE = [k for k in ICONS if k != "other"]
 FAV_ICON = "star"
 FAV_SCORE = 2.0                      # an often-run item comes into the favourites
@@ -226,6 +226,11 @@ def draw_icon(surf, kind, cx, cy, color, bg=BG, k=1.0):
     elif kind == "flag":
         line(-5, -6, -5, 7, 2)
         poly((-5, -6.5), (6.5, -3.5), (-5, 1))
+    elif kind == "home":
+        poly((-7.5, -0.5), (0, -7), (7.5, -0.5))
+        rect(-5.5, -1, 11, 7.5)
+        rect(-1.5, 2, 3, 4.5, bg)
+        rect(3, -6, 2, 3.5)
     elif kind == "folder":
         poly((-7, -5), (-2, -5), (0, -3), (7, -3), (7, 5), (-7, 5))
     else:                                                       # «Інше»: the grid of apps
