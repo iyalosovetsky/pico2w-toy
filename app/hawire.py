@@ -10,6 +10,7 @@ in ~/.config/lcdtoy/house-plan.json; the placed devices and their names in house
 the devices are there without the network too.
 """
 import base64
+import datetime
 import itertools
 import json
 import math
@@ -214,6 +215,13 @@ class WS:
             pass
 
 
+def _epoch(iso):
+    try:
+        return datetime.datetime.fromisoformat(str(iso).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0
+
+
 def _xor(data, mask):
     if not data:
         return b""
@@ -263,6 +271,10 @@ class HA:
         except OSError:
             return None
         return i
+
+    def request(self, msg, cb=None):
+        """Any API message; cb(result message) when the answer comes. False without a connection."""
+        return self.status == "connected" and self._req(msg, cb) is not None
 
     def call(self, domain, service, eid, **data):
         """call_service; False when there is no connection. A failure comes back as a notice."""
@@ -370,7 +382,8 @@ class HA:
                 self._event(m.get("event") or {})
 
     def _loaded(self, got):
-        states = {s["entity_id"]: {"state": s.get("state"), "attributes": s.get("attributes") or {}}
+        states = {s["entity_id"]: {"state": s.get("state"), "attributes": s.get("attributes") or {},
+                                   "lc": _epoch(s.get("last_changed"))}
                   for s in (got.get("states") or []) if "entity_id" in s}
         areas = {a["area_id"]: a.get("name", a["area_id"]) for a in (got.get("areas") or [])}
         dev_area = {d["id"]: d.get("area_id") for d in (got.get("devs") or []) if "id" in d}
@@ -394,12 +407,14 @@ class HA:
     def _event(self, ev):
         with self.lock:
             for eid, s in (ev.get("a") or {}).items():
-                self.states[eid] = {"state": s.get("s"), "attributes": s.get("a") or {}}
+                self.states[eid] = {"state": s.get("s"), "attributes": s.get("a") or {}, "lc": s.get("lc") or 0}
             for eid, d in (ev.get("c") or {}).items():
                 st = self.states.setdefault(eid, {"state": None, "attributes": {}})
                 plus, minus = d.get("+") or {}, d.get("-") or {}
                 if "s" in plus:
                     st["state"] = plus["s"]
+                if "lc" in plus:
+                    st["lc"] = plus["lc"]
                 if "a" in plus:
                     st["attributes"] = dict(st["attributes"], **plus["a"])
                 for k in minus.get("a") or []:
@@ -410,7 +425,7 @@ class HA:
 
     def snapshot(self):
         with self.lock:
-            return {k: {"state": v["state"], "attributes": dict(v["attributes"])} for k, v in self.states.items()}
+            return {k: dict(v, attributes=dict(v["attributes"])) for k, v in self.states.items()}
 
     def get(self, eid):
         with self.lock:
@@ -433,6 +448,10 @@ BIN_DC = {"door", "window", "garage_door", "opening", "motion", "occupancy", "pr
           "carbon_monoxide"}
 WALL_DOMAINS = {"sensor", "binary_sensor", "switch", "input_boolean", "lock"}
 DOMAIN_ORDER = ["light", "climate", "media_player", "cover", "switch", "fan", "sensor", "binary_sensor", "lock"]
+PROJ_RE = re.compile(r"freestyle|projector|про[єе]ктор", re.I)        # as the 3D model (js/main.js) finds them
+SCREEN_RE = re.compile(r"projector.?screen|screen.?remote|екран.{0,3}про[єе]ктор", re.I)
+SBAR_RE = re.compile(r"sound ?bar|саундбар", re.I)
+TV_RE = re.compile(r"\btv\b|telev|телев", re.I)
 LAMP_WORDS = re.compile(r"lamp|light|lustr|svitl|led|світл|люстр|плафон|ламп|бра\b|підсвіт", re.I)
 
 
@@ -464,6 +483,53 @@ def resolve(states, ref):
             if score and (best is None or (score, pres, -len(eid)) > best[0]):
                 best = ((score, pres, -len(eid)), eid)
     return best[1] if best else ref
+
+
+def _label(states, e):
+    return e + " " + str((states.get(e) or {}).get("attributes", {}).get("friendly_name") or "")
+
+
+def proj_group(states):
+    """The projector's media players (Samsung TV, SmartThings, DLNA... each can do its own part), those
+    that are on first, then the available ones."""
+    g = [e for e in states if domain(e) == "media_player" and PROJ_RE.search(_label(states, e))]
+    rank = lambda e: (states[e]["state"] in ("off", "unavailable", "unknown", "standby"),   # noqa: E731
+                      states[e]["state"] == "unavailable", e)
+    return sorted(g, key=rank)
+
+
+def _av_entity(f, states):
+    """The HA entity of a soundbar, a projector or a projector screen in the plan's furniture: its own
+    entity (cover), else found by the name as the 3D model does."""
+    shape = f.get("shape")
+    if shape == "projscreen":
+        if f.get("cover"):
+            return resolve(states, f["cover"])
+        return next((e for e in sorted(states) if domain(e) == "cover" and SCREEN_RE.search(_label(states, e))), None)
+    if f.get("entity"):
+        return resolve(states, f["entity"])
+    if shape == "projector":
+        g = proj_group(states)
+        return g[0] if g else None
+    if shape == "soundbar":
+        c = [e for e in sorted(states) if domain(e) == "media_player" and SBAR_RE.search(_label(states, e))]
+        c.sort(key=lambda e: states[e]["state"] == "unavailable")
+        return c[0] if c else None
+    return None
+
+
+def media_kind(eid, states, places=None):
+    if (places or {}).get(eid, {}).get("kind") in ("soundbar", "projector"):
+        return places[eid]["kind"]
+    st = states.get(eid) or {}
+    a = st.get("attributes") or {}
+    if PROJ_RE.search(_label(states, eid)):
+        return "projector"
+    if SBAR_RE.search(_label(states, eid)):
+        return "soundbar"
+    if a.get("device_class") == "tv" or TV_RE.search(_label(states, eid)):
+        return "tv"
+    return "speaker"
 
 
 def eligible(eid, st, hidden):
@@ -550,6 +616,21 @@ def placements(plan, layout, states, area_of, hidden=()):
                 out[resolve(states, f[key])] = {"f": f.get("floor") or first, "x": f["x"] + f.get("w", 0) / 2,
                                                 "z": f["z"] + f.get("d", 0) / 2,
                                                 "lamp": key == "entity" and domain(f[key]) in ("light", "switch")}
+    skip = set()
+    for f in plan.get("furniture") or []:                        # the soundbar, the projector, its screen
+        if f.get("shape") in ("soundbar", "projector", "projscreen") and "x" in f and states:
+            eid = _av_entity(f, states)
+            if not eid:
+                continue
+            out[eid] = {"f": f.get("floor") or first, "x": f["x"] + f.get("w", 0) / 2, "z": f["z"] + f.get("d", 0) / 2,
+                        "kind": {"projscreen": "screen"}.get(f["shape"], f["shape"]),
+                        "w": f.get("w", 0), "d": f.get("d", 0), "rot": f.get("rot") or 0}
+            if f["shape"] == "projector":
+                skip.update(proj_group(states))
+        elif f.get("shape") == "weatherboard" and f.get("entity"):
+            e = resolve(states, f["entity"])
+            if e in out:
+                out[e]["kind"] = "weather"
     by_area = {}
     for r in plan.get("rooms") or []:
         if r.get("area") and r["area"] not in by_area:
@@ -557,7 +638,7 @@ def placements(plan, layout, states, area_of, hidden=()):
     pos = (layout or {}).get("pos") or {}
     per_room = {}
     for eid, st in states.items():
-        if eid in out or eid in pos or not eligible(eid, st, hidden):
+        if eid in out or eid in pos or eid in skip or not eligible(eid, st, hidden):
             continue
         room = by_area.get(area_of(eid))
         if room:
@@ -600,6 +681,8 @@ def placements(plan, layout, states, area_of, hidden=()):
         name = (st or {}).get("attributes", {}).get("friendly_name", "") if st else ""
         v["lamp"] = bool(v.get("lamp")) or domain(eid) == "light" or v.get("model") in LAMP_MODELS or \
             (domain(eid) == "switch" and bool(LAMP_WORDS.search(eid + " " + name)))
+        if domain(eid) == "media_player" and not v.get("kind") and states:
+            v["kind"] = media_kind(eid, states)
     return out
 
 

@@ -1,8 +1,10 @@
 """ДІМ: the house plan from above, floor by floor, with the Home Assistant devices on it.
 
-The rooms come from the house3d plan server (the same plan as the 3D model, kept on the device for the
-times without the network), the devices sit where the 3D model shows them; their states and the
-controls - Home Assistant over its WebSocket API (hawire.py). A room glows while a lamp in it is on.
+The rooms and the furniture come from the house3d plan server (the same plan as the 3D model, kept on the
+device for the times without the network), the devices sit where the 3D model shows them - the lamps,
+the soundbar, the projector with its screen, the smart speaker, the weather board; their states and the
+controls - Home Assistant over its WebSocket API (hawire.py). A room glows while a lamp in it is on, the
+projector's beam reaches the screen while it is on.
 
 The HA address and a long-lived token: ~/.config/lcdtoy/house.env (mode 600, see config/house.env.example):
     HA_URL=http://10.80.39.78:8123,https://hass.ibotz.space     (tried in turn)
@@ -10,11 +12,17 @@ The HA address and a long-lived token: ~/.config/lcdtoy/house.env (mode 600, see
     PLAN_URL=http://10.80.39.14:8095
     CONFIRM=switch.some_gate     (more entities that ask before they act)
 
-Keys: arrows - the device that way, Enter - its action (toggle; a cover - open / close; media - play /
-pause), Space or i - details (brightness, position, volume, temperature: ← → there), Tab / PgDn / PgUp or
-0-3 - the floor, r - reload the plan, F1 - keys, Esc - exit. HAT: the stick, PRESS - the action, KEY1 - the
-floor, KEY2 - details, KEY3 - exit. Gates, doors and locks ask first («Ні» chosen until ← →).
+The map: arrows - the device that way, Enter - its action (a lamp or a socket - on / off; a cover - open /
+close; the speaker - as a tap on it in the 3D model: playing - pause, just stopped - on, long quiet - it says
+the time, again - the radio; the projector, the soundbar - on / off), Space or i - the device's card,
+Tab / PgDn / PgUp or 0-3 - the floor, r - reload the plan, F1 - keys, Esc - exit.
+The card: ↑ ↓ - a line, ← → - its value (brightness, colour, volume, source, station, position, the target
+temperature), Enter - do it, Esc - back; sensors show their last 24 hours. «Сказати…» on a speaker -
+type a phrase (Tab - УКР / ENG) and HA's TTS says it there.
+HAT: the stick, PRESS - the action, KEY1 - the floor, KEY2 - the card, KEY3 - back.
+Gates, doors and locks ask first («Ні» chosen until ← →).
 """
+import datetime
 import math
 import os
 import sys
@@ -40,7 +48,7 @@ TOP, BAR = 14, 111                     # the map between the floor tabs and the 
 
 STATE_UK = {"on": "увімк.", "off": "вимк.", "unavailable": "недоступний", "unknown": "невідомо",
             "open": "відкрито", "closed": "закрито", "opening": "відкривається", "closing": "закривається",
-            "playing": "грає", "paused": "пауза", "idle": "очікує", "standby": "сплячий", "buffering": "буферизація",
+            "playing": "грає", "paused": "пауза", "idle": "тиша", "standby": "сплячий", "buffering": "буферизація",
             "locked": "зачинено", "unlocked": "відчинено", "locking": "зачиняється", "unlocking": "відчиняється",
             "jammed": "заклинило", "heat": "обігрів", "cool": "охолодження", "auto": "авто", "dry": "осушення",
             "fan_only": "вентилятор", "heat_cool": "авто", "armed_away": "охорона", "armed_home": "охорона вдома",
@@ -50,8 +58,52 @@ BIN_UK = {"motion": ("рух", "тихо"), "occupancy": ("є хтось", "ні
           "door": ("відчинено", "зачинено"), "window": ("відчинено", "зачинено"), "opening": ("відчинено", "зачинено"),
           "garage_door": ("відчинено", "зачинено"), "moisture": ("ПРОТІКАННЯ", "сухо"), "smoke": ("ДИМ", "норма"),
           "gas": ("ГАЗ", "норма"), "carbon_monoxide": ("CO!", "норма")}
+HVAC_UK = {"off": "Вимк", "heat": "Обігрів", "cool": "Холод", "auto": "Авто", "heat_cool": "Авто", "dry": "Осуш.",
+           "fan_only": "Вент."}
 TOGGLE = {"light", "switch", "fan", "input_boolean", "humidifier"}
 DANGER_WORDS = ("vorot", "gate", "garage_door", "ворот", "door", "двер", "хвірт", "lock", "замок")
+COLOURS = [("теплий", (255, 147, 41)), ("білий", (255, 255, 255)), ("червоний", (255, 60, 60)),
+           ("зелений", (60, 255, 120)), ("синій", (60, 120, 255)), ("фіолетовий", (200, 80, 255)),
+           ("рожевий", (255, 80, 180))]
+# the 3D model's stations (js/speaker.js); the plan's own list (plan.radio) when it has one
+RADIO_DEFAULT = [
+    {"name": "Radio ROKS — Classic Rock", "id": "https://online.radioroks.ua/RadioROKS_ClassicRock_HD"},
+    {"name": "Radio ROKS", "id": "https://online.radioroks.ua/RadioROKS_HD"},
+    {"name": "Radio ROKS — рок-балади", "id": "https://online.radioroks.ua/RadioROKS_Ballads_HD"},
+    {"name": "Барди", "id": "https://russianbards.com/stream"},
+    {"name": "Italo Disco 80s", "id": "https://cast1.torontocast.com:2130/stream"},
+    {"name": "Italo Disco (laut.fm)", "id": "https://italo-disco.stream.laut.fm/italo-disco"},
+    {"name": "Мелодія FM — диско", "id": "https://online.melodiafm.ua/MelodiaFM_Disco_HD"},
+]
+RECENT, SPEECH = 120, 12               # s: «just now»; the spoken time lasts about so long
+# supported_features bits a projector's entity needs for a service (the 3D model's avPick)
+AVF = {"turn_on": 128, "turn_off": 256, "volume_set": 4, "select_source": 2048, "select_sound_mode": 65536}
+# the Ukrainian layout over the US keys: «Сказати…» typed on the PicoCalc
+UA = dict(zip("qwertyuiop[]asdfghjkl;'zxcvbnm,./`", "йцукенгшщзхїфівапролджєячсмитьбю.'"))
+UA.update({k.upper(): v.upper() for k, v in UA.items() if k.isalpha()})
+UA.update({"{": "Х", "}": "Ї", ":": "Ж", '"': "Є", "<": "Б", ">": "Ю", "?": ",", "~": "₴"})
+HOURS = ["нуль", "перша", "друга", "третя", "четверта", "п'ята", "шоста", "сьома", "восьма", "дев'ята", "десята",
+         "одинадцята", "дванадцята", "тринадцята", "чотирнадцята", "п'ятнадцята", "шістнадцята", "сімнадцята",
+         "вісімнадцята", "дев'ятнадцята", "двадцята", "двадцять перша", "двадцять друга", "двадцять третя"]
+UNITS = ["", "одна", "дві", "три", "чотири", "п'ять", "шість", "сім", "вісім", "дев'ять", "десять", "одинадцять",
+         "дванадцять", "тринадцять", "чотирнадцять", "п'ятнадцять", "шістнадцять", "сімнадцять", "вісімнадцять",
+         "дев'ятнадцять"]
+TENS = ["", "", "двадцять", "тридцять", "сорок", "п'ятдесят"]
+OUTDOOR = {"tree", "path", "flowerbed", "paving", "rockery", "utilitypole", "pergola", "pool", "hangplant",
+           "powerinlet", "balcony", "slats"}
+
+
+def time_text(t=None):
+    """«Зараз чотирнадцята година п'ять хвилин» - in words, as the 3D model's speaker says it."""
+    d = datetime.datetime.fromtimestamp(t or time.time())
+    hh, m = d.hour, d.minute
+    hour = "нуль годин" if hh == 0 else HOURS[hh] + " година"
+    if m == 0:
+        return "Зараз %s рівно" % hour
+    num = UNITS[m] if m < 20 else TENS[m // 10] + (" " + UNITS[m % 10] if m % 10 else "")
+    u = m % 10
+    word = "хвилина" if u == 1 and m != 11 else "хвилини" if 2 <= u <= 4 and not 12 <= m <= 14 else "хвилин"
+    return "Зараз %s %s %s" % (hour, num, word)
 
 
 def font(name, px):
@@ -81,24 +133,46 @@ def fit(s, f, width):
     return s + "…"
 
 
+def wrap(text, f, width):
+    words, lines, cur = str(text).split(), [], ""
+    for w in words:
+        t = (cur + " " + w).strip()
+        if f.size(t)[0] <= width or not cur:
+            cur = t
+        else:
+            lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
+    return [fit(ln, f, width) for ln in lines] or [""]
+
+
 def friendly(eid, st, names):
     n = (st or {}).get("attributes", {}).get("friendly_name") if st else None
     return n or names.get(eid) or eid.split(".", 1)[-1].replace("_", " ")
 
 
-def state_text(eid, st, dc=None):
+def num(v, nd=1):
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    return ("%.*f" % (nd, x)).rstrip("0").rstrip(".") if abs(x) < 1000 else "%d" % x
+
+
+def state_text(eid, st, dc=None, kind=None):
     if not st:
         return "немає даних"
     s, a, d = st.get("state"), st.get("attributes") or {}, domain(eid)
     if s in ("unavailable", "unknown", None):
         return STATE_UK.get(s, "невідомо")
+    if kind == "screen":
+        if s in ("opening", "closing"):
+            return "піднімається" if s == "opening" else "опускається"
+        return "опущено" if screen_down(st) else "піднято"
     if d == "sensor":
-        try:
-            v = float(s)
-            s = ("%.1f" % v).rstrip("0").rstrip(".") if abs(v) < 1000 else "%d" % v
-        except ValueError:
-            pass
-        return "%s %s" % (s, a.get("unit_of_measurement", "")) if a.get("unit_of_measurement") else s
+        unit = a.get("unit_of_measurement")
+        return "%s %s" % (num(s), unit) if unit else num(s)
     if d == "binary_sensor":
         pair = BIN_UK.get(a.get("device_class") or dc)
         return (pair[0] if s == "on" else pair[1]) if pair else STATE_UK.get(s, s)
@@ -109,9 +183,22 @@ def state_text(eid, st, dc=None):
         out += " %s%%" % a["current_position"]
     if d == "climate" and a.get("current_temperature") is not None:
         out += ", %s°" % a["current_temperature"]
-    if d == "media_player" and s == "playing" and a.get("media_title"):
-        out += ": " + str(a["media_title"])
+    if d == "media_player" and s not in ("off", "standby"):
+        extra = [x for x in (a.get("media_title"), a.get("media_artist"), a.get("source"), a.get("app_name"))
+                 if x and x != "Default Media Receiver"]
+        if extra:
+            out += ": " + " · ".join(dict.fromkeys(str(x) for x in extra))
+        if a.get("is_volume_muted"):
+            out += " · без звуку"
     return out
+
+
+def screen_down(st):
+    """The projector's screen: «closed» in HA is let down (the 3D model's rollDown)."""
+    if not st:
+        return False
+    p = (st.get("attributes") or {}).get("current_position")
+    return p < 50 if p is not None else st.get("state") in ("closed", "closing")
 
 
 def is_on(eid, st):
@@ -126,6 +213,27 @@ def is_on(eid, st):
     if d == "lock":
         return s == "unlocked"
     return s == "on"
+
+
+def colour(spec, default=(120, 120, 120)):
+    try:
+        h = str(spec).split()[0].lstrip("#")
+        return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4)) if len(h) >= 6 else default
+    except (ValueError, IndexError):
+        return default
+
+
+def mix(a, b, k):
+    return tuple(round(a[i] * k + b[i] * (1 - k)) for i in range(3))
+
+
+class Row:
+    """A line of a device's card: «act» (Enter does it), «slider» (← → step it), «choice» (← → pick, Enter
+    applies)."""
+
+    def __init__(self, kind, label, **kw):
+        self.kind, self.label = kind, label
+        self.__dict__.update(kw)
 
 
 class House:
@@ -145,11 +253,18 @@ class House:
         self.plan_gen = self.reg_gen = -1
         self.floor = 0
         self.sel = {}                              # floor id -> the selected entity
-        self.view = "map"                          # map / details / confirm / help
+        self.view = "map"                          # map / details / confirm / help / say
+        self.back_to = "map"
         self.confirm = None                        # (question, domain, service, eid, data)
         self.choice = 0
+        self.row = 0                               # the card's line
+        self.pick = {}                             # (eid, row label) -> the option being chosen with ← →
         self.toast = None
-        self.pending = {}                          # eid -> when an action was sent (drawn as «...»)
+        self.pending = {}                          # eid -> when an action was sent (drawn as a ring)
+        self.mem = {}                              # speaker -> {said, stopped, station}
+        self.hist = {}                             # sensor -> {"at", "data": [(t, v)]}
+        self.fcast = {"at": -1e9, "data": None}
+        self.say_buf, self.say_ua, self.say_eid = "", True, None
         self.dirty = True
         self.last_gen = -1
         self.rebuild()
@@ -178,10 +293,10 @@ class House:
             hawire.save_ha_cache(self.places, states)
             self.names = {e: states[e]["attributes"].get("friendly_name") for e in self.places}
             self.classes = {e: states[e]["attributes"].get("device_class") for e in self.places}
-            self.ha.subscribe(list(self.places))
+            group = hawire.proj_group(states)
+            self.ha.subscribe(list(self.places) + group + [w for w in states if w.startswith("weather.")][:1])
         elif not self.places:                      # no HA yet and nothing cached: the plan's own devices
             self.places = hawire.placements(self.plan, self.plans.layout, {}, lambda e: None)
-        self.rooms_cache = {}
         self.dirty = True
 
     def devices(self, fid):
@@ -205,6 +320,32 @@ class House:
     def state(self, eid):
         return self.ha.get(eid)
 
+    def kind(self, eid):
+        return (self.places.get(eid) or {}).get("kind")
+
+    def group(self, eid):
+        """The projector's entities (its one on the plan and the rest), else just this one."""
+        if self.kind(eid) != "projector":
+            return [eid]
+        with self.ha.lock:
+            g = hawire.proj_group(self.ha.states)
+        return g or [eid]
+
+    def av_pick(self, eid, service):
+        """The entity of the projector's group that is available and can do the service."""
+        bit = AVF.get(service)
+        for e in [eid] + [g for g in self.group(eid) if g != eid]:
+            st = self.state(e)
+            if st and st.get("state") != "unavailable" and (not bit or st["attributes"].get("supported_features", 0) & bit):
+                return e
+        return None
+
+    def av_on(self, eid):
+        return any(is_on(e, self.state(e)) for e in self.group(eid))
+
+    def screen_of(self, fid):
+        return next(((e, v) for e, v in self.devices(fid) if v.get("kind") == "screen"), (None, None))
+
     def lit_groups(self, fid):
         """The rooms (their groups) with a lamp on."""
         lit = set()
@@ -212,11 +353,17 @@ class House:
         for e, v in self.devices(fid):
             if not v.get("lamp") or not is_on(e, self.state(e)):
                 continue
-            for r in rooms:
-                if r["x"] - 0.05 <= v["x"] <= r["x"] + r["w"] + 0.05 and r["z"] - 0.05 <= v["z"] <= r["z"] + r["d"] + 0.05:
-                    lit.add(r.get("group") or r["id"])
-                    break
+            r = self.room_at(rooms, v["x"], v["z"], 0.05)
+            if r:
+                lit.add(r.get("group") or r["id"])
         return lit
+
+    @staticmethod
+    def room_at(rooms, x, z, slack=0.0):
+        for r in rooms:
+            if r["x"] - slack <= x <= r["x"] + r["w"] + slack and r["z"] - slack <= z <= r["z"] + r["d"] + slack:
+                return r
+        return None
 
     def danger(self, eid):
         st = self.state(eid) or {}
@@ -226,7 +373,8 @@ class House:
         if domain(eid) == "cover" and dc in ("garage", "gate", "door"):
             return True
         text = (eid + " " + friendly(eid, st, self.names)).lower()
-        return domain(eid) in ("cover", "switch", "button") and any(w in text for w in DANGER_WORDS)
+        return domain(eid) in ("cover", "switch", "button") and self.kind(eid) != "screen" and \
+            any(w in text for w in DANGER_WORDS)
 
     # ---------------------------------------------------------------- the geometry
     def transform(self, fid):
@@ -245,13 +393,22 @@ class House:
 
     # ---------------------------------------------------------------- actions
     def action(self, eid):
+        """Enter on the map."""
         st = self.state(eid)
-        d = domain(eid)
+        d, kind = domain(eid), self.kind(eid)
         if self.ha.status != "connected":
             return self.say(self.offline_text(), RED)
+        if kind in ("projector", "soundbar"):
+            return self.av_power(eid)
         if not st or st.get("state") == "unavailable":
             return self.say("пристрій недоступний", RED)
         s = st.get("state")
+        if d == "media_player" and kind == "speaker":
+            return self.speaker_tap(eid)
+        if kind == "screen":
+            down = screen_down(st)
+            self.say("екран піднімається" if down else "екран опускається")
+            return self.send("cover", "open_cover" if down else "close_cover", eid, {})
         if d in TOGGLE:
             call = (d, "turn_off" if s == "on" else "turn_on", {})
         elif d == "cover":
@@ -267,15 +424,79 @@ class House:
         elif d == "valve":
             call = (d, "close_valve" if s == "open" else "open_valve", {})
         else:
-            self.view = "details"                   # sensors, climate: nothing to switch - the details
-            return
+            return self.open_card()                 # sensors, climate: nothing to switch - the card
         self.ask_or_call(eid, *call)
+
+    def open_card(self):
+        self.view, self.row = "details", 0
+
+    def av_power(self, eid):
+        """The projector or the soundbar on / off (the projector: on if any of its entities says so)."""
+        on = self.av_on(eid)
+        service = "turn_off" if on else "turn_on"
+        use = self.av_pick(eid, service)
+        what = "Проєктор" if self.kind(eid) == "projector" else "Саундбар"
+        if not use:
+            return self.say("%s не %s по мережі" % (what, "вимикається" if on else "вмикається"), RED)
+        self.say("%s %s" % (what, "вимикається" if on else "вмикається"))
+        self.send("media_player", service, use, {}, mark=eid)
+
+    def speaker_tap(self, eid):
+        """As a tap on the speaker in the 3D model (js/speaker.js decideTap): playing - pause; just stopped
+        - on again; long quiet - it says the time; right after the time - the radio."""
+        st = self.state(eid) or {}
+        mem = self.mem.setdefault(eid, {"said": 0, "stopped": 0, "station": 0})
+        now = time.time()
+        s, said, stopped = st.get("state"), now - mem["said"], now - mem["stopped"]
+        since = now - (st.get("lc") or 0)
+        if s in ("playing", "buffering"):
+            if said < SPEECH:
+                return self.play_station(eid, mem["station"])
+            mem["stopped"] = now
+            return self.send("media_player", "media_pause", eid, {})
+        if said < RECENT or (s != "paused" and stopped < RECENT):
+            return self.play_station(eid, mem["station"])
+        if s == "paused" and (since < RECENT or stopped < RECENT):
+            return self.send("media_player", "media_play", eid, {})
+        self.say_time(eid)
+
+    def radio(self):
+        return self.plan.get("radio") or RADIO_DEFAULT
+
+    def play_station(self, eid, i):
+        L = self.radio()
+        i %= len(L)
+        r = L[i]
+        mem = self.mem.setdefault(eid, {"said": 0, "stopped": 0, "station": 0})
+        mem.update(station=i, said=0, stopped=0)
+        self.say("радіо: " + r["name"], ACCENT)
+        self.send("media_player", "play_media", eid, {"media_content_id": r["id"], "media_content_type": "music",
+                                                     "extra": {"title": r["name"]}})
+
+    def tts(self, eid, message, lang="uk"):
+        """A phrase on the speaker through HA's TTS (Google first, as the 3D model)."""
+        with self.ha.lock:
+            engines = sorted((e for e in self.ha.states if e.startswith("tts.")),
+                             key=lambda e: ("google" not in e, e))
+        data = {"message": message, **({"language": lang} if lang else {})}
+        if engines:
+            ok = self.ha.call("tts", "speak", engines[0], media_player_entity_id=eid, cache=True, **data)
+        else:
+            ok = self.ha.call("tts", "google_translate_say", eid, **data)
+        if not ok:
+            return self.say(self.offline_text(), RED)
+        self.pending[eid] = time.monotonic()
+        self.say("каже: " + message, ACCENT)
+
+    def say_time(self, eid):
+        self.mem.setdefault(eid, {"said": 0, "stopped": 0, "station": 0})["said"] = time.time()
+        self.tts(eid, time_text())
 
     def ask_or_call(self, eid, dom, service, data):
         if self.danger(eid):
             verb = {"open_cover": "Відкрити", "close_cover": "Закрити", "unlock": "Відчинити", "lock": "Зачинити",
-                    "turn_on": "Увімкнути", "turn_off": "Вимкнути", "press": "Натиснути",
-                    "stop_cover": "Зупинити"}.get(service, service)
+                    "turn_on": "Увімкнути", "turn_off": "Вимкнути", "press": "Натиснути", "stop_cover": "Зупинити",
+                    "set_cover_position": "Пересунути"}.get(service, service)
             self.confirm = ("%s «%s»?" % (verb, friendly(eid, self.state(eid), self.names)), dom, service, eid, data)
             self.choice = 0
             self.back_to = self.view
@@ -283,9 +504,9 @@ class House:
             return
         self.send(dom, service, eid, data)
 
-    def send(self, dom, service, eid, data):
+    def send(self, dom, service, eid, data, mark=None):
         if self.ha.call(dom, service, eid, **data):
-            self.pending[eid] = time.monotonic()
+            self.pending[mark or eid] = time.monotonic()
             lcd.play("select")
         else:
             self.say(self.offline_text(), RED)
@@ -298,51 +519,211 @@ class House:
         self.toast = (text, color, time.monotonic())
         self.dirty = True
 
-    def adjust(self, eid, step):
-        """← → in the details: brightness, volume, the target temperature, the cover's position."""
-        st = self.state(eid) or {}
-        a, d = st.get("attributes") or {}, domain(eid)
-        if d == "light" and ("brightness" in a or a.get("supported_color_modes", ["onoff"]) != ["onoff"]):
-            pct = round((a.get("brightness") or 0) * 100 / 255) if st.get("state") == "on" else 0
-            pct = max(0, min(100, (pct // 10 + step) * 10 if step > 0 else math.ceil(pct / 10 + step) * 10))
-            if pct == 0:
-                self.send(d, "turn_off", eid, {})
-            else:
-                self.send(d, "turn_on", eid, {"brightness_pct": pct})
-        elif d == "media_player" and a.get("volume_level") is not None:
-            v = max(0.0, min(1.0, round(a["volume_level"] * 20 + step) / 20))
-            self.send(d, "volume_set", eid, {"volume_level": v})
-        elif d == "climate" and a.get("temperature") is not None:
-            t = a["temperature"] + step * (a.get("target_temp_step") or 0.5)
-            t = max(a.get("min_temp", 5), min(a.get("max_temp", 35), t))
-            self.send(d, "set_temperature", eid, {"temperature": t})
-        elif d == "cover" and a.get("current_position") is not None:
-            p = max(0, min(100, (a["current_position"] // 10 + step) * 10))
-            self.ask_or_call(eid, d, "set_cover_position", {"position": p})
-
     def move(self, dx, dz):
         """The nearest device that way (straight ahead counts more than aside)."""
         fid = self.fid()
         cur = self.selected()
         if cur is None:
             return
-        devs = self.devices(fid)
         here = self.places[cur]
         best = None
-        for e, v in devs:
+        for e, v in self.devices(fid):
             if e == cur:
                 continue
             vx, vz = v["x"] - here["x"], v["z"] - here["z"]
             ahead = vx * dx + vz * dz
             if ahead <= 0.05:
                 continue
-            side = abs(vx * dz - vz * dx)
-            score = ahead + side * 2.2
+            score = ahead + abs(vx * dz - vz * dx) * 2.2
             if best is None or score < best[0]:
                 best = (score, e)
         if best:
             self.sel[fid] = best[1]
             self.dirty = True
+
+    # ---------------------------------------------------------------- the card's lines
+    def rows(self, eid):
+        st = self.state(eid) or {}
+        a, d, kind, s = st.get("attributes") or {}, domain(eid), self.kind(eid), st.get("state")
+        R = []
+        call = lambda svc, **data: (lambda: self.ask_or_call(eid, d, svc, data))   # noqa: E731
+        if not st or s == "unavailable":
+            return R
+        if d == "light":
+            R.append(Row("act", "Вимкнути" if s == "on" else "Увімкнути", do=call("turn_off" if s == "on" else "turn_on")))
+            modes = a.get("supported_color_modes") or []
+            if any(m != "onoff" for m in modes):
+                pct = round((a.get("brightness") or 0) * 100 / 255) if s == "on" else 0
+
+                def bright(step, pct=pct):
+                    p = max(0, min(100, (pct // 10 + step) * 10 if step > 0 else math.ceil(pct / 10 + step) * 10))
+                    self.send(d, "turn_off" if p == 0 else "turn_on", eid, {} if p == 0 else {"brightness_pct": p})
+                R.append(Row("slider", "Яскравість", frac=pct / 100, text="%d%%" % pct, step=bright))
+            if "color_temp" in modes:
+                lo, hi = a.get("min_color_temp_kelvin") or 2000, a.get("max_color_temp_kelvin") or 6500
+                k = a.get("color_temp_kelvin") or (lo + hi) // 2
+                R.append(Row("slider", "Тепло ↔ холодно", frac=(k - lo) / max(1, hi - lo), text="%d K" % k,
+                             step=lambda st_, k=k, lo=lo, hi=hi: self.send(d, "turn_on", eid, {
+                                 "color_temp_kelvin": max(lo, min(hi, k + st_ * 250))})))
+            if any(m in ("hs", "rgb", "rgbw", "rgbww", "xy") for m in modes):
+                R.append(Row("choice", "Колір", options=[n for n, _ in COLOURS], cur=-1,
+                             apply=lambda i: self.send(d, "turn_on", eid, {"rgb_color": list(COLOURS[i][1])}),
+                             swatch=[c for _, c in COLOURS]))
+        elif d in TOGGLE:
+            R.append(Row("act", "Вимкнути" if s == "on" else "Увімкнути", do=call("turn_off" if s == "on" else "turn_on")))
+            if d == "fan" and a.get("percentage") is not None:
+                p = a["percentage"]
+                R.append(Row("slider", "Швидкість", frac=p / 100, text="%d%%" % p,
+                             step=lambda st_, p=p: self.send(d, "set_percentage", eid, {"percentage": max(0, min(100, p + st_ * 10))})))
+        elif kind == "screen":
+            down = screen_down(st)
+            R += [Row("act", "▲ Підняти" if down else "▼ Опустити", do=lambda: self.send(d, "open_cover" if down else "close_cover", eid, {})),
+                  Row("act", "■ Стоп", do=lambda: self.send(d, "stop_cover", eid, {}))]
+            if a.get("current_position") is not None:
+                p = 100 - a["current_position"]
+                R.append(Row("slider", "Опущено", frac=p / 100, text="%d%%" % p,
+                             step=lambda st_, p=p: self.send(d, "set_cover_position", eid, {
+                                 "position": 100 - max(0, min(100, (p // 10 + st_) * 10))})))
+            f = next((e for e in self.ha.states if e.startswith("switch.") and "follow_projector" in e), None)
+            if f:
+                fs = (self.state(f) or {}).get("state")
+                R.append(Row("act", "За проєктором: " + ("так" if fs == "on" else "ні"),
+                             do=lambda: self.send("switch", "toggle", f, {})))
+        elif d == "cover":
+            R += [Row("act", "▲ Відкрити", do=call("open_cover")), Row("act", "■ Стоп", do=lambda: self.send(d, "stop_cover", eid, {})),
+                  Row("act", "▼ Закрити", do=call("close_cover"))]
+            if a.get("current_position") is not None:
+                p = a["current_position"]
+                R.append(Row("slider", "Положення", frac=p / 100, text="%s%%" % p,
+                             step=lambda st_, p=p: self.ask_or_call(eid, d, "set_cover_position",
+                                                                    {"position": max(0, min(100, (p // 10 + st_) * 10))})))
+        elif d == "climate":
+            R.append(Row("act", "Вимкнути" if s != "off" else "Увімкнути", do=call("turn_off" if s != "off" else "turn_on")))
+            if a.get("temperature") is not None:
+                t, stp = a["temperature"], a.get("target_temp_step") or 0.5
+                R.append(Row("slider", "Ціль", frac=(t - a.get("min_temp", 7)) / max(1, a.get("max_temp", 35) - a.get("min_temp", 7)),
+                             text="%s°" % num(t), step=lambda st_, t=t, stp=stp: self.send(d, "set_temperature", eid, {
+                                 "temperature": max(a.get("min_temp", 7), min(a.get("max_temp", 35), t + st_ * stp))})))
+            modes = a.get("hvac_modes") or []
+            if modes:
+                R.append(Row("choice", "Режим", options=[HVAC_UK.get(m, m) for m in modes],
+                             cur=modes.index(s) if s in modes else -1,
+                             apply=lambda i, modes=modes: self.send(d, "set_hvac_mode", eid, {"hvac_mode": modes[i]})))
+        elif d == "media_player":
+            R += self.media_rows(eid, st, a, kind)
+        elif d == "lock":
+            R += [Row("act", "Зачинити", do=call("lock")), Row("act", "Відчинити", do=call("unlock"))]
+        elif d in ("scene", "script"):
+            R.append(Row("act", "Запустити", do=call("turn_on")))
+        elif d == "button":
+            R.append(Row("act", "Натиснути", do=call("press")))
+        return R
+
+    def media_rows(self, eid, st, a, kind):
+        R = []
+        s = st.get("state")
+        if kind in ("projector", "soundbar"):
+            on = self.av_on(eid)
+            R.append(Row("act", "Вимкнути" if on else "Увімкнути", do=lambda: self.av_power(eid)))
+            src = next((e for e in [eid] + self.group(eid) if (self.state(e) or {}).get("state") not in (None, "unavailable")
+                        and (self.state(e)["attributes"].get("source_list"))), None)   # who knows the sources
+            if src:
+                sa = self.state(src)["attributes"]
+                if sa.get("source_list"):
+                    L = sa["source_list"]
+                    R.append(Row("choice", "Джерело", options=L, cur=L.index(sa.get("source")) if sa.get("source") in L else -1,
+                                 apply=lambda i, L=L, src=src: self.send("media_player", "select_source", src, {"source": L[i]})))
+            if a.get("sound_mode_list"):
+                L = a["sound_mode_list"]
+                R.append(Row("choice", "Звук", options=L, cur=L.index(a.get("sound_mode")) if a.get("sound_mode") in L else -1,
+                             apply=lambda i, L=L: self.send("media_player", "select_sound_mode", eid, {"sound_mode": L[i]})))
+            scr, _ = self.screen_of(self.places.get(eid, {}).get("f"))
+            if kind == "projector" and scr:
+                down = screen_down(self.state(scr))
+                R.append(Row("act", "Екран: " + ("підняти" if down else "опустити"),
+                             do=lambda: self.send("cover", "open_cover" if down else "close_cover", scr, {})))
+        elif kind == "speaker":
+            mem = self.mem.setdefault(eid, {"said": 0, "stopped": 0, "station": 0})
+            playing = s in ("playing", "buffering")
+            R.append(Row("act", "❚❚ Пауза" if playing else "▶ Грати" if s == "paused" else "▶ Радіо",
+                         do=lambda: (self.send("media_player", "media_pause", eid, {}), mem.update(stopped=time.time()))
+                         if playing else self.send("media_player", "media_play", eid, {}) if s == "paused"
+                         else self.play_station(eid, mem["station"])))
+            L = self.radio()
+            R.append(Row("choice", "Радіо", options=[r["name"] for r in L], cur=mem["station"] if playing else -1,
+                         apply=lambda i: self.play_station(eid, i)))
+            R.append(Row("act", "Сказати час", do=lambda: self.say_time(eid)))
+            R.append(Row("act", "Сказати…", do=lambda: self.start_say(eid)))
+            if playing:
+                R.append(Row("act", "▶▶ Далі", do=lambda: self.send("media_player", "media_next_track", eid, {})
+                             if (a.get("media_duration") or 0) > 0 else self.play_station(eid, mem["station"] + 1)))
+        else:                                                         # a TV and the rest
+            R.append(Row("act", "❚❚ Пауза" if s == "playing" else "▶ Грати",
+                         do=lambda: self.send("media_player", "media_play_pause", eid, {})))
+            R.append(Row("act", "▶▶ Далі", do=lambda: self.send("media_player", "media_next_track", eid, {})))
+            R.append(Row("act", ("Вимкнути" if is_on(eid, st) else "Увімкнути"),
+                         do=lambda: self.send("media_player", "turn_off" if is_on(eid, st) else "turn_on", eid, {})))
+            if a.get("source_list"):
+                L = a["source_list"]
+                R.append(Row("choice", "Джерело", options=L, cur=L.index(a.get("source")) if a.get("source") in L else -1,
+                             apply=lambda i, L=L: self.send("media_player", "select_source", eid, {"source": L[i]})))
+        vol_e = self.av_pick(eid, "volume_set") if kind == "projector" else eid
+        va = (self.state(vol_e) or {}).get("attributes", {}) if vol_e else {}
+        if va.get("volume_level") is not None:
+            v = va["volume_level"]
+            R.append(Row("slider", "Гучність", frac=v, text="%d%%" % round(v * 100),
+                         step=lambda st_, v=v, e=vol_e: self.send("media_player", "volume_set", e, {
+                             "volume_level": max(0.0, min(1.0, round(v * 20 + st_) / 20))})))
+        if va.get("is_volume_muted") is not None:
+            m = va["is_volume_muted"]
+            R.append(Row("act", "Увімкнути звук" if m else "Без звуку",
+                         do=lambda m=m, e=vol_e: self.send("media_player", "volume_mute", e, {"is_volume_muted": not m})))
+        return R
+
+    def start_say(self, eid):
+        self.say_eid, self.say_buf = eid, ""
+        self.view = "say"
+
+    # ---------------------------------------------------------------- history and the forecast
+    def history(self, eid):
+        """The last 24 h of a sensor: [(t, value)], asked again after 5 minutes (None until it comes)."""
+        h = self.hist.get(eid)
+        now = time.time()
+        if (h is None or now - h["at"] > 300) and self.ha.status == "connected" and not (h or {}).get("busy"):
+            self.hist[eid] = h = {"at": now, "data": (h or {}).get("data"), "busy": True}
+            start = datetime.datetime.fromtimestamp(now - 86400, datetime.timezone.utc).isoformat()
+
+            def done(m, eid=eid):
+                data = []
+                for x in ((m.get("result") or {}).get(eid) or []) if m.get("success") else []:
+                    try:
+                        data.append((x.get("lu") or x.get("lc") or 0, float(x.get("s"))))
+                    except (TypeError, ValueError):
+                        pass
+                self.hist[eid] = {"at": time.time(), "data": data, "busy": False}
+                self.dirty = True
+            self.ha.request({"type": "history/history_during_period", "start_time": start, "entity_ids": [eid],
+                             "minimal_response": True, "no_attributes": True}, done)
+        return (h or {}).get("data")
+
+    def forecast(self):
+        """Tomorrow from HA's weather entity: (condition, max, min) or None."""
+        now = time.time()
+        with self.ha.lock:
+            w = next((e for e in sorted(self.ha.states) if e.startswith("weather.")), None)
+        if w and now - self.fcast["at"] > 1800 and self.ha.status == "connected":
+            self.fcast["at"] = now
+
+            def done(m):
+                f = ((((m.get("result") or {}).get("response") or {}).get(w) or {}).get("forecast")) or []
+                self.fcast["data"] = f
+                self.dirty = True
+            self.ha.request({"type": "call_service", "domain": "weather", "service": "get_forecasts",
+                             "service_data": {"type": "daily"}, "target": {"entity_id": w}, "return_response": True}, done)
+        F = self.fcast["data"] or []
+        tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
+        day = next((x for x in F if str(x.get("datetime", "")).startswith(tomorrow)), F[1] if len(F) > 1 else None)
+        return (day.get("condition"), day.get("temperature"), day.get("templow")) if day else None
 
     # ---------------------------------------------------------------- keys
     def key(self, ev):
@@ -351,39 +732,51 @@ class House:
         if self.view == "help":
             self.view = "map"
             return True
+        if self.view == "say":
+            return self.key_say(ev)
         if self.view == "confirm":
             if k in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN, pygame.K_TAB):
                 self.choice ^= 1
-            elif k in (pygame.K_RETURN, pygame.K_SPACE) or (hat and k == pygame.K_2):
-                if self.choice == 1:
+            elif k in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_y) or (hat and k == pygame.K_2):
+                if self.choice == 1 or k == pygame.K_y:
                     _, dom, service, eid, data = self.confirm
                     self.send(dom, service, eid, data)
-                self.view = self.back_to
-            elif k == pygame.K_y:
-                _, dom, service, eid, data = self.confirm
-                self.send(dom, service, eid, data)
                 self.view = self.back_to
             elif k in (pygame.K_ESCAPE, pygame.K_BACKSPACE, pygame.K_n) or (hat and k == pygame.K_3):
                 self.view = self.back_to
             return True
         eid = self.selected()
         if self.view == "details":
+            rows = self.rows(eid) if eid else []
+            self.row = max(0, min(self.row, len(rows) - 1))
+            r = rows[self.row] if rows else None
             if k in (pygame.K_ESCAPE, pygame.K_BACKSPACE, pygame.K_SPACE, pygame.K_i) or (hat and k in (pygame.K_2, pygame.K_3)):
                 self.view = "map"
-            elif eid and k == pygame.K_RETURN:
-                if domain(eid) == "climate":
-                    st = self.state(eid) or {}
-                    self.ask_or_call(eid, "climate", "turn_off" if st.get("state") not in ("off", None) else "turn_on", {})
-                else:
-                    self.action(eid)
-            elif eid and k in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_MINUS, pygame.K_EQUALS):
-                self.adjust(eid, 1 if k in (pygame.K_RIGHT, pygame.K_EQUALS) else -1)
-            elif eid and domain(eid) == "cover" and k in (pygame.K_UP, pygame.K_DOWN, pygame.K_s):
-                service = {pygame.K_UP: "open_cover", pygame.K_DOWN: "close_cover", pygame.K_s: "stop_cover"}[k]
-                self.ask_or_call(eid, "cover", service, {}) if service != "stop_cover" else \
-                    self.send("cover", service, eid, {})
-            elif eid and domain(eid) == "media_player" and k in (pygame.K_UP, pygame.K_DOWN):
-                self.send("media_player", "media_next_track" if k == pygame.K_UP else "media_previous_track", eid, {})
+            elif k == pygame.K_UP:
+                self.row = max(0, self.row - 1)
+            elif k == pygame.K_DOWN:
+                self.row = min(len(rows) - 1, self.row + 1) if rows else 0
+            elif r and k in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_MINUS, pygame.K_EQUALS):
+                step = 1 if k in (pygame.K_RIGHT, pygame.K_EQUALS) else -1
+                if r.kind == "slider":
+                    if self.ha.status != "connected":
+                        self.say(self.offline_text(), RED)
+                    else:
+                        r.step(step)
+                elif r.kind == "choice":
+                    key = (eid, r.label)
+                    cur = self.pick.get(key, r.cur)
+                    n = len(r.options)
+                    self.pick[key] = (cur + step) % n if cur >= 0 else (0 if step > 0 else n - 1)
+            elif r and k == pygame.K_RETURN:
+                if self.ha.status != "connected":
+                    self.say(self.offline_text(), RED)
+                elif r.kind == "act":
+                    r.do()
+                elif r.kind == "choice":
+                    i = self.pick.pop((eid, r.label), r.cur)
+                    if i >= 0:
+                        r.apply(i)
             return True
         # the map
         if k == pygame.K_ESCAPE or (hat and k == pygame.K_3):
@@ -401,7 +794,7 @@ class House:
                 self.action(eid)
         elif k in (pygame.K_SPACE, pygame.K_i) or (hat and k == pygame.K_2):
             if eid:
-                self.view = "details"
+                self.open_card()
         elif k in (pygame.K_TAB, pygame.K_PAGEDOWN, pygame.K_f) or (hat and k == pygame.K_1):
             self.floor = (self.floor + 1) % max(1, len(self.floors()))
         elif k == pygame.K_PAGEUP:
@@ -416,6 +809,25 @@ class House:
             self.say("оновлюю план…")
         elif k == pygame.K_F1:
             self.view = "help"
+        return True
+
+    def key_say(self, ev):
+        k = ev.key
+        if k == pygame.K_ESCAPE or (getattr(ev, "hat", False) and k == pygame.K_3):
+            self.view = "details"
+        elif k == pygame.K_TAB:
+            self.say_ua = not self.say_ua
+        elif k == pygame.K_BACKSPACE:
+            self.say_buf = self.say_buf[:-1]
+        elif k == pygame.K_RETURN:
+            text = self.say_buf.strip()
+            if text:
+                self.tts(self.say_eid, text, "uk" if self.say_ua else "en")
+                self.view = "details"
+        else:
+            ch = getattr(ev, "unicode", "") or ""
+            if ch and ch.isprintable() and len(self.say_buf) < 120:
+                self.say_buf += UA.get(ch, ch) if self.say_ua else ch
         return True
 
     # ---------------------------------------------------------------- drawing
@@ -438,6 +850,8 @@ class House:
             self.draw_confirm()
         elif self.view == "help":
             self.draw_help()
+        elif self.view == "say":
+            self.draw_say()
         lcd.flip()
 
     def draw_tabs(self, fid):
@@ -452,12 +866,11 @@ class House:
                 pygame.draw.rect(s, ACCENT, (x, 1, w, 11), border_radius=3)
                 col = BG
             else:
-                pygame.draw.rect(s, (50, 50, 55), (x, 1, w, 11), 1 if BIG else 1, border_radius=3)
+                pygame.draw.rect(s, (50, 50, 55), (x, 1, w, 11), 1, border_radius=3)
                 col = DIM
             t = f_tab.render(name, True, col)
             s.blit(t, (x + 2.5, 6.5 - t.get_height() / 2))
             x += w + 2
-        # how many lamps are on here, and the link to HA
         n = sum(1 for e, v in self.devices(fid) if v.get("lamp") and is_on(e, self.state(e)))
         st = self.ha.status
         col = {"connected": GREEN, "loading": ACCENT, "connecting": ACCENT}.get(st, RED if st != "none" else DIM)
@@ -473,7 +886,6 @@ class House:
         tf, k = self.transform(fid)
         rooms = self.rooms(fid)
         lit = self.lit_groups(fid)
-        th = 0.5 if BIG else 1
         rects = []
         for r in rooms:
             (x0, y0), (x1, y1) = tf(r["x"], r["z"]), tf(r["x"] + r["w"], r["z"] + r["d"])
@@ -483,31 +895,59 @@ class House:
             rects.append((r, g, (x0, y0, x1 - x0, y1 - y0), fill, edge))
         for r, g, rc, fill, edge in rects:
             pygame.draw.rect(s, fill, rc)
-            pygame.draw.rect(s, edge, rc, th if not BIG else 1)
+        self.draw_furniture(fid, tf, rooms, {r["id"]: fill for r, g, rc, fill, edge in rects})
+        for r, g, rc, fill, edge in rects:
+            pygame.draw.rect(s, edge, rc, 1)
         # the parts of one room (a group) without the line between them
         for i, (r, g, rc, fill, _) in enumerate(rects):
             for r2, g2, rc2, _, _ in rects[i + 1:]:
                 if g2 != g or not r.get("group"):
                     continue
                 for a, b in ((rc, rc2), (rc2, rc)):
-                    if abs(a[0] + a[2] - b[0]) < 0.6:                # side by side
+                    if abs(a[0] + a[2] - b[0]) < 0.6:
                         y0, y1 = max(a[1], b[1]) + 1, min(a[1] + a[3], b[1] + b[3]) - 1
                         if y1 > y0:
                             pygame.draw.line(s, fill, (b[0], y0), (b[0], y1), 1)
-                    if abs(a[1] + a[3] - b[1]) < 0.6:                # one above the other
+                    if abs(a[1] + a[3] - b[1]) < 0.6:
                         x0, x1 = max(a[0], b[0]) + 1, min(a[0] + a[2], b[0] + b[2]) - 1
                         if x1 > x0:
                             pygame.draw.line(s, fill, (x0, b[1]), (x1, b[1]), 1)
-        # names: one per room, on its biggest part
         best = {}
         for r, g, rc, fill, edge in rects:
             if r.get("name") and (g not in best or rc[2] * rc[3] > best[g][1][2] * best[g][1][3]):
-                best[g] = (r, rc)
-        for g, (r, rc) in best.items():
+                best[g] = (r, rc, fill)
+        for g, (r, rc, fill) in best.items():
             col = LIT_TEXT if g in lit else ROOM_TEXT if r.get("walls") not in (False, "railing") else (140, 125, 105)
-            self.label(r["name"], rc, col)
+            self.label(r["name"], rc, col, fill)
 
-    def label(self, name, rc, col):
+    def draw_furniture(self, fid, tf, rooms, fills):
+        """The furniture as in the 3D model, from above: its footprint in its own colour, faded into the
+        room's (lit rooms keep their glow). Things high on the walls and the ceiling are left out."""
+        s = self.screen
+        items = []
+        for it in self.plan.get("furniture") or []:
+            if (it.get("floor") or (self.floors()[0]["id"] if self.floors() else None)) != fid or "x" not in it:
+                continue
+            if it.get("shape") in OUTDOOR or (it.get("y") or 0) >= 1.4 or it.get("mount") == "wall":
+                continue
+            w, d = it.get("w", 0), it.get("d", 0)
+            cx, cz = it["x"] + w / 2, it["z"] + d / 2
+            r = self.room_at(rooms, cx, cz)
+            if not r or w * d < 0.02:
+                continue
+            items.append((w * d, it, cx, cz, fills.get(r["id"], ROOM)))
+        for _, it, cx, cz, fill in sorted(items, key=lambda x: -x[0]):
+            a = math.radians(it.get("rot") or 0)
+            ca, sa = math.cos(a), math.sin(a)
+            hw, hd = it["w"] / 2, it["d"] / 2
+            pts = [tf(cx + x * ca + z * sa, cz - x * sa + z * ca) for x, z in ((-hw, -hd), (hw, -hd), (hw, hd), (-hw, hd))]
+            base = colour(it.get("color"))
+            k = 0.5 if it.get("shape") in ("aquarium", "billiard", "car", "pool") else 0.38
+            pygame.draw.polygon(s, mix(base, fill, k), pts)
+            if it.get("shape") == "aquarium":
+                pygame.draw.polygon(s, (60, 150, 220), pts, 1)
+
+    def label(self, name, rc, col, fill):
         """The room's name: on one line, or on two where one is too wide, or cut short with «…»."""
         x, y, w, h = rc
         lh = f_room.get_linesize()
@@ -528,7 +968,9 @@ class House:
         y0 = y + 1.5
         for ln in lines:
             t = f_room.render(ln, True, col)
-            self.screen.blit(t, (x + (w - t.get_width()) / 2, y0))
+            tx = x + (w - t.get_width()) / 2
+            pygame.draw.rect(self.screen, fill, (tx - 0.5, y0, t.get_width() + 1, t.get_height() - 0.5))
+            self.screen.blit(t, (tx, y0))
             y0 += lh
 
     def draw_devices(self, fid):
@@ -536,10 +978,23 @@ class House:
         tf, k = self.transform(fid)
         cur = self.selected()
         blink = time.monotonic() % 1 < 0.6
+        # the projector's beam on the screen while it is on
+        scr, sv = self.screen_of(fid)
+        for e, v in self.devices(fid):
+            if v.get("kind") == "projector" and self.av_on(e):
+                px, py = tf(v["x"], v["z"])
+                if scr:
+                    a = math.radians(sv.get("rot") or 0)
+                    hw = max(sv.get("w", 0), sv.get("d", 0)) / 2
+                    ax, az = (math.cos(a), -math.sin(a)) if sv.get("w", 0) >= sv.get("d", 0) else (math.sin(a), math.cos(a))
+                    p1, p2 = tf(sv["x"] - ax * hw, sv["z"] - az * hw), tf(sv["x"] + ax * hw, sv["z"] + az * hw)
+                else:
+                    p1, p2 = (px - 8, py + 14), (px + 8, py + 14)
+                pygame.draw.polygon(s, (75, 85, 110), [(px, py), p1, p2])
+                pygame.draw.line(s, (200, 215, 255), p1, p2, 1)
         for e, v in sorted(self.devices(fid), key=lambda ev: ev[0] == cur):
             x, y = tf(v["x"], v["z"])
-            st = self.state(e)
-            icon(s, e, v, st, x, y, self.classes.get(e))
+            icon(s, e, v, self.state(e), x, y, self.classes.get(e), self.av_on(e) if v.get("kind") in ("projector", "soundbar") else None)
             if e in self.pending:
                 pygame.draw.circle(s, FG, (x, y), 4, 1)
         if cur:
@@ -549,31 +1004,29 @@ class House:
     def draw_bar(self):
         s = self.screen
         pygame.draw.line(s, (60, 60, 66), (0, BAR + 1), (128, BAR + 1))
-        if self.toast and time.monotonic() - self.toast[2] < 3:
-            t = f_text.render(fit(self.toast[0], f_text, 124), True, self.toast[1])
-            s.blit(t, (2, BAR + 3))
-            return
-        notice = self.ha.notice
-        if notice and time.monotonic() - notice[1] < 4:
-            t = f_text.render(fit(notice[0], f_text, 124), True, RED)
-            s.blit(t, (2, BAR + 3))
-            return
+        for msg in (self.toast, self.ha.notice and (self.ha.notice[0], RED, self.ha.notice[1])):
+            if msg and time.monotonic() - msg[2] < 3.5:
+                for i, ln in enumerate(wrap(msg[0], f_text, 124)[:2]):
+                    s.blit(f_text.render(ln, True, msg[1]), (2, BAR + 2 + i * 7))
+                return
         eid = self.selected()
         if not eid:
-            t = f_text.render("на цьому поверсі немає пристроїв", True, DIM)
-            s.blit(t, (2, BAR + 3))
+            s.blit(f_text.render("на цьому поверсі немає пристроїв", True, DIM), (2, BAR + 3))
             return
         st = self.state(eid)
         name = friendly(eid, st, self.names)
         if self.ha.status != "connected" and not st:
             state, col = self.offline_text(), DIM
         else:
-            state = state_text(eid, st, self.classes.get(eid))
-            col = ACCENT if is_on(eid, st) else (RED if (st or {}).get("state") == "unavailable" else FG)
+            on = self.av_on(eid) if self.kind(eid) in ("projector", "soundbar") else is_on(eid, st)
+            st2 = self.state(self.av_pick(eid, "") or eid) if self.kind(eid) == "projector" and on else st
+            state = state_text(eid, st2, self.classes.get(eid), self.kind(eid))
+            if self.kind(eid) == "screen":
+                on = screen_down(st)
+            col = ACCENT if on else (RED if (st or {}).get("state") == "unavailable" else FG)
         t = f_name.render(fit(name, f_name, 124), True, FG)
         s.blit(t, (2, BAR + 2))
-        t2 = f_text.render(fit(state, f_text, 124), True, col)
-        s.blit(t2, (2, BAR + 2 + t.get_height()))
+        s.blit(f_text.render(fit(state, f_text, 124), True, col), (2, BAR + 2 + t.get_height()))
 
     def panel(self, x, y, w, h):
         pygame.draw.rect(self.screen, (14, 16, 22), (x, y, w, h), border_radius=4)
@@ -586,96 +1039,115 @@ class House:
             self.view = "map"
             return
         st = self.state(eid) or {}
-        a, d = st.get("attributes") or {}, domain(eid)
-        self.panel(4, 16, 120, 108)
-        x, y = 8, 19
+        a, d, kind = st.get("attributes") or {}, domain(eid), self.kind(eid)
+        self.panel(2, 15, 124, 112)
+        x, y, W = 6, 17, 116
         name = friendly(eid, st, self.names)
-        for ln in wrap(name, f_name, 112)[:2]:
-            t = f_name.render(ln, True, ACCENT)
+        t = f_name.render(fit(name, f_name, W), True, ACCENT)
+        s.blit(t, (x, y))
+        y += t.get_height()
+        on = self.av_on(eid) if kind in ("projector", "soundbar") else is_on(eid, st)
+        stt = state_text(eid, self.state(self.av_pick(eid, "") or eid) if kind == "projector" and on else st,
+                          self.classes.get(eid), kind) if st else self.offline_text()
+        if kind == "screen":
+            on = screen_down(st)
+        for ln in wrap(stt, f_text, W)[:2]:
+            t = f_text.render(ln, True, ACCENT if on else FG)
             s.blit(t, (x, y))
             y += t.get_height()
-        t = f_small.render(fit(eid, f_small, 112), True, DIM)
-        s.blit(t, (x, y))
-        y += t.get_height() + 2
-        rows = [("Стан", state_text(eid, st, self.classes.get(eid)) if st else self.offline_text())]
-        hints = []
-        bar = None
-        if d == "light":
-            if a.get("brightness") is not None or st.get("state") == "off":
-                pct = round((a.get("brightness") or 0) * 100 / 255) if st.get("state") == "on" else 0
-                bar = ("Яскравість", pct / 100, "%d%%" % pct)
-            if a.get("color_temp_kelvin"):
-                rows.append(("Колір", "%d K" % a["color_temp_kelvin"]))
-            hints = ["Enter - увімк./вимк.", "← → - яскравість"]
-        elif d == "cover":
-            if a.get("current_position") is not None:
-                bar = ("Відкрито", a["current_position"] / 100, "%s%%" % a["current_position"])
-            hints = ["Enter / ↑ ↓ - відкрити / закрити", "s - стоп" + (", ← → - на 10%" if bar else "")]
-        elif d == "media_player":
-            if a.get("media_title"):
-                rows.append(("Грає", str(a["media_title"])))
-            if a.get("media_artist"):
-                rows.append(("Виконавець", str(a["media_artist"])))
-            if a.get("source"):
-                rows.append(("Джерело", str(a["source"])))
-            if a.get("volume_level") is not None:
-                bar = ("Гучність", a["volume_level"], "%d%%" % round(a["volume_level"] * 100))
-            hints = ["Enter - пауза / грати", "← → - гучність, ↑ ↓ - трек"]
-        elif d == "climate":
-            if a.get("current_temperature") is not None:
-                rows.append(("Зараз", "%s°" % a["current_temperature"]))
-            if a.get("temperature") is not None:
-                rows.append(("Ціль", "%s°" % a["temperature"]))
-            if a.get("current_humidity") is not None:
-                rows.append(("Вологість", "%s%%" % a["current_humidity"]))
-            hints = ["Enter - увімк./вимк.", "← → - ціль ±%s°" % (a.get("target_temp_step") or 0.5)]
-        elif d in ("sensor", "binary_sensor"):
-            if a.get("device_class"):
-                rows.append(("Тип", str(a["device_class"])))
-        elif d in TOGGLE or d in ("lock", "valve"):
-            hints = ["Enter - " + ("зачинити / відчинити" if d == "lock" else "увімк./вимк.")]
-        if self.danger(eid):
-            hints.append("з підтвердженням")
-        for label, val in rows:
-            t = f_text.render(label + ":", True, DIM)
+        y += 1
+        if kind == "weather" or d == "sensor":
+            y = self.draw_sensor_card(eid, st, x, y, W, kind == "weather")
+        elif d == "binary_sensor" and st.get("lc"):
+            t = f_small.render("змінився о " + time.strftime("%H:%M", time.localtime(st["lc"])), True, DIM)
             s.blit(t, (x, y))
-            vx = x + t.get_width() + 2
-            col = ACCENT if label == "Стан" and is_on(eid, st) else FG
-            for i, ln in enumerate(wrap(val, f_text, 120 - vx)[:2]):
-                tv = f_text.render(ln, True, col)
-                s.blit(tv, (vx if i == 0 else x + 4, y))
-                y += tv.get_height()
-        if d == "sensor" and st.get("state") not in (None, "unavailable", "unknown"):
-            t = f_big.render(state_text(eid, st), True, ACCENT)
-            s.blit(t, (64 - t.get_width() / 2, y + 2))
-            y += t.get_height() + 4
-        if bar:
-            label, frac, txt = bar
-            y += 2
-            t = f_text.render(label, True, DIM)
-            s.blit(t, (x, y))
-            tv = f_text.render(txt, True, FG)
-            s.blit(tv, (120 - tv.get_width(), y))
             y += t.get_height() + 1
-            pygame.draw.rect(s, (45, 48, 58), (x, y, 112, 5), border_radius=2)
-            if frac > 0:
-                pygame.draw.rect(s, ACCENT, (x, y, max(2, 112 * min(1, frac)), 5), border_radius=2)
-            y += 8
-        yb = 122
-        for h in reversed(hints + ["Esc - назад"]):
-            t = f_small.render(fit(h, f_small, 112), True, DIM)
-            yb -= t.get_height()
-            if yb < y:
-                break
-            s.blit(t, (x, yb))
+        rows = self.rows(eid) if st else []
+        self.row = max(0, min(self.row, len(rows) - 1))
+        lh = 7.4
+        room = int((122 - 8 - y) // lh)
+        top = max(0, min(self.row - room + 1, len(rows) - room)) if room > 0 else 0
+        for i, r in enumerate(rows[top:top + max(0, room)]):
+            i += top
+            ry = y + (i - top) * lh
+            sel = i == self.row
+            if sel:
+                pygame.draw.rect(s, (55, 48, 20), (x - 2, ry - 0.5, W + 4, lh - 0.4), border_radius=2)
+            col = ACCENT if sel else FG
+            if r.kind == "act":
+                s.blit(f_text.render(fit(r.label, f_text, W), True, col), (x, ry))
+            elif r.kind == "slider":
+                t = f_text.render(r.label, True, col)
+                s.blit(t, (x, ry))
+                tv = f_text.render(r.text, True, FG)
+                s.blit(tv, (x + W - tv.get_width(), ry))
+                bx = x + t.get_width() + 3
+                bw = W - t.get_width() - tv.get_width() - 7
+                if bw > 8:
+                    pygame.draw.rect(s, (45, 48, 58), (bx, ry + 2.3, bw, 2.6), border_radius=1)
+                    pygame.draw.rect(s, ACCENT if sel else (170, 140, 40), (bx, ry + 2.3, max(1, bw * min(1, max(0, r.frac))), 2.6),
+                                     border_radius=1)
+            elif r.kind == "choice":
+                t = f_text.render(r.label + ":", True, col)
+                s.blit(t, (x, ry))
+                i_ = self.pick.get((eid, r.label), r.cur)
+                val = r.options[i_] if 0 <= i_ < len(r.options) else "—"
+                changed = (eid, r.label) in self.pick
+                vx = x + t.get_width() + 2
+                if getattr(r, "swatch", None) and 0 <= i_ < len(r.swatch):
+                    pygame.draw.rect(s, r.swatch[i_], (vx, ry + 1, 4, 4))
+                    vx += 5
+                txt = ("‹ %s ›" % val) if sel else val
+                s.blit(f_text.render(fit(txt, f_text, x + W - vx), True, ACCENT if changed else FG), (vx, ry))
+        if not rows and st.get("state") == "unavailable":
+            s.blit(f_text.render("пристрій недоступний", True, RED), (x, y))
+        hint = "↑↓ рядок · ←→ змінити · Enter · Esc" if rows else "Esc - назад"
+        t = f_small.render(fit(hint, f_small, W), True, DIM)
+        s.blit(t, (x, 124 - t.get_height()))
+
+    def draw_sensor_card(self, eid, st, x, y, W, board):
+        """The value big, and the last 24 h; the weather board also the humidity, the pressure and tomorrow."""
+        s = self.screen
+        if st.get("state") not in (None, "unavailable", "unknown"):
+            t = f_big.render(state_text(eid, st), True, ACCENT)
+            s.blit(t, (x, y))
+            if board:
+                extra = []
+                for suf, unit in (("_humidity", "%"), ("_pressure", " гПа")):
+                    o = self.state(eid.replace("_temperature", suf)) if eid.endswith("_temperature") else None
+                    if o and o.get("state") not in ("unavailable", "unknown"):
+                        extra.append(num(o["state"], 0) + unit)
+                for i, e in enumerate(extra):
+                    tv = f_text.render(e, True, FG)
+                    s.blit(tv, (x + W - tv.get_width(), y + i * 7))
+            y += t.get_height() + 1
+        data = self.history(eid)
+        if data and len(data) > 1:
+            spark(s, data, x, y, W, 22, (255, 190, 80))
+            y += 25
+        elif data is None:
+            s.blit(f_small.render("графік за добу…", True, DIM), (x, y))
+            y += 7
+        if board:
+            p = eid.replace("_temperature", "_pressure")
+            if eid.endswith("_temperature") and self.state(p):
+                pd = self.history(p)
+                if pd and len(pd) > 1:
+                    spark(s, pd, x, y, W, 14, (110, 180, 255))
+                    y += 17
+            fc = self.forecast()
+            if fc:
+                cond, hi, lo = fc
+                txt = "завтра: %s, %s° / %s°" % (COND_UK.get(cond, cond or ""), num(hi, 0), num(lo, 0))
+                s.blit(f_text.render(fit(txt, f_text, W), True, FG), (x, y))
+                y += 8
+        return y
 
     def draw_confirm(self):
         s = self.screen
-        q = self.confirm[0]
         self.panel(8, 38, 112, 54)
-        lines = wrap(q, f_name, 104)[:3]
         y = 42
-        for ln in lines:
+        for ln in wrap(self.confirm[0], f_name, 104)[:3]:
             t = f_name.render(ln, True, FG)
             s.blit(t, (64 - t.get_width() / 2, y))
             y += t.get_height()
@@ -686,10 +1158,21 @@ class House:
             t = f_name.render(lab, True, BG if on else DIM)
             s.blit(t, (bx + 19 - t.get_width() / 2, 82 - t.get_height() / 2))
 
+    def draw_say(self):
+        s = self.screen
+        self.panel(4, 30, 120, 66)
+        name = friendly(self.say_eid, self.state(self.say_eid), self.names)
+        s.blit(f_name.render(fit("Сказати на «%s»" % name, f_name, 112), True, ACCENT), (8, 33))
+        lines = wrap(self.say_buf + ("_" if time.monotonic() % 1 < 0.6 else " "), f_text, 110)[-4:]
+        for i, ln in enumerate(lines):
+            s.blit(f_text.render(ln, True, FG), (8, 43 + i * 8))
+        t = f_small.render(("УКР" if self.say_ua else "ENG") + " · Tab - мова · Enter - сказати · Esc", True, DIM)
+        s.blit(t, (8, 94 - t.get_height()))
+
     def draw_help(self):
-        lines = ["# ДІМ - клавіші", "стрілки - пристрій", "Enter - дія (увімк./вимк.,", "  штори, пауза)",
-                 "Пробіл / i - деталі", "Tab, PgUp/PgDn, 0-3 - поверх", "r - оновити план", "Esc - вихід",
-                 "", "Ворота, двері, замки -", "з підтвердженням"]
+        lines = ["# ДІМ - клавіші", "стрілки - пристрій", "Enter - дія: світло, штори,", "  колонка, проєктор",
+                 "Пробіл / i - картка:", "  ↑↓ рядок, ←→ значення, Enter", "Tab, 0-3 - поверх", "r - оновити план",
+                 "Esc - вихід", "Ворота, двері, замки -", "з підтвердженням"]
         self.panel(4, 4, 120, 120)
         y = 8
         for ln in lines:
@@ -717,7 +1200,7 @@ class House:
         g = self.ha.gen
         if g != self.last_gen:
             self.last_gen = g
-            for e in list(self.pending):           # a state change came: the «...» goes
+            for e in list(self.pending):
                 if now - self.pending[e] > 0.3:
                     del self.pending[e]
             self.dirty = True
@@ -729,40 +1212,76 @@ class House:
         return d
 
 
-def wrap(text, f, width):
-    words, lines, cur = str(text).split(), [], ""
-    for w in words:
-        t = (cur + " " + w).strip()
-        if f.size(t)[0] <= width or not cur:
-            cur = t
-        else:
-            lines.append(cur)
-            cur = w
-    if cur:
-        lines.append(cur)
-    return [fit(ln, f, width) for ln in lines] or [""]
+COND_UK = {"sunny": "сонячно", "clear-night": "ясно", "partlycloudy": "мінлива хмарність", "cloudy": "хмарно",
+           "rainy": "дощ", "pouring": "злива", "snowy": "сніг", "snowy-rainy": "мокрий сніг", "fog": "туман",
+           "windy": "вітер", "windy-variant": "вітер", "lightning": "гроза", "lightning-rainy": "гроза", "hail": "град",
+           "exceptional": "негода"}
 
 
-def bulb(s, x, y, r, on):
+def spark(s, data, x, y, w, h, col):
+    """The last 24 h as a line, with the lowest and the highest value."""
+    t0 = time.time() - 86400
+    pts = [(max(t, t0), v) for t, v in data]
+    pts.append((time.time(), pts[-1][1]))
+    lo, hi = min(v for _, v in pts), max(v for _, v in pts)
+    span = (hi - lo) or 1
+    pygame.draw.rect(s, (22, 25, 32), (x, y, w, h))
+    xy = [(x + (t - t0) / 86400 * w, y + h - 1 - (v - lo) / span * (h - 2)) for t, v in pts]
+    step = []
+    for i, p in enumerate(xy):
+        if i:
+            step.append((p[0], step[-1][1]))
+        step.append(p)
+    if len(step) > 1:
+        pygame.draw.lines(s, col, False, step, 1)
+    for txt, ty in ((num(hi), y), (num(lo), y + h - 6)):
+        t = f_val.render(txt, True, (170, 170, 175))
+        s.blit(t, (x + w - t.get_width() - 1, ty))
+
+
+def bulb(s, x, y, r, on, rgb=None):
+    """A lamp: lit (in its colour, if it has one) or dark."""
+    lit = rgb or (255, 214, 90)
     if on:
-        pygame.draw.circle(s, (120, 95, 20), (x, y), r + 1.3)
-    pygame.draw.circle(s, (255, 214, 90) if on else (55, 55, 60), (x, y), r)
+        pygame.draw.circle(s, mix(lit, (0, 0, 0), 0.45), (x, y), r + 1.3)
+    pygame.draw.circle(s, lit if on else (55, 55, 60), (x, y), r)
     if not on:
         pygame.draw.circle(s, (150, 150, 155), (x, y), r, 1)
 
 
-def icon(s, eid, v, st, x, y, dc=None):
+def icon(s, eid, v, st, x, y, dc=None, av_on=None):
     """The device's mark on the plan, coloured by its state."""
-    d = domain(eid)
+    d, kind = domain(eid), v.get("kind")
     state = (st or {}).get("state")
     gone = st is not None and state in ("unavailable", "unknown")
-    on = is_on(eid, st)
+    on = is_on(eid, st) if av_on is None else av_on
     grey = (85, 85, 90)
+    dark = (10, 12, 16)
     if v.get("lamp"):
-        bulb(s, x, y, 2.2, on and not gone)
+        rgb = ((st or {}).get("attributes") or {}).get("rgb_color")
+        bulb(s, x, y, 2.2, on and not gone, tuple(rgb) if on and rgb and len(rgb) == 3 else None)
         if gone:
             pygame.draw.line(s, grey, (x - 1.5, y - 1.5), (x + 1.5, y + 1.5), 1)
-    elif d == "sensor":
+    elif kind == "projector":
+        col = (230, 235, 255) if on else (130, 130, 138)
+        pygame.draw.rect(s, dark, (x - 3, y - 2.5, 6, 5))
+        pygame.draw.rect(s, col, (x - 2.5, y - 2, 5, 4), border_radius=1)
+        pygame.draw.circle(s, (90, 160, 255) if on else dark, (x, y), 1.2)
+    elif kind == "soundbar":
+        col = GREEN if on else (130, 130, 138)
+        pygame.draw.rect(s, dark, (x - 4.5, y - 1.8, 9, 3.6))
+        pygame.draw.rect(s, col, (x - 4, y - 1.2, 8, 2.4), border_radius=1)
+    elif kind == "speaker":
+        col = GREEN if state == "playing" else (255, 190, 80) if on and not gone else (130, 130, 138) if not gone else grey
+        pygame.draw.circle(s, dark, (x, y), 3.2)
+        pygame.draw.circle(s, col, (x, y), 2.6, 1)
+        pygame.draw.circle(s, col, (x, y), 1)
+    elif kind == "screen":
+        on = screen_down(st)
+        col = (235, 235, 235) if on else (110, 110, 118)
+        a = math.radians(v.get("rot") or 0)
+        pygame.draw.line(s, col, (x - 4 * math.cos(a), y + 4 * math.sin(a)), (x + 4 * math.cos(a), y - 4 * math.sin(a)), 2 if on else 1)
+    elif d == "sensor" or kind == "weather":
         a = (st or {}).get("attributes") or {}
         try:
             val = float(state)
@@ -772,7 +1291,9 @@ def icon(s, eid, v, st, x, y, dc=None):
             txt, col = "?°", grey
         t = f_val.render(txt, True, col)
         w, h = t.get_width() + 2, t.get_height()
-        pygame.draw.rect(s, (10, 12, 16), (x - w / 2, y - h / 2, w, h), border_radius=2)
+        pygame.draw.rect(s, dark, (x - w / 2, y - h / 2, w, h), border_radius=2)
+        if kind == "weather":
+            pygame.draw.rect(s, (90, 140, 200), (x - w / 2, y - h / 2, w, h), 1, border_radius=2)
         s.blit(t, (x - t.get_width() / 2, y - h / 2))
     elif d == "binary_sensor":
         a = (st or {}).get("attributes") or {}
@@ -783,14 +1304,16 @@ def icon(s, eid, v, st, x, y, dc=None):
         col = BLUE if on else ((255, 150, 60) if state in ("opening", "closing") else (120, 120, 128))
         if gone:
             col = grey
-        pygame.draw.rect(s, (10, 12, 16), (x - 3, y - 2.5, 6, 5))
+        pygame.draw.rect(s, dark, (x - 3, y - 2.5, 6, 5))
         for i in range(3):
             pygame.draw.line(s, col, (x - 2.5, y - 1.7 + i * 1.7), (x + 2.5, y - 1.7 + i * 1.7), 1)
-    elif d == "media_player":
+    elif d == "media_player":                                    # a TV
         col = GREEN if state == "playing" else ACCENT if on else (120, 120, 128)
         if gone:
             col = grey
-        pygame.draw.polygon(s, col, [(x - 2, y - 2.5), (x - 2, y + 2.5), (x + 2.6, y)])
+        pygame.draw.rect(s, dark, (x - 3.5, y - 2.8, 7, 5.6))
+        pygame.draw.rect(s, col, (x - 3, y - 2.3, 6, 4), 1)
+        pygame.draw.line(s, col, (x - 1.5, y + 2.6), (x + 1.5, y + 2.6), 1)
     elif d == "climate":
         col = CYAN if on else (120, 120, 128)
         for i in range(3):

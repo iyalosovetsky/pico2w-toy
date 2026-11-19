@@ -28,10 +28,12 @@ import hawire  # noqa: E402
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--port", type=int, default=8123)
-ap.add_argument("--plan", default=hawire.PLAN_URL)
+ap.add_argument("--plan", default=hawire.PLAN_URL, help="the plan server, or a plan .json file")
+ap.add_argument("--layout", default=None, help="a layout .json file (by default from the plan server)")
 ap.add_argument("--token", default="test")
 args = ap.parse_args()
 
+LAYOUT = {}
 if os.path.exists(args.plan):
     with open(args.plan, encoding="utf-8") as f:
         PLAN = json.load(f)
@@ -39,6 +41,15 @@ if os.path.exists(args.plan):
 else:
     with urllib.request.urlopen(args.plan.rstrip("/") + "/plan", timeout=10) as r:
         PLAN = json.loads(r.read().decode())["plan"]
+    try:
+        with urllib.request.urlopen(args.plan.rstrip("/") + "/layout", timeout=10) as r:
+            LAYOUT = json.loads(r.read().decode()).get("layout") or {}
+    except (OSError, ValueError):
+        pass
+if args.layout:
+    with open(args.layout, encoding="utf-8") as f:
+        LAYOUT = json.load(f)
+    LAYOUT = LAYOUT.get("layout", LAYOUT)
 
 NAMES = {"light": "Світло", "cover": "Штори", "sensor": "Температура", "media_player": "Колонка"}
 states, areas, ents = {}, {}, []
@@ -46,8 +57,36 @@ rnd = random.Random(7)
 
 
 def add(eid, state, area=None, **attrs):
-    states[eid] = {"entity_id": eid, "state": state, "attributes": attrs}
+    if eid in states:
+        return
+    states[eid] = {"entity_id": eid, "state": state, "attributes": attrs,
+                   "last_changed": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(time.time() - 3600))}
     ents.append({"ei": eid, "ai": area})
+
+
+MEDIA = 0x1FFFFF                       # every media_player feature
+# the house's own AV, under their real names: the smart speaker, the projector (two entities from two
+# integrations, as in HA), its screen with the «follow the projector» switch, the soundbar; TTS, the weather
+add("media_player.audio", "idle", friendly_name="audio", device_class="speaker", supported_features=MEDIA,
+    volume_level=0.3, is_volume_muted=False, app_name="Default Media Receiver")
+add("media_player.pidval_the_freestyle", "on", friendly_name="The Freestyle", device_class="projector",
+    supported_features=89533, source="digital_tv", sound_mode="Стандарт.",
+    sound_mode_list=["Адаптивний звук", "Підсил.", "Стандарт."], volume_level=0.12, is_volume_muted=False)
+add("media_player.the_freestyle_3", "off", friendly_name="The Freestyle", device_class="tv", supported_features=24381,
+    source_list=["TV", "HDMI"])
+add("media_player.pidval_samsung_soundbar_q990b", "on", friendly_name="Samsung Soundbar Q990B", device_class="speaker",
+    supported_features=87437 | 2048, source="digital", source_list=["digital", "HDMI", "bluetooth", "wifi"],
+    sound_mode="surround", sound_mode_list=["standard", "surround", "game", "adaptive_sound"], volume_level=0.16,
+    is_volume_muted=False)
+add("cover.pidval_pult_ekrana_proiektora_projector_screen", "closed", friendly_name="Екран проектора Projector screen",
+    device_class="shade", current_position=0, supported_features=15)          # «closed» - let down
+add("switch.pidval_ekran_proektora_follow_projector", "on", friendly_name="Екран проектора Follow projector")
+add("tts.google_translate_en_com", "2026-11-19T07:24:58+00:00", friendly_name="Google Translate en com")
+add("weather.forecast_golovna", "cloudy", friendly_name="Головна", temperature=4.5)
+add("sensor.0x00158d008b69d59f_humidity", "86", friendly_name="Надворі вологість", device_class="humidity",
+    unit_of_measurement="%")
+add("sensor.0x00158d008b69d59f_pressure", "1012.4", friendly_name="Надворі тиск", device_class="pressure",
+    unit_of_measurement="hPa")
 
 
 for d in PLAN.get("devices") or []:
@@ -77,8 +116,21 @@ for f in PLAN.get("furniture") or []:
                 add(eid, "4.5", friendly_name="Надворі", device_class="temperature", unit_of_measurement="°C")
             elif key == "cover":
                 add(eid, "open", friendly_name=f.get("name") or eid, current_position=100)
+            elif eid.startswith("light."):
+                add(eid, "on", friendly_name=(f.get("name") or eid).strip(), brightness=180, rgb_color=[60, 120, 255],
+                    supported_color_modes=["rgb"])
             else:
                 add(eid, rnd.choice(["on", "off", "off"]), friendly_name=(f.get("name") or eid).strip())
+for eid, v in (LAYOUT.get("pos") or {}).items():          # what the layout placed (the speaker, the sensors)
+    dom = eid.split(".")[0]
+    if dom == "binary_sensor":
+        add(eid, "off", friendly_name=eid.split(".", 1)[1].replace("_", " "),
+            device_class="door" if "contact" in eid else "occupancy")
+    elif dom == "sensor":
+        add(eid, "%.1f" % rnd.uniform(5, 24), friendly_name=eid.split(".", 1)[1].replace("_", " "),
+            device_class="temperature", unit_of_measurement="°C")
+    elif dom in ("switch", "light"):
+        add(eid, "off", friendly_name=eid.split(".", 1)[1].replace("_", " "))
 for r in PLAN.get("rooms") or []:
     a = r.get("area")
     if not a or a in areas:
@@ -93,11 +145,6 @@ for r in PLAN.get("rooms") or []:
     if a in ("bedroom", "big_room", "son_room"):
         add("cover.%s_curtains" % a, "open", a, friendly_name="Штори - " + areas[a], current_position=100,
             device_class="curtain")
-    if a == "billiard":
-        add("cover.projector_screen", "open", a, friendly_name="Екран проектора", current_position=100,
-            device_class="shade")
-        add("media_player.projector", "paused", a, friendly_name="Проектор", volume_level=0.12,
-            media_title="Фільм", device_class="tv")
     if a == "kitchen":
         add("lock.back_door", "locked", a, friendly_name="Задні двері")
 
@@ -156,7 +203,7 @@ class Client:
 
 def compressed(eid):
     s = states[eid]
-    return {"s": s["state"], "a": s["attributes"], "lc": time.time()}
+    return {"s": s["state"], "a": s["attributes"], "lc": s.get("lc", time.time() - 3600)}
 
 
 def changed(eid):
@@ -173,8 +220,9 @@ def changed(eid):
 
 def set_state(eid, state=None, **attrs):
     s = states[eid]
-    if state is not None:
+    if state is not None and state != s["state"]:
         s["state"] = state
+        s["lc"] = time.time()
     s["attributes"].update(attrs)
     changed(eid)
 
@@ -189,7 +237,21 @@ def move_cover(eid, target):
     set_state(eid, "open" if target > 0 else "closed")
 
 
+def speak(eid, message):
+    """The TTS phrase plays on the speaker for a few seconds."""
+    set_state(eid, "playing", media_title=message, media_artist="TTS")
+    time.sleep(4)
+    if states[eid]["attributes"].get("media_artist") == "TTS":
+        set_state(eid, "idle", media_title=None, media_artist=None)
+
+
 def service(dom, srv, eid, data):
+    if dom == "tts":
+        mp = data.get("media_player_entity_id") if srv == "speak" else eid
+        if mp in states:
+            threading.Thread(target=speak, args=(mp, data.get("message", "")), daemon=True).start()
+            return True
+        return False
     if eid not in states:
         return False
     s = states[eid]
@@ -197,10 +259,11 @@ def service(dom, srv, eid, data):
         srv = "turn_off" if s["state"] == "on" else "turn_on"
     if dom == "light" and srv == "turn_on":
         b = round(data["brightness_pct"] * 2.55) if "brightness_pct" in data else s["attributes"].get("brightness") or 255
-        set_state(eid, "on", brightness=b)
+        extra = {k: data[k] for k in ("rgb_color", "color_temp_kelvin") if k in data}
+        set_state(eid, "on", brightness=b, **extra)
     elif dom == "light" and srv == "turn_off":
         set_state(eid, "off", brightness=None)
-    elif srv in ("turn_on", "turn_off") and dom in ("switch", "fan", "input_boolean"):
+    elif srv in ("turn_on", "turn_off") and dom in ("switch", "fan", "input_boolean", "light"):
         set_state(eid, "on" if srv == "turn_on" else "off")
     elif dom == "cover":
         target = {"open_cover": 100, "close_cover": 0}.get(srv, data.get("position"))
@@ -211,13 +274,32 @@ def service(dom, srv, eid, data):
             set_state(eid, "paused" if s["state"] == "playing" else "playing")
         elif srv == "volume_set":
             set_state(eid, None, volume_level=data["volume_level"])
+        elif srv == "volume_mute":
+            set_state(eid, None, is_volume_muted=data["is_volume_muted"])
         elif srv in ("turn_on", "turn_off"):
             set_state(eid, "on" if srv == "turn_on" else "off")
+        elif srv == "media_pause":
+            set_state(eid, "paused")
+        elif srv == "media_play":
+            set_state(eid, "playing")
+        elif srv == "play_media":
+            set_state(eid, "playing", media_title=(data.get("extra") or {}).get("title") or data.get("media_content_id"),
+                      media_artist=None, media_content_id=data.get("media_content_id"))
+        elif srv in ("media_next_track", "media_previous_track"):
+            pass
+        elif srv == "select_source":
+            set_state(eid, None, source=data["source"])
+        elif srv == "select_sound_mode":
+            set_state(eid, None, sound_mode=data["sound_mode"])
+        else:
+            return False
     elif dom == "climate":
         if srv == "set_temperature":
             set_state(eid, None, temperature=data["temperature"])
         elif srv in ("turn_on", "turn_off"):
             set_state(eid, "cool" if srv == "turn_on" else "off")
+        elif srv == "set_hvac_mode":
+            set_state(eid, data["hvac_mode"])
     elif dom == "lock" and srv in ("lock", "unlock"):
         set_state(eid, "locked" if srv == "lock" else "unlocked")
     else:
@@ -270,6 +352,22 @@ def handle(sock):
             elif t == "ping":
                 c.send({"id": i, "type": "pong"})
                 continue
+            elif t == "history/history_during_period":
+                res = {}
+                for e in m.get("entity_ids") or []:
+                    try:
+                        v0 = float(states[e]["state"])
+                    except (KeyError, ValueError):
+                        continue
+                    now, R = time.time(), random.Random(e)
+                    res[e] = [{"s": "%.2f" % (v0 + 3 * __import__("math").sin(i / 9) + R.uniform(-0.4, 0.4) - 3 * __import__("math").sin(48 / 9)),
+                               "lu": now - 86400 + i * 1800} for i in range(48)]
+            elif t == "call_service" and m.get("domain") == "weather":
+                day = lambda n: time.strftime("%Y-%m-%dT10:00:00+00:00", time.gmtime(time.time() + n * 86400))   # noqa: E731
+                eid = (m.get("target") or {}).get("entity_id")
+                res = {"context": {}, "response": {eid: {"forecast": [
+                    {"datetime": day(0), "condition": "cloudy", "temperature": 6, "templow": 1},
+                    {"datetime": day(1), "condition": "snowy", "temperature": 2, "templow": -3}]}}}
             elif t == "call_service":
                 eid = (m.get("target") or {}).get("entity_id")
                 ok = service(m["domain"], m["service"], eid, m.get("service_data") or {})
