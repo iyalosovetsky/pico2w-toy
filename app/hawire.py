@@ -676,6 +676,18 @@ def placements(plan, layout, states, area_of, hidden=()):
                         **({"model": v["model"]} if v.get("model") else {}))
     for eid in (layout or {}).get("hidden") or []:
         out.pop(eid, None)
+    # the energy pieces of the plan (as the 3D model's chips): the batteries, the grid's inlet, the generator -
+    # where they are inside the floor's outline (the generator under the balcony is outside it)
+    for f in plan.get("furniture") or []:
+        kind = {"battery": "battery", "powerinlet": "grid", "generator": "generator"}.get(f.get("shape"))
+        if not kind or "x" not in f:
+            continue
+        fid = f.get("floor") or first
+        rooms = [r for r in plan.get("rooms") or [] if r.get("floor") == fid and "x" in r]
+        cx, cz = f["x"] + f.get("w", 0) / 2, f["z"] + f.get("d", 0) / 2
+        if rooms and min(r["x"] for r in rooms) - 0.5 <= cx <= max(r["x"] + r["w"] for r in rooms) + 0.5 and \
+                min(r["z"] for r in rooms) - 0.5 <= cz <= max(r["z"] + r["d"] for r in rooms) + 0.5:
+            out["energy:" + kind] = {"f": fid, "x": cx, "z": cz, "kind": kind, "name": f.get("name") or kind}
     for eid, v in out.items():
         st = states.get(eid)
         name = (st or {}).get("attributes", {}).get("friendly_name", "") if st else ""
@@ -686,8 +698,103 @@ def placements(plan, layout, states, area_of, hidden=()):
     return out
 
 
-def save_ha_cache(places, states):
-    _save(HA_CACHE, {"at": time.time(), "places": places,
+# ---------------------------------------------------------------- energy (as js/energy.js)
+
+# role -> (domain, unit, [patterns, the better first], not); the entities found by their names, as the 3D
+# model does for the Deye inverter (ha-solarman: sensor.inverter_battery / _battery_power / _grid_power...)
+ROLES = {
+    "gridPower": ("sensor", "W", [r"\bgrid[ _]?power\b", r"total[ _]grid[ _]power", r"\bgrid\b.*\bpower\b", r"мереж.*потуж"], None),
+    "gridVoltage": ("sensor", "V", [r"\bgrid[ _]?(l1[ _])?voltage\b", r"\bgrid\b.*\bvoltage\b", r"мереж.*напруг"], None),
+    "gridOn": ("binary_sensor", None, [r"^binary sensor\.inverter grid\b", r"\bgrid\b", r"мереж"], None),
+    "loadPower": ("sensor", "W", [r"\bload[ _]?power\b", r"\bload\b.*\bpower\b", r"споживан"], None),
+    "pv1": ("sensor", "W", [r"\bpv ?1[ _]?power\b", r"\bpv1\b.*\bpower\b"], None),
+    "pv2": ("sensor", "W", [r"\bpv ?2[ _]?power\b", r"\bpv2\b.*\bpower\b"], None),
+    "pv3": ("sensor", "W", [r"axioma.*\b(pv|mppt1?|solar)\b.*\bpower\b", r"\b(pv ?3|balcon\w*|балкон\w*)\b.*\bpower\b"], None),
+    "genPower": ("sensor", "W", [r"\bgen(erator)?[ _]?(port[ _])?power\b", r"генератор.*потуж"], r"generation|production"),
+    "batPower": ("sensor", "W", [r"\bbattery[ _]?power\b", r"\bbattery\b.*\bpower\b", r"акумул.*потуж"], None),
+    "batVoltage": ("sensor", "V", [r"\bbattery[ _]?voltage\b", r"\btotal[ _]voltage\b", r"\bbattery\b.*\bvoltage\b"], None),
+    "batState": ("sensor", None, [r"\bbattery[ _]?state\b", r"\bbattery[ _]?status\b"], None),
+    "batSoc": ("sensor", "%", [r"^sensor\.inverter battery\b(?! (voltage|power|state|temperature|current))",
+                               r"\bbattery[ _]?(soc|state[ _]of[ _]charge)\b", r"\bsoc\b",
+                               r"\bbattery\b(?!.*(health|soh|temperature|temp))", r"capacity[ _]remaining|remaining[ _]capacity"], None),
+}
+_UNIT = {"W": lambda u: bool(re.match(r"^k?W$", u or "", re.I)), "V": lambda u: (u or "") == "V", "%": lambda u: u == "%"}
+_ROLE_RE = {k: [re.compile(p) for p in v[2]] for k, v in ROLES.items()}
+
+
+def find_roles(states, over=None):
+    """{role: entity id or None}: the plan's own choice (plan.power) if HA has it, else the best by the name."""
+    over = over or {}
+    out = {}
+    for role, (dom, unit, _, nope) in ROLES.items():
+        if over.get(role) in states:
+            out[role] = over[role]
+            continue
+        best = None
+        for eid, st in states.items():
+            if not eid.startswith(dom + "."):
+                continue
+            a = st.get("attributes") or {}
+            if unit and not _UNIT[unit](a.get("unit_of_measurement")):
+                continue
+            t = (eid + " " + str(a.get("friendly_name") or "")).lower().replace("_", " ")
+            if nope and re.search(nope, t):
+                continue
+            i = next((k for k, r in enumerate(_ROLE_RE[role]) if r.search(t)), None)
+            if i is None:
+                continue
+            score = i * 10 + (0 if re.search(r"inverter|deye|solarman", t) else 3) + (50 if st.get("state") == "unavailable" else 0)
+            if best is None or (score, len(eid)) < best[0]:
+                best = ((score, len(eid)), eid)
+        out[role] = best[1] if best else None
+    return out
+
+
+def _watts(st):
+    try:
+        v = float(st["state"])
+    except (TypeError, ValueError, KeyError):
+        return None
+    return v * 1000 if re.match(r"^kW$", (st.get("attributes") or {}).get("unit_of_measurement") or "", re.I) else v
+
+
+def _num(st):
+    try:
+        return float(st["state"])
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
+def energy(get, roles, sign=1):
+    """The grid, the battery, the sun, the generator now (get(eid) -> the state or None); the battery's
+    power: > 0 discharging, < 0 charging (its state, if known, decides the sign)."""
+    st = lambda r: get(roles[r]) if roles.get(r) else None   # noqa: E731
+    gp, gv, on = _watts(st("gridPower")), _num(st("gridVoltage")), st("gridOn")
+    grid = None
+    if on and on.get("state") not in ("unavailable", "unknown"):
+        grid = on["state"] == "on"
+    elif gv is not None:
+        grid = gv > 150
+    elif gp is not None:
+        grid = True
+    bp = _watts(st("batPower"))
+    bs = str((st("batState") or {}).get("state") or "").lower()
+    if bp is not None:
+        bp *= sign
+        ch = -1 if re.match(r"^(0|charg)", bs) else 1 if re.match(r"^(2|discharg)", bs) else 0 if re.match(r"^(1|idle|stand)", bs) else None
+        if ch is not None:
+            bp = ch * abs(bp)
+    return {"grid": grid, "gp": gp, "gv": gv, "load": _watts(st("loadPower")),
+            "pv": {k: _watts(st(k)) for k in ("pv1", "pv2", "pv3")}, "gen": _watts(st("genPower")),
+            "bat": {"p": bp, "v": _num(st("batVoltage")), "soc": _num(st("batSoc"))}}
+
+
+def fmt_w(w):
+    return ("%.*f кВт" % (1 if abs(w) >= 10000 else 2, w / 1000)) if abs(w) >= 1000 else "%d Вт" % round(w)
+
+
+def save_ha_cache(places, states, roles=None):
+    _save(HA_CACHE, {"at": time.time(), "places": places, "roles": roles or {},
                      "names": {e: (states.get(e) or {}).get("attributes", {}).get("friendly_name") for e in places},
                      "classes": {e: (states.get(e) or {}).get("attributes", {}).get("device_class") for e in places}})
 

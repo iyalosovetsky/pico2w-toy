@@ -250,6 +250,7 @@ class House:
         self.places = cache.get("places") or {}
         self.names = cache.get("names") or {}
         self.classes = cache.get("classes") or {}
+        self.roles = cache.get("roles") or {}
         self.plan_gen = self.reg_gen = -1
         self.floor = 0
         self.sel = {}                              # floor id -> the selected entity
@@ -289,14 +290,18 @@ class House:
         if self.ha.reg_gen > 0:
             states = self.ha.snapshot()
             self.places = hawire.placements(self.plan, self.plans.layout, states, self.ha.area_of, self.ha.hidden)
-            self.places = {e: v for e, v in self.places.items() if e in states}
-            hawire.save_ha_cache(self.places, states)
-            self.names = {e: states[e]["attributes"].get("friendly_name") for e in self.places}
-            self.classes = {e: states[e]["attributes"].get("device_class") for e in self.places}
+            self.places = {e: v for e, v in self.places.items() if e in states or e.startswith("energy:")}
+            self.roles = hawire.find_roles(states, self.plan.get("power"))
+            hawire.save_ha_cache(self.places, states, self.roles)
+            self.names = {e: v.get("name") or states.get(e, {}).get("attributes", {}).get("friendly_name")
+                          for e, v in self.places.items()}
+            self.classes = {e: states.get(e, {}).get("attributes", {}).get("device_class") for e in self.places}
             group = hawire.proj_group(states)
-            self.ha.subscribe(list(self.places) + group + [w for w in states if w.startswith("weather.")][:1])
+            self.ha.subscribe([e for e in self.places if not e.startswith("energy:")] + group +
+                              [w for w in states if w.startswith("weather.")][:1] + [e for e in self.roles.values() if e])
         elif not self.places:                      # no HA yet and nothing cached: the plan's own devices
             self.places = hawire.placements(self.plan, self.plans.layout, {}, lambda e: None)
+            self.names = {e: v["name"] for e, v in self.places.items() if v.get("name")}
         self.dirty = True
 
     def devices(self, fid):
@@ -342,6 +347,30 @@ class House:
 
     def av_on(self, eid):
         return any(is_on(e, self.state(e)) for e in self.group(eid))
+
+    def energy(self):
+        return hawire.energy(self.state, self.roles, (self.plan.get("power") or {}).get("batSign", 1))
+
+    def energy_text(self, kind, en=None):
+        """The battery, the grid or the generator in a line (as the 3D model's chips)."""
+        en = en or self.energy()
+        if kind == "battery":
+            b = en["bat"]
+            if b["soc"] is None and b["p"] is None and b["v"] is None:
+                return "немає даних інвертора"
+            d = "" if b["p"] is None or abs(b["p"]) < 20 else ("заряд " if b["p"] < 0 else "розряд ") + hawire.fmt_w(abs(b["p"]))
+            return " · ".join(x for x in ("%d%%" % round(b["soc"]) if b["soc"] is not None else "", d,
+                                          "%.1f В" % b["v"] if b["v"] is not None else "") if x)
+        if kind == "grid":
+            if en["grid"] is None:
+                return "немає даних інвертора"
+            if not en["grid"]:
+                return "НЕМАЄ МЕРЕЖІ" + (" · дім " + hawire.fmt_w(en["load"]) if en["load"] is not None else "")
+            gp = en["gp"]
+            return " · ".join(x for x in ("мережа є", "" if gp is None else ("віддача " if gp < 0 else "з мережі ") + hawire.fmt_w(abs(gp)),
+                                          "%d В" % round(en["gv"]) if en["gv"] is not None else "") if x)
+        g = en["gen"]
+        return "немає даних" if g is None else ("працює · " + hawire.fmt_w(g)) if g > 50 else "не працює"
 
     def screen_of(self, fid):
         return next(((e, v) for e, v in self.devices(fid) if v.get("kind") == "screen"), (None, None))
@@ -396,6 +425,8 @@ class House:
         """Enter on the map."""
         st = self.state(eid)
         d, kind = domain(eid), self.kind(eid)
+        if eid.startswith("energy:"):
+            return self.open_card()
         if self.ha.status != "connected":
             return self.say(self.offline_text(), RED)
         if kind in ("projector", "soundbar"):
@@ -992,8 +1023,12 @@ class House:
                     p1, p2 = (px - 8, py + 14), (px + 8, py + 14)
                 pygame.draw.polygon(s, (75, 85, 110), [(px, py), p1, p2])
                 pygame.draw.line(s, (200, 215, 255), p1, p2, 1)
+        en = self.energy() if any(e.startswith("energy:") for e, _ in self.devices(fid)) else None
         for e, v in sorted(self.devices(fid), key=lambda ev: ev[0] == cur):
             x, y = tf(v["x"], v["z"])
+            if e.startswith("energy:"):
+                energy_icon(s, v["kind"], en, x, y)
+                continue
             icon(s, e, v, self.state(e), x, y, self.classes.get(e), self.av_on(e) if v.get("kind") in ("projector", "soundbar") else None)
             if e in self.pending:
                 pygame.draw.circle(s, FG, (x, y), 4, 1)
@@ -1015,6 +1050,14 @@ class House:
             return
         st = self.state(eid)
         name = friendly(eid, st, self.names)
+        if eid.startswith("energy:"):
+            en = self.energy()
+            txt = self.energy_text(self.kind(eid), en) if self.ha.status == "connected" else self.offline_text()
+            bad = (self.kind(eid) == "grid" and en["grid"] is False)
+            t = f_name.render(fit(name, f_name, 124), True, FG)
+            s.blit(t, (2, BAR + 2))
+            s.blit(f_text.render(fit(txt, f_text, 124), True, RED if bad else ACCENT), (2, BAR + 2 + t.get_height()))
+            return
         if self.ha.status != "connected" and not st:
             state, col = self.offline_text(), DIM
         else:
@@ -1038,6 +1081,8 @@ class House:
         if not eid:
             self.view = "map"
             return
+        if eid.startswith("energy:"):
+            return self.draw_energy_card(eid)
         st = self.state(eid) or {}
         a, d, kind = st.get("attributes") or {}, domain(eid), self.kind(eid)
         self.panel(2, 15, 124, 112)
@@ -1103,6 +1148,72 @@ class House:
             s.blit(f_text.render("пристрій недоступний", True, RED), (x, y))
         hint = "↑↓ рядок · ←→ змінити · Enter · Esc" if rows else "Esc - назад"
         t = f_small.render(fit(hint, f_small, W), True, DIM)
+        s.blit(t, (x, 124 - t.get_height()))
+
+    def draw_energy_card(self, eid):
+        """The battery, the grid and the generator together, as the 3D model's energy panel."""
+        s = self.screen
+        kind = self.kind(eid)
+        en = self.energy()
+        self.panel(2, 15, 124, 112)
+        x, y, W = 6, 17, 116
+        t = f_name.render(fit(friendly(eid, None, self.names), f_name, W), True, ACCENT)
+        s.blit(t, (x, y))
+        y += t.get_height() + 1
+        b = en["bat"]
+        if kind == "battery" and b["soc"] is not None:
+            soc = b["soc"]
+            col = GREEN if soc > 50 else ACCENT if soc > 20 else RED
+            t = f_big.render("%d%%" % round(soc), True, col)
+            s.blit(t, (x, y))
+            bx = x + t.get_width() + 4
+            battery_icon(s, bx + 9, y + t.get_height() / 2, soc, b["p"], 2.2)
+            d = "" if b["p"] is None or abs(b["p"]) < 20 else ("заряджається " if b["p"] < 0 else "розряджається ") + hawire.fmt_w(abs(b["p"]))
+            if d:
+                tv = f_text.render(d, True, FG)
+                s.blit(tv, (x + W - tv.get_width(), y + t.get_height() - tv.get_height()))
+            y += t.get_height() + 1
+            graph = self.roles.get("batSoc")
+        elif kind == "grid":
+            on = en["grid"]
+            t = f_big.render("мережа є" if on else "немає мережі" if on is False else "мережа ?", True,
+                             GREEN if on else RED if on is False else DIM)
+            s.blit(t, (x, y))
+            y += t.get_height() + 1
+            graph = self.roles.get("gridPower")
+        else:
+            t = f_big.render(self.energy_text("generator", en), True, ACCENT if (en["gen"] or 0) > 50 else DIM)
+            s.blit(t, (x, y))
+            y += t.get_height() + 1
+            graph = self.roles.get("genPower")
+        data = self.history(graph) if graph else None
+        if data and len(data) > 1:
+            spark(s, data, x, y, W, 18, (120, 210, 120) if kind == "battery" else (110, 180, 255))
+            y += 21
+        lines = []
+        if en["grid"] is not None:
+            lines.append(("Мережа", self.energy_text("grid", en), RED if en["grid"] is False else FG))
+        if en["load"] is not None:
+            lines.append(("Будинок", hawire.fmt_w(en["load"]), FG))
+        if b["soc"] is not None or b["p"] is not None:
+            lines.append(("Акумулятор", self.energy_text("battery", en), FG))
+        pv = [(k.upper(), w) for k, w in en["pv"].items() if w is not None]
+        if pv:
+            lines.append(("Сонце", " · ".join("%s %s" % (k, hawire.fmt_w(w)) for k, w in pv), ACCENT if any(w > 50 for _, w in pv) else FG))
+        if en["gen"] is not None:
+            lines.append(("Генератор", self.energy_text("generator", en), FG))
+        if not lines:
+            lines.append(("", "датчиків інвертора в HA не знайдено" if self.ha.status == "connected" else self.offline_text(), DIM))
+        for label, val, col in lines:
+            if y > 116:
+                break
+            tl = f_text.render(label + ":" if label else "", True, DIM)
+            s.blit(tl, (x, y))
+            vx = x + (tl.get_width() + 2 if label else 0)
+            for i, ln in enumerate(wrap(val, f_text, x + W - vx)[:2]):
+                s.blit(f_text.render(ln, True, col), (vx, y))
+                y += 7
+        t = f_small.render("Esc - назад", True, DIM)
         s.blit(t, (x, 124 - t.get_height()))
 
     def draw_sensor_card(self, eid, st, x, y, W, board):
@@ -1237,6 +1348,42 @@ def spark(s, data, x, y, w, h, col):
     for txt, ty in ((num(hi), y), (num(lo), y + h - 6)):
         t = f_val.render(txt, True, (170, 170, 175))
         s.blit(t, (x + w - t.get_width() - 1, ty))
+
+
+def battery_icon(s, x, y, soc, p, k=1.0):
+    """A battery filled to its charge: green / yellow / red; a bolt while it charges."""
+    w, h = 7 * k, 4 * k
+    pygame.draw.rect(s, (10, 12, 16), (x - w / 2 - 1, y - h / 2 - 1, w + 3, h + 2))
+    col = (130, 130, 138) if soc is None else GREEN if soc > 50 else ACCENT if soc > 20 else RED
+    pygame.draw.rect(s, col, (x - w / 2, y - h / 2, w, h), 1)
+    pygame.draw.rect(s, col, (x + w / 2, y - h / 4, 0.8 * k, h / 2))
+    if soc is not None:
+        pygame.draw.rect(s, col, (x - w / 2 + 0.7, y - h / 2 + 0.7, max(0.5, (w - 1.4) * min(100, soc) / 100), h - 1.4))
+    if p is not None and p < -20:
+        pygame.draw.polygon(s, (255, 255, 255), [(x + 0.4 * k, y - h / 2 - 0.3), (x - 1.1 * k, y + 0.3 * k), (x + 0.2 * k, y + 0.3 * k),
+                                                 (x - 0.4 * k, y + h / 2 + 0.3), (x + 1.1 * k, y - 0.3 * k), (x - 0.2 * k, y - 0.3 * k)])
+
+
+def energy_icon(s, kind, en, x, y):
+    if kind == "battery":
+        b = (en or {}).get("bat") or {}
+        battery_icon(s, x, y, b.get("soc"), b.get("p"))
+        if b.get("soc") is not None:
+            t = f_val.render("%d%%" % round(b["soc"]), True, FG)
+            pygame.draw.rect(s, (10, 12, 16), (x + 4.5, y - t.get_height() / 2, t.get_width() + 1, t.get_height()))
+            s.blit(t, (x + 5, y - t.get_height() / 2))
+    elif kind == "grid":
+        on = (en or {}).get("grid")
+        col = CYAN if on else RED if on is False else (130, 130, 138)
+        pygame.draw.circle(s, (10, 12, 16), (x, y), 3.3)
+        pygame.draw.polygon(s, col, [(x + 0.8, y - 3), (x - 1.8, y + 0.4), (x - 0.1, y + 0.4), (x - 0.8, y + 3), (x + 1.8, y - 0.4), (x + 0.1, y - 0.4)])
+    else:
+        g = (en or {}).get("gen")
+        col = ACCENT if (g or 0) > 50 else (130, 130, 138)
+        pygame.draw.circle(s, (10, 12, 16), (x, y), 3.3)
+        pygame.draw.circle(s, col, (x, y), 2.8, 1)
+        t = f_val.render("G", True, col)
+        s.blit(t, (x - t.get_width() / 2, y - t.get_height() / 2))
 
 
 def bulb(s, x, y, r, on, rgb=None):

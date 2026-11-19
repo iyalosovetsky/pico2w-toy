@@ -83,6 +83,19 @@ add("cover.pidval_pult_ekrana_proiektora_projector_screen", "closed", friendly_n
 add("switch.pidval_ekran_proektora_follow_projector", "on", friendly_name="Екран проектора Follow projector")
 add("tts.google_translate_en_com", "2026-11-19T07:24:58+00:00", friendly_name="Google Translate en com")
 add("weather.forecast_golovna", "cloudy", friendly_name="Головна", temperature=4.5)
+# the Deye inverter (ha-solarman), as the 3D model's energy finds it: the battery charging, the grid on
+for eid, st, unit, name in (("sensor.inverter_battery", "78", "%", "Inverter Battery"),
+                            ("sensor.inverter_battery_power", "-1240", "W", "Inverter Battery Power"),
+                            ("sensor.inverter_battery_state", "charging", None, "Inverter Battery State"),
+                            ("sensor.inverter_battery_voltage", "52.8", "V", "Inverter Battery Voltage"),
+                            ("sensor.inverter_grid_power", "2210", "W", "Inverter Grid Power"),
+                            ("sensor.inverter_grid_l1_voltage", "224.1", "V", "Inverter Grid L1 Voltage"),
+                            ("sensor.inverter_load_power", "947", "W", "Inverter Load Power"),
+                            ("sensor.inverter_pv1_power", "0", "W", "Inverter PV1 Power"),
+                            ("sensor.inverter_pv2_power", "0", "W", "Inverter PV2 Power"),
+                            ("sensor.inverter_generator_power", "0", "W", "Inverter Generator Power")):
+    add(eid, st, friendly_name=name, **({"unit_of_measurement": unit} if unit else {}))
+add("binary_sensor.inverter_grid", "on", friendly_name="Inverter Grid")
 add("sensor.0x00158d008b69d59f_humidity", "86", friendly_name="Надворі вологість", device_class="humidity",
     unit_of_measurement="%")
 add("sensor.0x00158d008b69d59f_pressure", "1012.4", friendly_name="Надворі тиск", device_class="pressure",
