@@ -13,7 +13,8 @@ The HA address and a long-lived token: ~/.config/lcdtoy/house.env (mode 600, see
     CONFIRM=switch.some_gate     (more entities that ask before they act)
 
 The floor: arrows - the room that way, Enter - into the room, Space - the room's lights on / off,
-Tab / PgDn / PgUp or 0-3 - the floor, r - reload the plan, F1 - keys, Esc - exit.
+Tab / PgDn / PgUp or 0-3 - the floor, [ / ] - turn the floor (in a room - the room) by 90° (kept for the
+next start, ~/.config/lcdtoy/house-view.json), r - reload the plan, F1 - keys, Esc - exit.
 In a room (drawn bigger): arrows or Tab / Shift+Tab - its devices, Space - the device's action (a lamp or a
 socket - on / off; a cover - open / close; the speaker - as a tap on it in the 3D model: playing - pause, just
 stopped - on, long quiet - it says the time, again - the radio; the projector, the soundbar - on / off),
@@ -26,6 +27,7 @@ KEY2 - the action, KEY3 - back.
 Gates, doors and locks ask first («Ні» chosen until ← →).
 """
 import datetime
+import json
 import math
 import os
 import sys
@@ -230,6 +232,36 @@ def mix(a, b, k):
     return tuple(round(a[i] * k + b[i] * (1 - k)) for i in range(3))
 
 
+VIEW_FILE = os.path.join(hawire.CONF_DIR, "house-view.json")
+
+
+def turn(x, z, q):
+    """A plan point turned q quarter turns clockwise (as seen from above, z down the screen)."""
+    for _ in range(q % 4):
+        x, z = -z, x
+    return x, z
+
+
+def load_view():
+    try:
+        with open(VIEW_FILE) as f:
+            d = json.load(f).get("turns") or {}
+        return {str(k): int(v) % 4 for k, v in d.items()}
+    except (OSError, ValueError, AttributeError, TypeError):
+        return {}
+
+
+def save_view(turns):
+    try:
+        os.makedirs(hawire.CONF_DIR, exist_ok=True)
+        tmp = VIEW_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"turns": turns}, f)
+        os.replace(tmp, VIEW_FILE)
+    except OSError:
+        pass
+
+
 ARROWS = {pygame.K_UP: (0, -1), pygame.K_DOWN: (0, 1), pygame.K_LEFT: (-1, 0), pygame.K_RIGHT: (1, 0)}
 
 
@@ -272,6 +304,7 @@ class House:
         self.sel = {}                              # floor id -> the selected entity
         self.rsel = {}                             # floor id -> the selected room (its group)
         self.room = None                           # the room we are in, else None (choosing a room)
+        self.view_turns = load_view()              # floor / "floor/room" -> quarter turns ([ ]), kept
         self.view = "map"                          # map / details / confirm / help / say
         self.back_to = "map"
         self.confirm = None                        # (question, domain, service, eid, data)
@@ -378,8 +411,10 @@ class House:
                                                         max(r["z"] - v["z"], 0, v["z"] - r["z"] - r["d"])))
             if r:
                 M.setdefault(r.get("group") or r["id"], []).append(e)
-        for L in M.values():
-            L.sort(key=lambda e: (round(self.places[e]["z"] * 2), self.places[e]["x"]))
+        for g, L in M.items():
+            q = self.turns(fid, g)
+            L.sort(key=lambda e: (round(turn(self.places[e]["x"], self.places[e]["z"], q)[1] * 2),
+                                  turn(self.places[e]["x"], self.places[e]["z"], q)[0]))
         return M
 
     def cur_room(self):
@@ -577,31 +612,62 @@ class House:
             any(w in text for w in DANGER_WORDS)
 
     # ---------------------------------------------------------------- the geometry
+    def turns(self, fid=None, room=None):
+        """How many quarter turns clockwise the plan is drawn: the room's own, else its floor's."""
+        fid = fid or self.fid()
+        room = self.room if room is None else room
+        q = self.view_turns.get(fid, 0)
+        return self.view_turns.get("%s/%s" % (fid, room), q) if room else q
+
+    def turn(self, key):
+        """[ / ]: the floor (or the room we are in) a quarter turn; kept for the next start."""
+        fid = self.fid()
+        if not fid:
+            return
+        k = "%s/%s" % (fid, self.room) if self.room else fid
+        q = (self.turns() + key) % 4
+        if self.room and q == self.view_turns.get(fid, 0):
+            self.view_turns.pop(k, None)               # the same as its floor again
+        else:
+            self.view_turns[k] = q
+        save_view(self.view_turns)
+        self.say("%s: поворот %d°" % ("кімната" if self.room else "поверх", q * 90))
+
+    def to_plan(self, dx, dz):
+        """A screen direction -> the plan's (the plan is turned)."""
+        for _ in range(self.turns()):
+            dx, dz = dz, -dx
+        return dx, dz
+
     def transform(self, fid):
-        """Plan metres -> the screen: the whole floor, or the room we are in, bigger (with a bit around it)."""
+        """Plan metres -> the screen: the whole floor, or the room we are in, bigger (with a bit around it),
+        turned as chosen with [ and ]."""
         rooms = self.rooms(fid)
         if not rooms:
             return lambda x, z: (64, 64), 1
-        x0 = min(r["x"] for r in rooms)
-        x1 = max(r["x"] + r["w"] for r in rooms)
-        z0 = min(r["z"] for r in rooms)
-        z1 = max(r["z"] + r["d"] for r in rooms)
+        q = self.turns(fid)
+
+        def box(rects):
+            pts = [turn(x, z, q) for r in rects for x, z in ((r["x"], r["z"]), (r["x"] + r["w"], r["z"] + r["d"]))]
+            return min(p[0] for p in pts), max(p[0] for p in pts), min(p[1] for p in pts), max(p[1] for p in pts)
+        x0, x1, z0, z1 = box(rooms)
         aw, ah = 124, BAR - TOP - 4
         kf = min(aw / max(0.5, x1 - x0), ah / max(0.5, z1 - z0))
         u = self.units(fid).get(self.room) if self.room else None
         if u:
             m = 0.35
-            x0, x1, z0, z1 = u["x0"] - m, u["x1"] + m, u["z0"] - m, u["z1"] + m
+            x0, x1, z0, z1 = box(u["parts"])
+            x0, x1, z0, z1 = x0 - m, x1 + m, z0 - m, z1 + m
             k = min(aw / max(0.5, x1 - x0), ah / max(0.5, z1 - z0), max(kf, 40))
-            return self._tf(x0, x1, z0, z1, k, aw, ah), k
-        k = kf
-        return self._tf(x0, x1, z0, z1, k, aw, ah), k
-
-    @staticmethod
-    def _tf(x0, x1, z0, z1, k, aw, ah):
+        else:
+            k = kf
         ox = 2 + (aw - (x1 - x0) * k) / 2 - x0 * k
         oz = TOP + 2 + (ah - (z1 - z0) * k) / 2 - z0 * k
-        return lambda x, z: (ox + x * k, oz + z * k)
+
+        def tf(x, z):
+            x, z = turn(x, z, q)
+            return ox + x * k, oz + z * k
+        return tf, k
 
     # ---------------------------------------------------------------- actions
     def action(self, eid):
@@ -1009,11 +1075,13 @@ class House:
             self.say("оновлюю план…")
         elif k == pygame.K_F1:
             self.view = "help"
+        elif k in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET):
+            self.turn(1 if k == pygame.K_RIGHTBRACKET else -1)
         elif not self.room:                                   # choosing a room
             if k == pygame.K_ESCAPE or (hat and k == pygame.K_3):
                 return False
             if k in ARROWS:
-                self.move_room(*ARROWS[k])
+                self.move_room(*self.to_plan(*ARROWS[k]))
             elif k == pygame.K_RETURN:
                 self.enter_room()
             elif k == pygame.K_SPACE or (hat and k == pygame.K_2):
@@ -1025,7 +1093,7 @@ class House:
                 self.rsel[self.fid()] = self.room
                 self.room = None
             elif k in ARROWS:
-                self.move(*ARROWS[k])
+                self.move(*self.to_plan(*ARROWS[k]))
             elif k == pygame.K_TAB or (hat and k == pygame.K_1):
                 L = self.members(self.fid()).get(self.room, [])
                 if eid in L:
@@ -1130,7 +1198,8 @@ class House:
         pygame.Surface.set_clip(s, lcd._rect((0, TOP, 128, BAR + 1 - TOP)))
         rects = []
         for r in rooms:
-            (x0, y0), (x1, y1) = tf(r["x"], r["z"]), tf(r["x"] + r["w"], r["z"] + r["d"])
+            (ax, ay), (bx, by) = tf(r["x"], r["z"]), tf(r["x"] + r["w"], r["z"] + r["d"])
+            x0, y0, x1, y1 = min(ax, bx), min(ay, by), max(ax, bx), max(ay, by)
             g = r.get("group") or r["id"]
             outdoor = r.get("walls") in (False, "railing")
             fill, edge = (LIT, LIT_EDGE) if g in lit else (OUT, OUT_EDGE) if outdoor else (ROOM, ROOM_EDGE)
@@ -1543,7 +1612,8 @@ class House:
         lines = ["# ДІМ - клавіші", "Поверх: стрілки - кімната,", "  Enter - увійти, Пробіл - світло,",
                  "  Tab, 0-3 - поверх, Esc - вихід", "У кімнаті: стрілки, Tab - пристрій,",
                  "  Пробіл - дія, + / - - яскравість,", "  гучність; Enter - картка, Esc - назад",
-                 "Картка: ↑↓ рядок, ←→ значення,", "  Enter - зробити", "r - оновити план",
+                 "Картка: ↑↓ рядок, ←→ значення,", "  Enter - зробити",
+                 "[ ] - повернути поверх / кімнату", "r - оновити план",
                  "Ворота, двері, замки - з «Ні / Так»"]
         if not BIG:                                         # the HAT: its own keys, short
             lines = ["# ДІМ - клавіші", "стік - кімната / пристрій", "PRESS - увійти; картка",
