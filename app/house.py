@@ -1344,13 +1344,41 @@ class House:
             if e.startswith("energy:"):
                 energy_icon(s, v["kind"], en, x, y)
                 continue
-            icon(s, e, v, self.state(e), x, y, self.classes.get(e), self.av_on(e) if v.get("kind") in ("projector", "soundbar") else None)
+            g = self.geo(v, tf, k)
+            if v.get("kind") == "projector":
+                if scr:                                     # it looks at its screen
+                    sx, sy = tf(sv["x"], sv["z"])
+                    n = math.hypot(sx - x, sy - y) or 1
+                    g["aim"] = ((sx - x) / n, (sy - y) / n)
+            icon(s, e, v, self.state(e), x, y, self.classes.get(e), self.av_on(e) if v.get("kind") in ("projector", "soundbar") else None, g)
             if e in self.pending:
                 pygame.draw.circle(s, FG, (x, y), 4, 1)
         if cur:
             x, y = tf(self.places[cur]["x"], self.places[cur]["z"])
             pygame.draw.circle(s, ACCENT if blink else (140, 110, 0), (x, y), 5.2, 1)
         pygame.Surface.set_clip(s, None)
+
+    @staticmethod
+    def geo(v, tf, k):
+        """The device's shape on the screen, as the 3D model has it: the ends of its long side (p1, p2), its
+        footprint (poly) and the long side's direction (axis, a unit vector on the screen)."""
+        a = math.radians(v.get("rot") or 0)
+        ca, sa = math.cos(a), math.sin(a)
+        w, d = v.get("w") or 0, v.get("d") or 0
+        g = {"k": k}
+        if w and d:
+            hw, hd = w / 2, d / 2
+            g["poly"] = [tf(v["x"] + x * ca + z * sa, v["z"] - x * sa + z * ca) for x, z in ((-hw, -hd), (hw, -hd), (hw, hd), (-hw, hd))]
+            ux, uz, L = (ca, -sa, w) if w >= d else (sa, ca, d)
+            g["across"] = min(w, d) * k
+        else:
+            ux, uz, L = ca, -sa, v.get("len") or 0
+        g["p1"], g["p2"] = tf(v["x"] - ux * L / 2, v["z"] - uz * L / 2), tf(v["x"] + ux * L / 2, v["z"] + uz * L / 2)
+        x0, y0 = tf(v["x"], v["z"])
+        x1, y1 = tf(v["x"] + ux, v["z"] + uz)
+        n = math.hypot(x1 - x0, y1 - y0) or 1
+        g["axis"] = ((x1 - x0) / n, (y1 - y0) / n)
+        return g
 
     def draw_bar(self):
         s = self.screen
@@ -1731,44 +1759,157 @@ def bulb(s, x, y, r, on, rgb=None):
         pygame.draw.circle(s, (150, 150, 155), (x, y), r, 1)
 
 
-def icon(s, eid, v, st, x, y, dc=None, av_on=None):
-    """The device's mark on the plan, coloured by its state."""
+def span(p1, p2, axis, x, y, least):
+    """The ends of a long thing on the screen, at least `least` pixels long."""
+    if math.hypot(p2[0] - p1[0], p2[1] - p1[1]) >= least:
+        return p1, p2
+    ax, ay = axis
+    return (x - ax * least / 2, y - ay * least / 2), (x + ax * least / 2, y + ay * least / 2)
+
+
+def lamp_shape(v, g):
+    """«rail» (a long lamp on a track), «strip» (WLED, LED strips) or «round»."""
+    m = v.get("model")
+    if m == "strip":
+        return "strip"
+    if m in ("linear", "track"):
+        return "rail"
+    if m in ("spots", "chandelier", "plafon", "dome", "spot"):
+        return m
+    w, d = v.get("w") or 0, v.get("d") or 0
+    if w and d and max(w, d) >= 2.5 * min(w, d):
+        return "rail"
+    return "round"
+
+
+def icon(s, eid, v, st, x, y, dc=None, av_on=None, g=None):
+    """The device's mark on the plan: its own shape (as the 3D model has it) and colour, by its state."""
+    g = g or {"p1": (x, y), "p2": (x, y), "axis": (1, 0), "k": 10}
     d, kind = domain(eid), v.get("kind")
     state = (st or {}).get("state")
     gone = st is not None and state in ("unavailable", "unknown")
     on = is_on(eid, st) if av_on is None else av_on
     grey = (85, 85, 90)
     dark = (10, 12, 16)
+    attrs = (st or {}).get("attributes") or {}
     if v.get("lamp"):
-        rgb = ((st or {}).get("attributes") or {}).get("rgb_color")
-        bulb(s, x, y, 2.2, on and not gone, tuple(rgb) if on and rgb and len(rgb) == 3 else None)
+        rgb = attrs.get("rgb_color")
+        lit = tuple(rgb) if on and rgb and len(rgb) == 3 else (255, 214, 90)
+        shape = lamp_shape(v, g)
+        if shape == "strip":                                    # WLED: rows of strips over its area, as in 3D
+            p1, p2 = span(g["p1"], g["p2"], g["axis"], x, y, 8)
+            ax, ay = g["axis"]
+            nx, ny = -ay, ax
+            rows = v.get("rows") or 5
+            wide = max(4.0, min(10.0, g.get("across", 4)))
+            if g.get("poly") and on and not gone:
+                pygame.draw.polygon(s, mix(lit, (0, 0, 0), 0.72), g["poly"])
+            for i in range(rows):
+                o = (i / (rows - 1) - 0.5) * wide if rows > 1 else 0
+                a, b = (p1[0] + nx * o, p1[1] + ny * o), (p2[0] + nx * o, p2[1] + ny * o)
+                pygame.draw.line(s, lit if on and not gone else (150, 155, 162), a, b, 1)
+        elif shape == "rail":                                   # a long box on its track
+            p1, p2 = span(g["p1"], g["p2"], g["axis"], x, y, 6)
+            pygame.draw.line(s, mix(lit, (0, 0, 0), 0.5) if on and not gone else (25, 25, 28), p1, p2, 4)
+            pygame.draw.line(s, lit if on and not gone else (95, 95, 102), p1, p2, 2)
+            if v.get("model") == "track":                       # the round head on it
+                pygame.draw.circle(s, (25, 25, 28), (x, y), 2.2)
+                pygame.draw.circle(s, lit if on and not gone else (95, 95, 102), (x, y), 1.4)
+        elif shape == "spots":                                  # ceiling spots: in a line, an «L» or a rectangle
+            P = g.get("poly")
+            n = max(1, round(v.get("n") or 3))
+            if P:
+                ox, oy = P[0]
+                ux, uy = P[1][0] - ox, P[1][1] - oy             # the item's own w and d on the screen
+                vx, vy = P[3][0] - ox, P[3][1] - oy
+                form = v.get("form")
+                if form in ("L", "rect"):
+                    n2 = max(2, round(v.get("n2") or n))
+                    run = lambda k: [0.5] if k == 1 else [0.08 + 0.84 * i / (k - 1) for i in range(k)]   # noqa: E731
+                    if form == "rect":
+                        pts = [(a, b) for i, a in enumerate(run(max(2, n))) for j, b in enumerate(run(n2))
+                               if v.get("fill") or i in (0, max(2, n) - 1) or j in (0, n2 - 1)]
+                    else:
+                        pts = [(a, 0.08) for a in run(max(2, n))] + [(0.08, b) for b in run(n2)[1:]]
+                else:
+                    long_u = math.hypot(ux, uy) >= math.hypot(vx, vy)
+                    pts = [((0.08 + 0.84 * i / (n - 1)) if n > 1 else 0.5, 0.5) if long_u else
+                           (0.5, (0.08 + 0.84 * i / (n - 1)) if n > 1 else 0.5) for i in range(n)]
+                spots = [(ox + ux * a + vx * b, oy + uy * a + vy * b) for a, b in pts]
+                if max(math.hypot(px - x, py - y) for px, py in spots) < 2.5:     # too small: spread them
+                    p1, p2 = span(g["p1"], g["p2"], g["axis"], x, y, 3.2 * n)
+                    spots = [(p1[0] + (p2[0] - p1[0]) * (i / (n - 1) if n > 1 else 0.5),
+                              p1[1] + (p2[1] - p1[1]) * (i / (n - 1) if n > 1 else 0.5)) for i in range(n)]
+            else:
+                spots = [(x, y)]
+            for px, py in spots:
+                pygame.draw.circle(s, (25, 25, 28), (px, py), 1.6)
+                pygame.draw.circle(s, lit if on and not gone else (120, 120, 126), (px, py), 1.0)
+        elif shape == "chandelier":                             # a hub with its shades around
+            k_ = max(1, round(v.get("n") or 5))
+            if on and not gone:
+                pygame.draw.circle(s, mix(lit, (0, 0, 0), 0.55), (x, y), 4.4)
+            for i in range(k_):
+                a = i / k_ * 2 * math.pi
+                px, py = x + math.cos(a) * 3, y + math.sin(a) * 3
+                pygame.draw.line(s, (110, 90, 60), (x, y), (px, py), 1)
+                pygame.draw.circle(s, lit if on and not gone else (120, 120, 126), (px, py), 1.0)
+            pygame.draw.circle(s, (130, 105, 70), (x, y), 1.0)
+        elif shape == "plafon":                                 # a wide flat dome on a white base
+            bulb(s, x, y, 2.8, on and not gone, lit if on and rgb else None)
+            pygame.draw.circle(s, (225, 225, 220), (x, y), 3.3, 1)
+        elif shape == "dome":                                   # an outdoor glass dome: a ring with a lamp in it
+            pygame.draw.circle(s, (25, 25, 28), (x, y), 2.8)
+            pygame.draw.circle(s, (150, 190, 210), (x, y), 2.8, 1)
+            pygame.draw.circle(s, lit if on and not gone else (100, 100, 106), (x, y), 1.3)
+        elif shape == "spot":                                   # one small ceiling spot
+            pygame.draw.circle(s, (225, 225, 220), (x, y), 1.9)
+            pygame.draw.circle(s, lit if on and not gone else (100, 100, 106), (x, y), 1.3)
+        else:                                                   # a pendant lamp: a bulb under a shade
+            bulb(s, x, y, 2.3, on and not gone, lit if on and rgb else None)
         if gone:
-            pygame.draw.line(s, grey, (x - 1.5, y - 1.5), (x + 1.5, y + 1.5), 1)
-    elif kind == "projector":
-        col = (230, 235, 255) if on else (130, 130, 138)
-        pygame.draw.rect(s, dark, (x - 3, y - 2.5, 6, 5))
-        pygame.draw.rect(s, col, (x - 2.5, y - 2, 5, 4), border_radius=1)
-        pygame.draw.circle(s, (90, 160, 255) if on else dark, (x, y), 1.2)
-    elif kind == "soundbar":
+            pygame.draw.line(s, (200, 70, 70), (x - 1.5, y - 1.5), (x + 1.5, y + 1.5), 1)
+    elif kind == "projector":                                   # a box with its lens towards the screen
+        ax, ay = g.get("aim") or g["axis"]
+        nx, ny = -ay, ax
+        body = (215, 225, 245) if on else (125, 128, 138)
+        pts = [(x + ax * sx * 2.3 + nx * sy * 3.6, y + ay * sx * 2.3 + ny * sy * 3.6) for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+        pygame.draw.polygon(s, dark, [(px + (px - x) * 0.25, py + (py - y) * 0.25) for px, py in pts])
+        pygame.draw.polygon(s, body, pts)
+        lx, ly = x + ax * 1.5 + nx * 1.4, y + ay * 1.5 + ny * 1.4
+        pygame.draw.circle(s, dark, (lx, ly), 1.6)
+        pygame.draw.circle(s, (90, 170, 255) if on else (60, 62, 70), (lx, ly), 1.0)
+        for i in (-2.4, -1.2):                                  # the vents beside the lens
+            pygame.draw.line(s, dark, (x - ax * 1.4 + nx * i, y - ay * 1.4 + ny * i), (x + ax * 1.4 + nx * i, y + ay * 1.4 + ny * i), 1)
+    elif kind == "soundbar":                                    # a long dark bar with a light
         col = GREEN if on else (130, 130, 138)
-        pygame.draw.rect(s, dark, (x - 4.5, y - 1.8, 9, 3.6))
-        pygame.draw.rect(s, col, (x - 4, y - 1.2, 8, 2.4), border_radius=1)
-    elif kind == "speaker":
-        col = GREEN if state == "playing" else (255, 190, 80) if on and not gone else (130, 130, 138) if not gone else grey
-        pygame.draw.circle(s, dark, (x, y), 3.2)
-        pygame.draw.circle(s, col, (x, y), 2.6, 1)
-        pygame.draw.circle(s, col, (x, y), 1)
-    elif kind == "screen":
-        on = screen_down(st)
-        col = (235, 235, 235) if on else (110, 110, 118)
-        a = math.radians(v.get("rot") or 0)
-        pygame.draw.line(s, col, (x - 4 * math.cos(a), y + 4 * math.sin(a)), (x + 4 * math.cos(a), y - 4 * math.sin(a)), 2 if on else 1)
+        p1, p2 = span(g["p1"], g["p2"], g["axis"], x, y, 9)
+        pygame.draw.line(s, dark, p1, p2, 5)
+        pygame.draw.line(s, (60, 62, 70), p1, p2, 3)
+        pygame.draw.circle(s, col, (x, y), 1.1)
+    elif kind == "speaker":                                     # «0» on its side: the fabric pillow from above
+        col = GREEN if state == "playing" else (255, 190, 80) if on and not gone else (150, 150, 158) if not gone else grey
+        pygame.draw.ellipse(s, dark, (x - 4.2, y - 2.9, 8.4, 5.8))
+        pygame.draw.ellipse(s, col, (x - 3.6, y - 2.3, 7.2, 4.6), 1)
+        if state == "playing":
+            for i in range(4):
+                pygame.draw.circle(s, (240, 240, 240), (x - 1.5 + i, y), 0.4)
+    elif kind == "screen":                                      # a white roll: a long cylinder with its ends
+        down = screen_down(st)
+        p1, p2 = span(g["p1"], g["p2"], g["axis"], x, y, 9)
+        pygame.draw.line(s, dark, p1, p2, 4)
+        pygame.draw.line(s, (245, 245, 245) if down else (150, 150, 158), p1, p2, 2)
+        for p in (p1, p2):
+            pygame.draw.circle(s, (70, 72, 80), p, 1.4)
+        if down:                                                # the cloth hanging down: a lighter line beside
+            ax, ay = g["axis"]
+            pygame.draw.line(s, (200, 215, 255), (p1[0] - ay * 2, p1[1] + ax * 2), (p2[0] - ay * 2, p2[1] + ax * 2), 1)
     elif d == "sensor" or kind == "weather":
-        a = (st or {}).get("attributes") or {}
         try:
             val = float(state)
-            txt = "%d°" % round(val) if a.get("unit_of_measurement", "°C").startswith("°") else "%g" % val
-            col = BLUE if val < 18 else GREEN if val < 25 else (255, 150, 60)
+            unit = attrs.get("unit_of_measurement", "°C")
+            txt = "%d°" % round(val) if unit.startswith("°") else "%d%%" % round(val) if unit == "%" else "%g" % val
+            col = (BLUE if val < 18 else GREEN if val < 25 else (255, 150, 60)) if unit.startswith("°") else CYAN
         except (TypeError, ValueError):
             txt, col = "?°", grey
         t = f_val.render(txt, True, col)
@@ -1778,10 +1919,21 @@ def icon(s, eid, v, st, x, y, dc=None, av_on=None):
             pygame.draw.rect(s, (90, 140, 200), (x - w / 2, y - h / 2, w, h), 1, border_radius=2)
         s.blit(t, (x - t.get_width() / 2, y - h / 2))
     elif d == "binary_sensor":
-        a = (st or {}).get("attributes") or {}
-        cls = a.get("device_class") or dc
-        col = (RED if cls in ("motion", "occupancy", "presence") else (255, 150, 60)) if on else (70, 72, 80)
-        pygame.draw.circle(s, col, (x, y), 1.3)
+        cls = attrs.get("device_class") or dc
+        if cls in ("motion", "occupancy", "presence"):         # an eye: red while it sees someone
+            col = RED if on else (110, 120, 145)
+            pygame.draw.ellipse(s, dark, (x - 3.4, y - 2.2, 6.8, 4.4))
+            pygame.draw.ellipse(s, col, (x - 2.9, y - 1.7, 5.8, 3.4), 1)
+            pygame.draw.circle(s, col, (x, y), 0.9)
+        elif cls in ("door", "window", "opening", "garage_door") or "gercon" in eid or "contact" in eid:
+            col = (255, 150, 60) if on else (120, 175, 135)     # a reed switch: two halves, apart while open
+            gap = 1.6 if on else 0.3
+            pygame.draw.rect(s, dark, (x - 3.4 - gap / 2, y - 2, 6.8 + gap, 4))
+            pygame.draw.rect(s, col, (x - 2.9 - gap / 2, y - 1.4, 2.6, 2.8))
+            pygame.draw.rect(s, col, (x + 0.3 + gap / 2, y - 1.0, 2.0, 2.0))
+        else:                                                   # anything else: a small diamond
+            col = (255, 150, 60) if on else (110, 112, 120)
+            pygame.draw.polygon(s, col, [(x, y - 2), (x + 2, y), (x, y + 2), (x - 2, y)])
     elif d == "cover":
         col = BLUE if on else ((255, 150, 60) if state in ("opening", "closing") else (120, 120, 128))
         if gone:
@@ -1806,12 +1958,21 @@ def icon(s, eid, v, st, x, y, dc=None, av_on=None):
         col = RED if state == "unlocked" else GREEN if state == "locked" else grey
         pygame.draw.rect(s, col, (x - 2, y - 0.5, 4, 3))
         pygame.draw.circle(s, col, (x, y - 0.8), 1.6, 1)
-    else:
-        col = GREEN if on else (55, 58, 64)
+    elif v.get("model") == "coffee":                            # the coffee machine: a cup
+        col = (200, 140, 90) if on else (120, 110, 100)
+        if gone:
+            col = grey
+        pygame.draw.rect(s, dark, (x - 3, y - 2.6, 6.4, 5.2))
+        pygame.draw.rect(s, col, (x - 2.4, y - 2, 3.6, 4))
+        pygame.draw.circle(s, col, (x + 1.8, y - 0.2), 1.2, 1)
+    else:                                                       # a socket / relay: a square with two holes
+        col = GREEN if on else (60, 63, 70)
         if gone:
             col = (40, 40, 44)
-        pygame.draw.rect(s, col, (x - 2, y - 2, 4, 4), border_radius=1)
-        pygame.draw.rect(s, (160, 160, 165) if not on else (200, 255, 210), (x - 2, y - 2, 4, 4), 1, border_radius=1)
+        pygame.draw.rect(s, col, (x - 2.4, y - 2.4, 4.8, 4.8), border_radius=1)
+        pygame.draw.rect(s, (200, 255, 210) if on else (160, 160, 165), (x - 2.4, y - 2.4, 4.8, 4.8), 1, border_radius=1)
+        for i in (-1, 1):
+            pygame.draw.circle(s, dark, (x + i * 1.0, y), 0.55)
 
 
 def main():

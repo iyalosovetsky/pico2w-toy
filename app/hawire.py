@@ -609,13 +609,19 @@ def placements(plan, layout, states, area_of, hidden=()):
     for d in plan.get("devices") or []:
         p = d.get("pos") or [0, 0, 0]
         out[resolve(states, d.get("entity_id"))] = {"f": d.get("floor") or first, "x": p[0], "z": p[2],
-                                                    "model": d.get("model")}
+                                                    "model": d.get("model"), "len": d.get("len"), "rot": d.get("rot") or 0}
     for f in plan.get("furniture") or []:
         for key in ("entity", "cover"):
             if f.get(key) and "x" in f:
                 out[resolve(states, f[key])] = {"f": f.get("floor") or first, "x": f["x"] + f.get("w", 0) / 2,
                                                 "z": f["z"] + f.get("d", 0) / 2,
-                                                "lamp": key == "entity" and domain(f[key]) in ("light", "switch")}
+                                                "lamp": key == "entity" and domain(f[key]) in ("light", "switch"),
+                                                # its shape as the 3D model draws it: the footprint, the lamp's model
+                                                "w": f.get("w", 0), "d": f.get("d", 0), "rot": f.get("rot") or 0,
+                                                "model": "strip" if f.get("shape") == "ledstrip" else
+                                                (f.get("model") or "linear") if f.get("shape") == "lamp" else None,
+                                                "rows": f.get("rows"), "n": f.get("n"), "n2": f.get("n2"),
+                                                "form": f.get("form"), "fill": f.get("fill")}
     skip = set()
     for f in plan.get("furniture") or []:                        # the soundbar, the projector, its screen
         if f.get("shape") in ("soundbar", "projector", "projscreen") and "x" in f and states:
@@ -673,7 +679,9 @@ def placements(plan, layout, states, area_of, hidden=()):
     for eid, v in pos.items():
         p = v.get("p") or [0, 0, 0]
         out[eid] = dict(out.get(eid) or {}, f=v.get("f") or (out.get(eid) or {}).get("f") or first, x=p[0], z=p[2],
-                        **({"model": v["model"]} if v.get("model") else {}))
+                        **({"model": v["model"]} if v.get("model") else {}),
+                        **({"len": v["len"]} if v.get("len") else {}),
+                        **({"rot": v["r"]} if v.get("r") is not None else {}))
     for eid in (layout or {}).get("hidden") or []:
         out.pop(eid, None)
     # the energy pieces of the plan (as the 3D model's chips): the batteries, the grid's inlet, the generator -
