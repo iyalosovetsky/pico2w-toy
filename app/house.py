@@ -12,14 +12,17 @@ The HA address and a long-lived token: ~/.config/lcdtoy/house.env (mode 600, see
     PLAN_URL=http://10.80.39.14:8095
     CONFIRM=switch.some_gate     (more entities that ask before they act)
 
-The map: arrows - the device that way, Enter - its action (a lamp or a socket - on / off; a cover - open /
-close; the speaker - as a tap on it in the 3D model: playing - pause, just stopped - on, long quiet - it says
-the time, again - the radio; the projector, the soundbar - on / off), Space or i - the device's card,
+The floor: arrows - the room that way, Enter - into the room, Space - the room's lights on / off,
 Tab / PgDn / PgUp or 0-3 - the floor, r - reload the plan, F1 - keys, Esc - exit.
-The card: ↑ ↓ - a line, ← → - its value (brightness, colour, volume, source, station, position, the target
-temperature), Enter - do it, Esc - back; sensors show their last 24 hours. «Сказати…» on a speaker -
-type a phrase (Tab - УКР / ENG) and HA's TTS says it there.
-HAT: the stick, PRESS - the action, KEY1 - the floor, KEY2 - the card, KEY3 - back.
+In a room (drawn bigger): arrows or Tab / Shift+Tab - its devices, Space - the device's action (a lamp or a
+socket - on / off; a cover - open / close; the speaker - as a tap on it in the 3D model: playing - pause, just
+stopped - on, long quiet - it says the time, again - the radio; the projector, the soundbar - on / off),
++ / - - brightness, volume, position, the target temperature, Enter or i - the device's card, Esc - out.
+The card: ↑ ↓ - a line, ← → or + - - its value (brightness, colour, volume, source, station, position, the
+target temperature), Enter or Space - do it, Esc - back; sensors show their last 24 hours. «Сказати…» on a
+speaker - type a phrase (Tab - УКР / ENG) and HA's TTS says it there.
+HAT: the stick, PRESS - into the room / the card, KEY1 - the floor (in a room - the next device),
+KEY2 - the action, KEY3 - back.
 Gates, doors and locks ask first («Ні» chosen until ← →).
 """
 import datetime
@@ -227,6 +230,19 @@ def mix(a, b, k):
     return tuple(round(a[i] * k + b[i] * (1 - k)) for i in range(3))
 
 
+ARROWS = {pygame.K_UP: (0, -1), pygame.K_DOWN: (0, 1), pygame.K_LEFT: (-1, 0), pygame.K_RIGHT: (1, 0)}
+
+
+def plus_minus(ev):
+    """+1 for «+» (and «=»), -1 for «-», else 0."""
+    k, ch = ev.key, getattr(ev, "unicode", "") or ""
+    if k in (pygame.K_PLUS, pygame.K_KP_PLUS, pygame.K_EQUALS) or ch == "+":
+        return 1
+    if k in (pygame.K_MINUS, pygame.K_KP_MINUS) or ch in ("-", "_"):
+        return -1
+    return 0
+
+
 class Row:
     """A line of a device's card: «act» (Enter does it), «slider» (← → step it), «choice» (← → pick, Enter
     applies)."""
@@ -254,6 +270,8 @@ class House:
         self.plan_gen = self.reg_gen = -1
         self.floor = 0
         self.sel = {}                              # floor id -> the selected entity
+        self.rsel = {}                             # floor id -> the selected room (its group)
+        self.room = None                           # the room we are in, else None (choosing a room)
         self.view = "map"                          # map / details / confirm / help / say
         self.back_to = "map"
         self.confirm = None                        # (question, domain, service, eid, data)
@@ -313,14 +331,167 @@ class House:
     def selected(self):
         fid = self.fid()
         devs = dict(self.devices(fid))
+        u = self.units(fid).get(self.room) if self.room else None
+        if u:
+            devs = {e: devs[e] for e in self.members(fid).get(self.room, []) if e in devs}
         e = self.sel.get(fid)
         if e not in devs and devs:
-            rooms = self.rooms(fid)
-            cx = sum(r["x"] + r["w"] / 2 for r in rooms) / max(1, len(rooms))
-            cz = sum(r["z"] + r["d"] / 2 for r in rooms) / max(1, len(rooms))
+            if u:
+                cx, cz = u["cx"], u["cz"]
+            else:
+                rooms = self.rooms(fid)
+                cx = sum(r["x"] + r["w"] / 2 for r in rooms) / max(1, len(rooms))
+                cz = sum(r["z"] + r["d"] / 2 for r in rooms) / max(1, len(rooms))
             e = min(devs, key=lambda k: math.hypot(devs[k]["x"] - cx, devs[k]["z"] - cz))
             self.sel[fid] = e
         return e if e in devs else None
+
+    # ---------------------------------------------------------------- the rooms
+    def units(self, fid):
+        """The rooms as one sees them (the parts of a group together): group -> {name, parts, the bbox, the centre}."""
+        U = {}
+        for r in self.rooms(fid):
+            g = r.get("group") or r["id"]
+            u = U.setdefault(g, {"id": g, "parts": [], "name": None, "big": -1})
+            u["parts"].append(r)
+            if r.get("name") and r["w"] * r["d"] > u["big"]:
+                u["name"], u["big"] = r["name"], r["w"] * r["d"]
+        for u in U.values():
+            P = u["parts"]
+            u["x0"], u["z0"] = min(p["x"] for p in P), min(p["z"] for p in P)
+            u["x1"], u["z1"] = max(p["x"] + p["w"] for p in P), max(p["z"] + p["d"] for p in P)
+            area = sum(p["w"] * p["d"] for p in P) or 1
+            u["cx"] = sum((p["x"] + p["w"] / 2) * p["w"] * p["d"] for p in P) / area
+            u["cz"] = sum((p["z"] + p["d"] / 2) * p["w"] * p["d"] for p in P) / area
+            u["outdoor"] = all(p.get("walls") in (False, "railing") for p in P)
+            u["name"] = u["name"] or ("Надворі" if u["outdoor"] else "Кімната")
+        return U
+
+    def members(self, fid):
+        """Room (group) -> its devices: the room they stand in, else the nearest one."""
+        rooms = self.rooms(fid)
+        M = {}
+        for e, v in self.devices(fid):
+            r = self.room_at(rooms, v["x"], v["z"], 0.05)
+            if not r and rooms:
+                r = min(rooms, key=lambda r: math.hypot(max(r["x"] - v["x"], 0, v["x"] - r["x"] - r["w"]),
+                                                        max(r["z"] - v["z"], 0, v["z"] - r["z"] - r["d"])))
+            if r:
+                M.setdefault(r.get("group") or r["id"], []).append(e)
+        for L in M.values():
+            L.sort(key=lambda e: (round(self.places[e]["z"] * 2), self.places[e]["x"]))
+        return M
+
+    def cur_room(self):
+        """The room chosen on the floor (one with devices)."""
+        fid = self.fid()
+        M = self.members(fid)
+        g = self.rsel.get(fid)
+        if g not in M and M:
+            e = self.sel.get(fid)
+            g = next((k for k, L in M.items() if e in L), None) or max(M, key=lambda k: len(M[k]))
+            self.rsel[fid] = g
+        return g if g in M else None
+
+    def move_room(self, dx, dz):
+        fid = self.fid()
+        cur = self.cur_room()
+        if cur is None:
+            return
+        U, M = self.units(fid), self.members(fid)
+        here = U[cur]
+        best = None
+        for g in M:
+            if g == cur or g not in U:
+                continue
+            u = U[g]
+            # how far the other room lies that way: between the nearest edges, else between the centres
+            gap = (u["x0"] - here["x1"]) if dx > 0 else (here["x0"] - u["x1"]) if dx < 0 else \
+                (u["z0"] - here["z1"]) if dz > 0 else (here["z0"] - u["z1"])
+            vx, vz = u["cx"] - here["cx"], u["cz"] - here["cz"]
+            ahead = vx * dx + vz * dz
+            if ahead <= 0.1:
+                continue
+            side = abs(vx * dz - vz * dx)
+            score = max(gap, 0) + ahead * 0.3 + side * 1.2
+            if best is None or score < best[0]:
+                best = (score, g)
+        if best:
+            self.rsel[fid] = best[1]
+            self.dirty = True
+
+    def enter_room(self):
+        g = self.cur_room()
+        if g is None:
+            return self.say("на цьому поверсі немає пристроїв", DIM)
+        self.room = g
+        self.selected()
+        lcd.play("select")
+
+    def room_lights(self, g):
+        """Space on a room: its lamps all off if any is on, else all on."""
+        fid = self.fid()
+        lamps = [e for e in self.members(fid).get(g, []) if self.places[e].get("lamp")]
+        if not lamps:
+            return self.say("у кімнаті немає світла", DIM)
+        if self.ha.status != "connected":
+            return self.say(self.offline_text(), RED)
+        on = any(is_on(e, self.state(e)) for e in lamps)
+        for e in lamps:
+            if is_on(e, self.state(e)) == on:
+                self.send(domain(e), "turn_off" if on else "turn_on", e, {})
+        self.say("світло вимикається" if on else "світло вмикається")
+
+    def room_text(self, g):
+        """The room in a line: its lamps, the temperature, what plays, what is open."""
+        fid = self.fid()
+        L = self.members(fid).get(g, [])
+        lamps = [e for e in L if self.places[e].get("lamp")]
+        parts = []
+        if lamps:
+            n = sum(1 for e in lamps if is_on(e, self.state(e)))
+            parts.append("світло %d/%d" % (n, len(lamps)) if n else "світло вимк.")
+        for e in L:
+            st = self.state(e) or {}
+            if domain(e) == "sensor" and (st.get("attributes") or {}).get("device_class") == "temperature" \
+                    and num(st.get("state")) is not None:
+                parts.append("%s°" % num(st["state"]))
+                break
+        if any(e.startswith("energy:battery") for e in L):
+            b = self.energy()["bat"]
+            if b["soc"] is not None:
+                parts.append("акум. %d%%" % round(b["soc"]))
+        if any(domain(e) == "media_player" and (self.state(e) or {}).get("state") == "playing" for e in L):
+            parts.append("грає")
+        n = sum(1 for e in L if domain(e) == "cover" and self.kind(e) != "screen" and (self.state(e) or {}).get("state") == "open")
+        if n:
+            parts.append("відчинено %d" % n)
+        parts.append("%d пристр." % len(L))
+        return " · ".join(parts)
+
+    def step(self, e, sign):
+        """+ / - in a room: the device's first slider, else on / off, open / close."""
+        if self.ha.status != "connected":
+            return self.say(self.offline_text(), RED)
+        if e.startswith("energy:"):
+            return
+        r = next((r for r in self.rows(e) if r.kind == "slider"), None)
+        if r:
+            r.step(sign)
+            return self.say("%s %s" % (r.label, "+" if sign > 0 else "−"))
+        d = domain(e)
+        if d in TOGGLE or d == "media_player" and self.kind(e) not in ("projector", "soundbar"):
+            self.ask_or_call(e, d, "turn_on" if sign > 0 else "turn_off", {})
+        elif d == "media_player":
+            if self.av_on(e) != (sign > 0):
+                self.av_power(e)
+        elif d == "cover":
+            if self.kind(e) == "screen":
+                self.send(d, "close_cover" if sign > 0 else "open_cover", e, {})      # + lets the screen down
+            else:
+                self.ask_or_call(e, d, "open_cover" if sign > 0 else "close_cover", {})
+        elif d == "climate":
+            self.ask_or_call(e, d, "turn_on" if sign > 0 else "turn_off", {})
 
     def state(self, eid):
         return self.ha.get(eid)
@@ -407,6 +578,7 @@ class House:
 
     # ---------------------------------------------------------------- the geometry
     def transform(self, fid):
+        """Plan metres -> the screen: the whole floor, or the room we are in, bigger (with a bit around it)."""
         rooms = self.rooms(fid)
         if not rooms:
             return lambda x, z: (64, 64), 1
@@ -415,10 +587,21 @@ class House:
         z0 = min(r["z"] for r in rooms)
         z1 = max(r["z"] + r["d"] for r in rooms)
         aw, ah = 124, BAR - TOP - 4
-        k = min(aw / max(0.5, x1 - x0), ah / max(0.5, z1 - z0))
+        kf = min(aw / max(0.5, x1 - x0), ah / max(0.5, z1 - z0))
+        u = self.units(fid).get(self.room) if self.room else None
+        if u:
+            m = 0.35
+            x0, x1, z0, z1 = u["x0"] - m, u["x1"] + m, u["z0"] - m, u["z1"] + m
+            k = min(aw / max(0.5, x1 - x0), ah / max(0.5, z1 - z0), max(kf, 40))
+            return self._tf(x0, x1, z0, z1, k, aw, ah), k
+        k = kf
+        return self._tf(x0, x1, z0, z1, k, aw, ah), k
+
+    @staticmethod
+    def _tf(x0, x1, z0, z1, k, aw, ah):
         ox = 2 + (aw - (x1 - x0) * k) / 2 - x0 * k
         oz = TOP + 2 + (ah - (z1 - z0) * k) / 2 - z0 * k
-        return (lambda x, z: (ox + x * k, oz + z * k)), k
+        return lambda x, z: (ox + x * k, oz + z * k)
 
     # ---------------------------------------------------------------- actions
     def action(self, eid):
@@ -558,8 +741,9 @@ class House:
             return
         here = self.places[cur]
         best = None
+        mine = set(self.members(fid).get(self.room, [])) if self.room else None
         for e, v in self.devices(fid):
-            if e == cur:
+            if e == cur or (mine is not None and e not in mine):
                 continue
             vx, vz = v["x"] - here["x"], v["z"] - here["z"]
             ahead = vx * dx + vz * dz
@@ -781,14 +965,14 @@ class House:
             rows = self.rows(eid) if eid else []
             self.row = max(0, min(self.row, len(rows) - 1))
             r = rows[self.row] if rows else None
-            if k in (pygame.K_ESCAPE, pygame.K_BACKSPACE, pygame.K_SPACE, pygame.K_i) or (hat and k in (pygame.K_2, pygame.K_3)):
+            if k in (pygame.K_ESCAPE, pygame.K_BACKSPACE, pygame.K_i) or (hat and k in (pygame.K_2, pygame.K_3)):
                 self.view = "map"
             elif k == pygame.K_UP:
                 self.row = max(0, self.row - 1)
             elif k == pygame.K_DOWN:
                 self.row = min(len(rows) - 1, self.row + 1) if rows else 0
-            elif r and k in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_MINUS, pygame.K_EQUALS):
-                step = 1 if k in (pygame.K_RIGHT, pygame.K_EQUALS) else -1
+            elif r and (k in (pygame.K_LEFT, pygame.K_RIGHT) or plus_minus(ev)):
+                step = 1 if k == pygame.K_RIGHT or plus_minus(ev) > 0 else -1
                 if r.kind == "slider":
                     if self.ha.status != "connected":
                         self.say(self.offline_text(), RED)
@@ -799,7 +983,7 @@ class House:
                     cur = self.pick.get(key, r.cur)
                     n = len(r.options)
                     self.pick[key] = (cur + step) % n if cur >= 0 else (0 if step > 0 else n - 1)
-            elif r and k == pygame.K_RETURN:
+            elif r and k in (pygame.K_RETURN, pygame.K_SPACE):
                 if self.ha.status != "connected":
                     self.say(self.offline_text(), RED)
                 elif r.kind == "act":
@@ -809,37 +993,50 @@ class House:
                     if i >= 0:
                         r.apply(i)
             return True
-        # the map
-        if k == pygame.K_ESCAPE or (hat and k == pygame.K_3):
-            return False
-        if k == pygame.K_UP:
-            self.move(0, -1)
-        elif k == pygame.K_DOWN:
-            self.move(0, 1)
-        elif k == pygame.K_LEFT:
-            self.move(-1, 0)
-        elif k == pygame.K_RIGHT:
-            self.move(1, 0)
-        elif k == pygame.K_RETURN:
-            if eid:
-                self.action(eid)
-        elif k in (pygame.K_SPACE, pygame.K_i) or (hat and k == pygame.K_2):
-            if eid:
-                self.open_card()
-        elif k in (pygame.K_TAB, pygame.K_PAGEDOWN, pygame.K_f) or (hat and k == pygame.K_1):
-            self.floor = (self.floor + 1) % max(1, len(self.floors()))
+        # the floor and the room
+        fl = max(1, len(self.floors()))
+        if k in (pygame.K_PAGEDOWN, pygame.K_f) or (k == pygame.K_TAB and not self.room) or (hat and k == pygame.K_1 and not self.room):
+            self.floor, self.room = (self.floor + 1) % fl, None
         elif k == pygame.K_PAGEUP:
-            self.floor = (self.floor - 1) % max(1, len(self.floors()))
+            self.floor, self.room = (self.floor - 1) % fl, None
         elif k in (pygame.K_0, pygame.K_1, pygame.K_2, pygame.K_3) and not hat:
             n = k - pygame.K_0
             for i, f in enumerate(self.floors()):
                 if (n == 0 and f.get("elevation", 0) < 0) or (n and f.get("name", "").startswith(str(n))):
-                    self.floor = i
+                    self.floor, self.room = i, None
         elif k == pygame.K_r:
             self.plans.fetch()
             self.say("оновлюю план…")
         elif k == pygame.K_F1:
             self.view = "help"
+        elif not self.room:                                   # choosing a room
+            if k == pygame.K_ESCAPE or (hat and k == pygame.K_3):
+                return False
+            if k in ARROWS:
+                self.move_room(*ARROWS[k])
+            elif k == pygame.K_RETURN:
+                self.enter_room()
+            elif k == pygame.K_SPACE or (hat and k == pygame.K_2):
+                g = self.cur_room()
+                if g:
+                    self.room_lights(g)
+        else:                                                 # in a room
+            if k in (pygame.K_ESCAPE, pygame.K_BACKSPACE) or (hat and k == pygame.K_3):
+                self.rsel[self.fid()] = self.room
+                self.room = None
+            elif k in ARROWS:
+                self.move(*ARROWS[k])
+            elif k == pygame.K_TAB or (hat and k == pygame.K_1):
+                L = self.members(self.fid()).get(self.room, [])
+                if eid in L:
+                    back = bool(getattr(ev, "mod", 0) & pygame.KMOD_SHIFT)
+                    self.sel[self.fid()] = L[(L.index(eid) + (-1 if back else 1)) % len(L)]
+            elif eid and (k == pygame.K_SPACE or (hat and k == pygame.K_2)):
+                self.action(eid)
+            elif eid and plus_minus(ev):
+                self.step(eid, plus_minus(ev))
+            elif eid and k in (pygame.K_RETURN, pygame.K_i):
+                self.open_card()
         return True
 
     def key_say(self, ev):
@@ -891,7 +1088,18 @@ class House:
         names = [f.get("name") or f["id"] for f in self.floors()]
         if sum(f_tab.size(n)[0] + 7 for n in names) > 104:      # the HAT: «П», «1», «2»
             names = [n.split()[0] if n[:1].isdigit() else n[:1] for n in names]
-        for f, name in zip(self.floors(), names):
+        u = self.units(fid).get(self.room) if self.room else None
+        if u:                                                   # in a room: «1 поверх › Кухня»
+            short = [n.split()[0] if n[:1].isdigit() else n[:1] for n in names]
+            name = next((n for f, n in zip(self.floors(), short) if f["id"] == fid), "")
+            w = f_tab.size(name)[0] + 5
+            pygame.draw.rect(s, (50, 50, 55), (x, 1, w, 11), 1, border_radius=3)
+            t = f_tab.render(name, True, DIM)
+            s.blit(t, (x + 2.5, 6.5 - t.get_height() / 2))
+            x += w + 2
+            t = f_tab.render(fit("› " + u["name"], f_tab, 108 - x), True, ACCENT)
+            s.blit(t, (x, 6.5 - t.get_height() / 2))
+        for f, name in zip(self.floors() if not u else [], names):
             w = f_tab.size(name)[0] + 5
             if f["id"] == fid:
                 pygame.draw.rect(s, ACCENT, (x, 1, w, 11), border_radius=3)
@@ -917,17 +1125,24 @@ class House:
         tf, k = self.transform(fid)
         rooms = self.rooms(fid)
         lit = self.lit_groups(fid)
+        inside = self.room
+        chosen = None if inside else self.cur_room()
+        pygame.Surface.set_clip(s, lcd._rect((0, TOP, 128, BAR + 1 - TOP)))
         rects = []
         for r in rooms:
             (x0, y0), (x1, y1) = tf(r["x"], r["z"]), tf(r["x"] + r["w"], r["z"] + r["d"])
             g = r.get("group") or r["id"]
             outdoor = r.get("walls") in (False, "railing")
             fill, edge = (LIT, LIT_EDGE) if g in lit else (OUT, OUT_EDGE) if outdoor else (ROOM, ROOM_EDGE)
+            if inside and g != inside:                          # the rooms around: dim
+                fill, edge = mix(fill, BG, 0.6), mix(edge, BG, 0.5)
+            elif g == chosen and g not in lit:
+                fill = mix(fill, ACCENT, 0.12)
             rects.append((r, g, (x0, y0, x1 - x0, y1 - y0), fill, edge))
         for r, g, rc, fill, edge in rects:
             pygame.draw.rect(s, fill, rc)
         self.draw_furniture(fid, tf, rooms, {r["id"]: fill for r, g, rc, fill, edge in rects})
-        for r, g, rc, fill, edge in rects:
+        for r, g, rc, fill, edge in sorted(rects, key=lambda x: x[1] in (chosen, inside)):
             pygame.draw.rect(s, edge, rc, 1)
         # the parts of one room (a group) without the line between them
         for i, (r, g, rc, fill, _) in enumerate(rects):
@@ -943,13 +1158,41 @@ class House:
                         x0, x1 = max(a[0], b[0]) + 1, min(a[0] + a[2], b[0] + b[2]) - 1
                         if x1 > x0:
                             pygame.draw.line(s, fill, (x0, b[1]), (x1, b[1]), 1)
+        if chosen:
+            self.outline([rc for r, g, rc, fill, edge in rects if g == chosen], ACCENT, 1.6)
         best = {}
         for r, g, rc, fill, edge in rects:
             if r.get("name") and (g not in best or rc[2] * rc[3] > best[g][1][2] * best[g][1][3]):
                 best[g] = (r, rc, fill)
         for g, (r, rc, fill) in best.items():
             col = LIT_TEXT if g in lit else ROOM_TEXT if r.get("walls") not in (False, "railing") else (140, 125, 105)
+            if inside and g != inside:
+                col = mix(col, BG, 0.5)
             self.label(r["name"], rc, col, fill)
+        pygame.Surface.set_clip(s, None)
+
+    def outline(self, parts, col, t):
+        """The outer edge of a room made of parts (the lines between its parts left out), t thick, inside."""
+        s = self.screen
+        for i, (x, y, w, h) in enumerate(parts):
+            others = [p for j, p in enumerate(parts) if j != i]
+            for side in ("top", "bottom", "left", "right"):
+                horiz = side in ("top", "bottom")
+                at = y if side == "top" else y + h if side == "bottom" else x if side == "left" else x + w
+                lo, hi = (x, x + w) if horiz else (y, y + h)
+                cuts = []
+                for ox, oy, ow, oh in others:
+                    edge = (oy + oh if side == "top" else oy) if horiz else (ox + ow if side == "left" else ox)
+                    if abs(edge - at) < 0.8:
+                        cuts.append((ox, ox + ow) if horiz else (oy, oy + oh))
+                segs = [(lo, hi)]
+                for c0, c1 in cuts:
+                    segs = [q for a, b in segs for q in ((a, min(b, c0)), (max(a, c1), b)) if q[1] - q[0] > 0.5]
+                for a, b in segs:
+                    if horiz:
+                        pygame.draw.rect(s, col, (a, at if side == "top" else at - t, b - a, t))
+                    else:
+                        pygame.draw.rect(s, col, (at if side == "left" else at - t, a, t, b - a))
 
     def draw_furniture(self, fid, tf, rooms, fills):
         """The furniture as in the 3D model, from above: its footprint in its own colour, faded into the
@@ -1007,11 +1250,14 @@ class House:
     def draw_devices(self, fid):
         s = self.screen
         tf, k = self.transform(fid)
-        cur = self.selected()
+        cur = self.selected() if self.room else None
         blink = time.monotonic() % 1 < 0.6
+        mine = set(self.members(fid).get(self.room, [])) if self.room else None
+        devices = [(e, v) for e, v in self.devices(fid) if mine is None or e in mine]
+        pygame.Surface.set_clip(s, lcd._rect((0, TOP, 128, BAR + 1 - TOP)))
         # the projector's beam on the screen while it is on
         scr, sv = self.screen_of(fid)
-        for e, v in self.devices(fid):
+        for e, v in devices:
             if v.get("kind") == "projector" and self.av_on(e):
                 px, py = tf(v["x"], v["z"])
                 if scr:
@@ -1023,8 +1269,8 @@ class House:
                     p1, p2 = (px - 8, py + 14), (px + 8, py + 14)
                 pygame.draw.polygon(s, (75, 85, 110), [(px, py), p1, p2])
                 pygame.draw.line(s, (200, 215, 255), p1, p2, 1)
-        en = self.energy() if any(e.startswith("energy:") for e, _ in self.devices(fid)) else None
-        for e, v in sorted(self.devices(fid), key=lambda ev: ev[0] == cur):
+        en = self.energy() if any(e.startswith("energy:") for e, _ in devices) else None
+        for e, v in sorted(devices, key=lambda ev: ev[0] == cur):
             x, y = tf(v["x"], v["z"])
             if e.startswith("energy:"):
                 energy_icon(s, v["kind"], en, x, y)
@@ -1035,6 +1281,7 @@ class House:
         if cur:
             x, y = tf(self.places[cur]["x"], self.places[cur]["z"])
             pygame.draw.circle(s, ACCENT if blink else (140, 110, 0), (x, y), 5.2, 1)
+        pygame.Surface.set_clip(s, None)
 
     def draw_bar(self):
         s = self.screen
@@ -1044,9 +1291,21 @@ class House:
                 for i, ln in enumerate(wrap(msg[0], f_text, 124)[:2]):
                     s.blit(f_text.render(ln, True, msg[1]), (2, BAR + 2 + i * 7))
                 return
+        if not self.room:
+            g = self.cur_room()
+            if not g:
+                s.blit(f_text.render("на цьому поверсі немає пристроїв", True, DIM), (2, BAR + 3))
+                return
+            t = f_name.render(fit(self.units(self.fid())[g]["name"], f_name, 124), True, FG)
+            s.blit(t, (2, BAR + 2))
+            tail = "Enter ›"
+            tw = f_small.size(tail)[0]
+            s.blit(f_small.render(tail, True, DIM), (126 - tw, BAR + 2.5))
+            s.blit(f_text.render(fit(self.room_text(g), f_text, 124), True, ACCENT), (2, BAR + 2 + t.get_height()))
+            return
         eid = self.selected()
         if not eid:
-            s.blit(f_text.render("на цьому поверсі немає пристроїв", True, DIM), (2, BAR + 3))
+            s.blit(f_text.render("у кімнаті немає пристроїв", True, DIM), (2, BAR + 3))
             return
         st = self.state(eid)
         name = friendly(eid, st, self.names)
@@ -1281,14 +1540,20 @@ class House:
         s.blit(t, (8, 94 - t.get_height()))
 
     def draw_help(self):
-        lines = ["# ДІМ - клавіші", "стрілки - пристрій", "Enter - дія: світло, штори,", "  колонка, проєктор",
-                 "Пробіл / i - картка:", "  ↑↓ рядок, ←→ значення, Enter", "Tab, 0-3 - поверх", "r - оновити план",
-                 "Esc - вихід", "Ворота, двері, замки -", "з підтвердженням"]
+        lines = ["# ДІМ - клавіші", "Поверх: стрілки - кімната,", "  Enter - увійти, Пробіл - світло,",
+                 "  Tab, 0-3 - поверх, Esc - вихід", "У кімнаті: стрілки, Tab - пристрій,",
+                 "  Пробіл - дія, + / - - яскравість,", "  гучність; Enter - картка, Esc - назад",
+                 "Картка: ↑↓ рядок, ←→ значення,", "  Enter - зробити", "r - оновити план",
+                 "Ворота, двері, замки - з «Ні / Так»"]
+        if not BIG:                                         # the HAT: its own keys, short
+            lines = ["# ДІМ - клавіші", "стік - кімната / пристрій", "PRESS - увійти; картка",
+                     "KEY2 - світло; дія", "KEY1 - поверх; пристрій", "KEY3 - назад", "картка: стік ↑↓ ←→,",
+                     "  PRESS - зробити", "Ворота, замки - «Так»"]
         self.panel(4, 4, 120, 120)
         y = 8
         for ln in lines:
             f = f_name if ln.startswith("#") else f_text
-            t = f.render(ln.lstrip("# "), True, ACCENT if ln.startswith("#") else FG)
+            t = f.render(fit(ln[2:] if ln.startswith("# ") else ln, f, 112), True, ACCENT if ln.startswith("#") else FG)
             self.screen.blit(t, (9, y))
             y += t.get_height() + 0.5
 
